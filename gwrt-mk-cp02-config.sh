@@ -7,15 +7,17 @@
 #
 # 目标：ramips/mt7621 DEVICE_jdcloud_re-cp-02（MT7621A + MT7915, 32G eMMC）
 #
-# 套装（最低 mesh 集成）：
+# 套装（最低 mesh 集成 + easytier LuCI）：
 #   gwrt-device-defaults : wifiroamd.uc 配对守护 + 自动配对 + SSID/LAN 默认值
 #                          + 防火墙放行(50607/udp 50608/tcp)
 #   gwrt-mesh-apmode     : 路由 ↔ 真 AP 状态机（主路由/AP 那套逻辑）
 #   gwrt-agent           : APP 遥测/命令 shim（mesh.pair/role/apmode/ssid_sync）
 #   ucode-mod-socket     : wifiroamd.uc 依赖（mipsel 直接编入，不走预置 apk）
-#   uhttpd               : 提供 /www/mesh.html + mesh_status 网页
+#   luci + luci-app-easytier : easytier 管理界面（仅 70K，塞得进 16M）
+#   easytier=m           : 核心 15M 塞不进 16M flash → 编成独立 apk，
+#                          手动装到 eMMC/RAM 运行（核心支持 mipsel）
 #
-# 不含：luci / gwrt-theme / turboacc / ssr-plus 等重型组件。
+# 不含：gwrt-theme / turboacc / ssr-plus 等重型组件。
 #
 # 注意：gwrt-agent 预编译二进制是 aarch64，MT7621(mipsel) 不安装（Makefile
 #       已做架构条件），shell shim 自动退回最小遥测载荷，mesh.* 命令不受影响。
@@ -38,6 +40,11 @@ CONFIG_PACKAGE_gwrt-device-defaults=y
 CONFIG_PACKAGE_gwrt-mesh-apmode=y
 CONFIG_PACKAGE_ucode-mod-socket=y
 CONFIG_PACKAGE_uhttpd=y
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
+CONFIG_PACKAGE_luci-app-easytier=y
+CONFIG_PACKAGE_luci-i18n-easytier-zh-cn=y
+CONFIG_PACKAGE_easytier=m
 EOF
 
 echo "==> 输出: $OUT"
