@@ -1,0 +1,304 @@
+#!/bin/sh
+# GWRT-Agent — 重写版 (v1712-shim, 对应 gwrt-agent-1712-r2)
+#
+# 背景: 原 1712 预编译二进制与 op.gwrt.uk 服务端契约错配, 导致上报全失败:
+#   1. 认证: 原版用 X-GWRT-Token: <local_token>  -> 服务端要 Authorization: Bearer <pair_token>
+#   2. 毒药字段: body 带 "hardware_id" -> 服务端 handler 直接 500 (实测 3/3 复现)
+#   3. local_token 服务端从不发放 (register 返回 local_token_command_id:null)
+# 本脚本按实测契约重写上报链路; 遥测采集仍复用原二进制 (gwrt-agent.bin) 的 dump。
+#
+# 实测契约 (2026-10-04, op.gwrt.uk):
+#   POST /api/agent/register  Bearer pair_token  {device_id,...}            -> ok
+#   POST /api/agent/report    Bearer pair_token  {遥测, 无 hardware_id}      -> ok
+#   POST /api/agent/pull      Bearer pair_token  {device_id}                 -> {commands:[]}
+#   POST /api/agent/heartbeat Bearer pair_token  {device_id}                 -> {server_time,report_interval}
+#   POST /api/agent/ack       Bearer pair_token  {device_id,command_id,      -> ok
+#                                                 status: success|failed}
+
+ORIG="/usr/sbin/gwrt-agent.bin"
+CFG="/etc/config/gwrt-agent"
+UA="gwrt-agent/1712-r2"
+
+log() { logger -t gwrt-agent "$@"; }
+
+cfg() { uci -q get "$CFG.main.$1" 2>/dev/null; }
+
+endpoint() { cfg endpoint || echo "https://op.gwrt.uk"; }
+
+# api <path> <json-body>   -> prints response body, returns curl rc
+api() {
+	local path="$1" body="$2"
+	curl -4 -s -m 20 \
+		-H "Content-Type: application/json" \
+		-H "User-Agent: $UA" \
+		-H "Authorization: Bearer $(cfg pair_token)" \
+		-d "$body" \
+		"$(endpoint)${path}" 2>/dev/null
+}
+
+did() { cfg device_id; }
+
+# build report payload: reuse orig dump, strip the poison field
+#
+# 2026-10-22 (Nokia Beacon 10 / 2402b): 本机 netifd 的 ubus 方法不响应
+#   (ubus call network.device status 直接 Request timed out)，
+#   C 二进制的 dump 会永久卡在 ubus call 上 -> shim 拿到空 body -> 上报 400。
+#   这里给 dump 加超时保护，并在拿不到遥测时退回一个最小合法载荷。
+payload() {
+	[ -x "$ORIG" ] || { echo "{}"; return; }
+	local _tmp=/tmp/gwrt-agent/dump.$$ _out="" _pid _i=0
+	mkdir -p /tmp/gwrt-agent
+	( "$ORIG" dump >"$_tmp" 2>/dev/null ) &
+	_pid=$!
+	while [ $_i -lt 8 ] && kill -0 "$_pid" 2>/dev/null; do sleep 1; _i=$((_i+1)); done
+	if kill -0 "$_pid" 2>/dev/null; then
+		kill -9 "$_pid" 2>/dev/null; wait "$_pid" 2>/dev/null
+		_out=""
+	else
+		wait "$_pid" 2>/dev/null
+		_out=$(cat "$_tmp" 2>/dev/null)
+	fi
+	rm -f "$_tmp" 2>/dev/null
+	if [ -z "$_out" ]; then
+		_out="{\"device_id\":\"$(did)\",\"agent_version\":1712,\"arch\":\"aarch64\",\"firmware_version\":\"$(. /etc/openwrt_release 2>/dev/null; echo "$DISTRIB_DESCRIPTION")\",\"telemetry\":{},\"clients\":[],\"packages\":{},\"containers\":{},\"oaf\":{},\"topology\":{}}"
+	fi
+	echo "$_out" | sed 's/"hardware_id":"[^"]*",//; s/,"hardware_id":"[^"]*"//'
+	return 0
+}
+
+payload_orig() {
+	[ -x "$ORIG" ] || { echo "{}"; return; }
+	# 2026-10-09: 连 hardware_id 前面的逗号一起吃掉，避免它是末字段时
+	# 产出 {"a":1,} 这种尾逗号非法 JSON（服务端会 500）
+	# 2026-10-21 修正：旧式 `,\?"hardware_id":"[^"]*",\?` 在字段位于中间时
+	# 会把前后两个逗号同时吃掉 -> {"a":1"b":2} 非法 JSON（真机 261021-01 实测
+	# jsonfilter/ucode 双验证非法）。改为两次替换，每次只吃一个逗号：
+	#   ① 中间/首字段：吃尾部逗号   ② 末字段：吃前导逗号
+	"$ORIG" dump 2>/dev/null | sed 's/"hardware_id":"[^"]*",//; s/,"hardware_id":"[^"]*"//'
+}
+
+# read report_interval from a response (fallback: uci config, default 30, floor 5)
+interval_of() {
+	local n
+	n=$(echo "$1" | grep -o '"report_interval":[0-9]*' | grep -o '[0-9]*$')
+	case "$n" in
+	''|*[!0-9]*) n=$(cfg report_interval); [ -n "$n" ] || n=30;;
+	*) [ "$n" -lt 5 ] && n=5;;
+	esac
+	echo "$n"
+}
+
+# 自愈：服务端不认当前身份（旧记录/token 不匹配）-> 重新生成一机一码并注册（每次运行只做一次）
+GWRT_IDENTITY_RESET=""
+reset_identity() {
+	[ "$GWRT_IDENTITY_RESET" = "1" ] && return 1
+	GWRT_IDENTITY_RESET=1
+	local did tok
+	did="GWRT-$(rand_hex 24)"
+	tok="$(rand_hex 24)"
+	uci -q set gwrt-agent.main.device_id="$did"
+	uci -q set gwrt-agent.main.pair_token="$tok"
+	uci -q set gwrt-agent.main.local_token="$(rand_hex 48)"
+	uci -q commit gwrt-agent
+	log "服务端不认旧身份 -> 已重新生成一机一码 (device_id=$did)"
+	"$ORIG" pair >/dev/null 2>&1
+	return 0
+}
+
+do_report() {
+	local rsp body
+	body=$(payload)
+	rsp=$(api /api/agent/report "$body")
+	case "$rsp" in
+	*'unknown device or token'*)
+		# 旧身份被服务端拒 -> 重生成身份后重试一次
+		if reset_identity; then
+			body=$(payload)
+			rsp=$(api /api/agent/report "$body")
+		fi
+		;;
+	esac
+	case "$rsp" in
+	*'"ok":true'*)
+		log "report ok: $(echo "$rsp" | grep -o '"report_interval":[0-9]*')"
+		echo "$rsp";;
+	*)
+		log "report FAILED: $rsp"
+		echo "$rsp";;
+	esac
+}
+
+do_pull() { api /api/agent/pull "{\"device_id\":\"$(did)\"}"; }
+
+do_ack() { # $1=command_id  $2=status
+	api /api/agent/ack "{\"device_id\":\"$(did)\",\"command_id\":\"$1\",\"status\":\"$2\"}"
+}
+
+do_heartbeat() { api /api/agent/heartbeat "{\"device_id\":\"$(did)\"}"; }
+
+# v1 命令执行: 默认关闭(只记日志+ack failed), uci 远程开关:
+#   uci set gwrt-agent.main.remote_exec=1 && uci commit gwrt-agent
+run_command() { # $1=json-command-object
+	local j="$1" action
+	action=$(echo "$j" | grep -o '"action":"[^"]*"' | head -1 | cut -d'"' -f4)
+	local cid
+	cid=$(echo "$j" | grep -o '"command_id":"[^"]*"' | head -1 | cut -d'"' -f4)
+	[ -n "$cid" ] || cid=$(echo "$j" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+	[ -n "$action" ] || { log "pull: unparsable command: $j"; return; }
+	log "pull: command action=$action id=$cid"
+	if [ "$(cfg remote_exec)" != "1" ]; then
+		log "pull: remote_exec disabled, ignoring action=$action"
+		do_ack "$cid" failed
+		return
+	fi
+	case "$action" in
+	system.reboot)
+		do_ack "$cid" success
+		sleep 2; reboot;;
+	system.hostname.set)
+		local hn
+		hn=$(echo "$j" | grep -o '"hostname":"[^"]*"' | head -1 | cut -d'"' -f4)
+		[ -n "$hn" ] && { uci set system.@system[0].hostname="$hn"; uci commit system; }
+		do_ack "$cid" success;;
+	*)
+		do_ack "$cid" failed;;
+	esac
+}
+
+handle_commands() {
+	local rsp cmds
+	rsp=$(do_pull)
+	case "$rsp" in
+	*'"commands":[]'*) return;;
+	*'"commands":['*)
+		# 粗解析每个 command 对象 (v1: 命令体小, {} 匹配)
+		echo "$rsp" | sed -n 's/.*"commands":\[\(.*\)\].*/\1/p' | \
+		sed 's/},{/}\n{/g' | while IFS= read -r c; do
+			[ -n "$c" ] && run_command "$c"
+		done;;
+	*) log "pull FAILED: $rsp";;
+	esac
+}
+
+do_once() {
+	local rsp iv
+	rsp=$(do_report)
+	iv=$(interval_of "$rsp")
+	handle_commands
+	echo "$iv"
+}
+
+do_pair() {
+	local rsp
+	rsp=$(api /api/agent/register "{\"device_id\":\"$(did)\",\"agent_version\":1712,\"arch\":\"aarch64\"}")
+	case "$rsp" in
+	*'"ok":true'*)
+		echo "注册成功: $rsp"
+		echo "设备码 device_id: $(did)"
+		echo "配对码 pair_token: $(cfg pair_token)";;
+	*) echo "注册失败: $rsp" >&2; return 1;;
+	esac
+}
+
+do_status() {
+	echo "gwrt-agent v1712-r2 (shim)"
+	echo "device_id=$(did)"
+	echo "hardware_id=$(cfg hardware_id)"
+	echo "endpoint=$(endpoint)"
+	echo "lan_ifname=$(cfg lan_ifname)"
+	echo "firmware=$(. /etc/openwrt_release 2>/dev/null; echo "$DISTRIB_DESCRIPTION")"
+}
+
+# 2026-10-21 安全修复（一机一码）：固件内置的 device_id/pair_token/local_token 是共享的
+# → 服务端只有一条设备记录，所有刷机设备合并成同一台。
+# 启动时检查：为空/等于出厂共享值 -> 重新生成本机唯一身份，并自动重新注册。
+GWRT_SHARED_DEVICE_ID="GWRT-9219ad6f5d11b7046aaa942d"
+GWRT_SHARED_PAIR_TOKEN="99ec5d8f1c980bfe1ef131d6"
+GWRT_SHARED_LOCAL_TOKEN="13258689ddbbe015f1ff35740cbcb1424851c76713b2d37e"
+GWRT_SHARED_HARDWARE_ID="HW-b075f4d903f9d9835d136a5595118216"
+
+rand_hex() { cat /proc/sys/kernel/random/uuid 2>/dev/null | tr -d - | cut -c1-$1; }
+
+ensure_device_id() {
+	local cur base did changed=0 need_id=0 need_token=0
+
+	cur=$(cfg device_id)
+	case "$cur" in
+	''|"$GWRT_SHARED_DEVICE_ID") need_id=1 ;;
+	esac
+	case "$(cfg pair_token)" in
+	''|"$GWRT_SHARED_PAIR_TOKEN") need_token=1 ;;
+	esac
+
+	# 服务端在首次 register 时把 device_id 与 token 绑定：
+	# 既要换 token，device_id 就必须也是全新的（否则落到旧记录 → 拒绝）。
+	if [ "$need_id" = "1" ] || [ "$need_token" = "1" ]; then
+		base=$(cfg hardware_id)
+		case "$base" in
+		''|"$GWRT_SHARED_HARDWARE_ID")
+			base=$(cat /sys/class/net/br-lan/address 2>/dev/null)
+			[ -n "$base" ] || base=$(cat /sys/class/net/eth0/address 2>/dev/null)
+			;;
+		esac
+		if [ "$need_id" = "1" ]; then
+			# 全新设备：按 hardware_id 派生（稳定、可复现）
+			did="GWRT-$(printf '%s' "$base" | sha256sum | cut -c1-24)"
+		else
+			# 迁移设备（旧记录已存在）：全新随机 ID
+			did="GWRT-$(rand_hex 24)"
+		fi
+		uci -q set gwrt-agent.main.device_id="$did"
+		changed=1
+	fi
+
+	if [ "$need_token" = "1" ]; then
+		uci -q set gwrt-agent.main.pair_token="$(rand_hex 24)"
+		changed=1
+	fi
+
+	# local_token：共享值 -> 随机
+	case "$(cfg local_token)" in
+	''|"$GWRT_SHARED_LOCAL_TOKEN")
+		uci -q set gwrt-agent.main.local_token="$(rand_hex 48)"
+		changed=1
+		;;
+	esac
+
+	[ "$changed" = "1" ] || return 0
+	uci -q commit gwrt-agent
+	log "身份一机一码化: device_id=$(cfg device_id)"
+	# 新身份需重新注册（拿一次性绑定码）
+	"$ORIG" pair >/dev/null 2>&1
+	return 0
+}
+
+daemon() {
+	log "daemon start (shim v1712-r2, endpoint=$(endpoint))"
+	ensure_device_id
+	local iv; iv=$(interval_of "")   # 初始: uci report_interval (30)
+	while :; do
+		# 有网才发; 网络断了快速重试
+		if ip route 2>/dev/null | grep -q '^default'; then
+			local rsp
+			rsp=$(do_report)
+			# 服务端动态调节节奏(实测 5s/600s 两种), 跟随; 失败则维持原间隔
+			case "$rsp" in *'"ok":true'*) iv=$(interval_of "$rsp");; esac
+			handle_commands
+		fi
+		sleep "$iv"
+	done
+}
+
+case "${1:-daemon}" in
+	daemon|run) daemon;;
+	once) do_once;;
+	pair) shift; exec "$ORIG" pair "$@" ;;   # 2026-10-21 修复：转发原二进制，恢复 gwrt-pair-v2 绑定流程（claim_token + pair_uri + --qr）
+	dump) payload;;
+	status) do_status;;
+	version|ver) echo "gwrt-agent 1712-r2";;
+	cgi) [ -x "$ORIG" ] && exec "$ORIG" cgi || { echo "Status: 500"; echo; echo '{"ok":false,"error":"orig missing"}'; };;
+	help|-h|--help)
+		echo "用法: gwrt-agent [daemon|once|pair|dump|status|version|cgi|help]";;
+	*) # 未知参数转发原二进制, 保证兼容
+		[ -x "$ORIG" ] && exec "$ORIG" "$@" || { echo "gwrt-agent: unknown command '$1'" >&2; exit 1; };;
+esac

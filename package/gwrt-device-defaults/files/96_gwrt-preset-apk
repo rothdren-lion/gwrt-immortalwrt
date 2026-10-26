@@ -1,0 +1,44 @@
+#!/bin/sh
+# 首次启动：安装随固件预置的 wifiroam 离线 APK（/usr/share/gwrt/apk/*.apk）
+# 安装成功后删除预置文件释放 overlay 空间。
+# 说明：这些包是预编译 apk（ADB v3），用 apk 安装而不是编进 rootfs。
+
+APKDIR=/usr/share/gwrt/apk
+MARK=/etc/gwrt/wifiroam-apk.done
+LOG=/tmp/gwrt-wifiroam-apk.log
+
+[ -d "$APKDIR" ] || exit 0
+[ -e "$MARK" ] && exit 0
+
+# 等 apk 数据库就绪
+i=0
+while [ $i -lt 15 ] && [ ! -d /lib/apk/db ]; do sleep 1; i=$((i+1)); done
+
+{
+	echo "=== $(date) installing preset APKs from $APKDIR"
+	# 先装基础依赖（ucode-mod-socket），再装其余，最后补一轮失败的
+	for f in "$APKDIR"/*ucode-mod-socket*.apk; do
+		[ -f "$f" ] || continue
+		echo "--- $(basename "$f")"
+		apk add --allow-untrusted --force-non-repository --network=no "$f" 2>&1
+	done
+	for pass in 1 2; do
+		for f in "$APKDIR"/*.apk; do
+			[ -f "$f" ] || continue
+			case "$f" in *ucode-mod-socket*) continue ;; esac
+			echo "--- pass$pass $(basename "$f")"
+			apk add --allow-untrusted --force-non-repository --network=no "$f" 2>&1
+		done
+	done
+} >"$LOG" 2>&1
+
+# 记录结果；只有全部成功才清理预置包
+if ! grep -qiE 'ERROR|failed' "$LOG"; then
+	mkdir -p /etc/gwrt
+	echo "ok $(date)" > "$MARK"
+	rm -rf "$APKDIR"
+else
+	logger -t gwrt-apk "preset APK install had errors, see $LOG"
+fi
+
+exit 0

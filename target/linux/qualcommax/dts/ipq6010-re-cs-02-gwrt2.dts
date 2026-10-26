@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+// GWRT2 variant of JDCloud RE-CS-02 (same ipq6010 hardware).
+// compatible fallback chain: jdcloud,re-cs-02-gwrt2 -> jdcloud,re-cs-02 -> qcom,ipq6018
+
+/dts-v1/;
+
+#include "ipq6010-re-cs-02.dts"
+
+/ {
+	model = "JDCloud RE-CS-02 GWRT2";
+	compatible = "jdcloud,re-cs-02-gwrt2", "jdcloud,re-cs-02", "qcom,ipq6018";
+};

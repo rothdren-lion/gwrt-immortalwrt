@@ -1,0 +1,12 @@
+config gwrt 'usb_lan'
+	option enabled '0'
+	option auto_bridge '1'
+
+config gwrt 'theme'
+	option mode 'dark'
+	option port_81 '/luci-static/bootstrap'
+	option port_444 '/luci-static/bootstrap'
+
+config he 'he'
+	option enabled '1'
+	option enable_2g '0'

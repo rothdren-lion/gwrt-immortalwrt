@@ -1,0 +1,12 @@
+
+config agent 'main'
+	option endpoint 'https://op.gwrt.uk'
+	option report_interval '30'
+	option lan_ifname 'br-lan'
+	# 2026-10-21：一机一码 —— device_id / pair_token / local_token 均不内置，
+	# 首次启动由 /usr/sbin/gwrt-agent 的 ensure_device_id 生成：
+	#   device_id  = GWRT-<sha256(hardware_id)[:24]>（本机唯一）
+	#   pair_token = 本机随机注册码（服务端首次 register 时登记）
+	#   local_token= 本机随机
+	# 生成后自动重新注册（服务端出现独立设备记录）。
+	option hardware_id 'HW-b075f4d903f9d9835d136a5595118216'

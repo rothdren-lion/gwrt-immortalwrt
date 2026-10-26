@@ -1,0 +1,5 @@
+#!/bin/sh
+# 启用 EQoS 服务（是否真正限速由 /etc/config/eqos 的 config.enabled 决定）
+[ -x /etc/init.d/eqos ] || exit 0
+/etc/init.d/eqos enable >/dev/null 2>&1
+exit 0

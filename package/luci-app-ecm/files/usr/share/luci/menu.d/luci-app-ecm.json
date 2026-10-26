@@ -1,0 +1,13 @@
+{
+	"admin/network/turboacc": {
+		"title": "TurboACC",
+		"order": 85,
+		"action": {
+			"type": "view",
+			"path": "network/ecm"
+		},
+		"depends": {
+			"acl": [ "luci-app-ecm" ]
+		}
+	}
+}

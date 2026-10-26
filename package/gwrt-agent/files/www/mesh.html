@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mesh 状态 - mesh-godsun</title>
+<style>
+body{font-family:system-ui;margin:0;background:#fafafa;color:#333}
+header{background:#1a1a2e;color:#fff;padding:1rem;text-align:center;position:sticky;top:0;z-index:10}
+.card{background:#fff;margin:1rem;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);overflow:hidden}
+.card h3{margin:0;padding:1rem;border-bottom:1px solid #eee;background:#fafafa;font-size:1rem}
+.row{display:flex;justify-content:space-between;padding:.75rem 1rem;border-bottom:1px solid #f0f0f0}
+.row:last-child{border:none}
+.row.offline{opacity:.5;text-decoration:line-through}
+.mac{font-family:monospace;font-size:.85rem;color:#666}
+.badge{padding:.15rem .5rem;border-radius:999px;font-size:.75rem;font-weight:600}
+.badge-online{background:#dcfce7;color:#166534}
+.badge-offline{background:#fee2e2;color:#991b1b}
+.badge-portal{background:#dbeafe;color:#1e40af}
+.signal{font-weight:600;font-variant-numeric:tabular-nums}
+.signal.good{color:#22c55e}.signal.mid{color:#f59e0b}.signal.bad{color:#ef4444}
+.small{font-size:.8rem;color:#888}
+.refresh{float:right;background:none;border:none;color:#3b82f6;font-size:.9rem;cursor:pointer}
+@media(prefers-color-scheme:dark){body{background:#18181b;color:#e4e4e7}.card{background:#27272a}.card h3{background:#1f1f1f;border-color:#3f3f46}.row{border-color:#3f3f46}.mac{color:#a1a1aa}.small{color:#71717a}}
+</style>
+</head>
+<body>
+<header>
+<h2 style="margin:0;font-size:1.1rem">Mesh 组网状态 <span class="small" id="ver"></span></h2>
+<button class="refresh" onclick="load()">↻ 刷新</button>
+</header>
+
+<div class="card">
+<h3>📍 本节点</h3>
+<div class="row"><span>主机名</span><span id="self_host">-</span></div>
+<div class="row"><span>角色</span><span id="self_role"><span class="badge">-</span></span></div>
+<div class="row"><span>IPv4 / IPv6</span><span id="self_ip" class="small">-</span></div>
+<div class="row"><span>在线节点数</span><span id="self_count">-</span></div>
+<div class="row"><span>系统时间</span><span id="self_time" class="small">-</span></div>
+</div>
+
+<div class="card">
+<h3>🔗 Mesh 邻居节点</h3>
+<div id="peers"><div class="row small" style="justify-content:center;padding:2rem">加载中…</div></div>
+</div>
+
+<script>
+const CLS = r => r===null?'':r>-60?'good':r>-75?'mid':'bad';
+const FMT = ts=>ts?new Date(ts*1000).toLocaleString():'-';
+async function load(){
+  try{
+    const r=await fetch('/cgi-bin/mesh_status.sh');
+    const d=await r.json();
+    document.getElementById('ver').textContent=`v${d.version||''}`;
+    document.getElementById('self_host').textContent=d.hostname||'-';
+    document.getElementById('self_role').innerHTML=`<span class="badge ${d.portal?'badge-portal':'badge-online'}">${d.portal?'Portal(主)':'Peer(从)'}</span>`;
+    document.getElementById('self_ip').innerHTML=`${d.host_ipv4||'-'} / ${d.host_ipv6||'-'}`;
+    document.getElementById('self_count').textContent=d.active_node_count||0;
+    document.getElementById('self_time').textContent=d.system_time||'-';
+
+    const peers=d.peers||[];
+    const box=document.getElementById('peers');
+    if(!peers.length){box.innerHTML='<div class="row small" style="justify-content:center;padding:2rem">暂无邻居节点</div>';return}
+    box.innerHTML=peers.map(p=>`
+      <div class="row ${p.rssi===null?'offline':''}">
+        <div><div class="mac">${p.mac||'-'}</div><div class="small">最后见到: ${FMT(p.last_seen)}</div></div>
+        <div style="text-align:right">
+          <div class="signal ${CLS(p.rssi)}">${p.rssi!==null?p.rssi+' dBm':'离线'}</div>
+          <div class="small">${p.plink_state||'-'}</div>
+        </div>
+      </div>`).join('');
+  }catch(e){console.error(e);document.getElementById('peers').innerHTML='<div class="row" style="justify-content:center;color:red">加载失败: '+e.message+'</div>'}
+}
+load();setInterval(load,10000);
+</script>
+</body>
+</html>

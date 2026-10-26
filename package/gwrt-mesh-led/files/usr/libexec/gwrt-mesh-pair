@@ -1,0 +1,45 @@
+#!/bin/sh
+# gwrt-mesh-pair — 一键 mesh 配对（WPS/MESH 键，或手动执行）
+#
+# 主AP(cap)      : 发现并配对当前所有「未配置」的 AP，随后守护进程自动下发
+#                  漫游 + 回传配置（有线/无线都一样）
+# 子AP(sap)      : 已连上主AP则不动；没连上则回到 unconfigured，
+#                  等主AP发现后自动配对
+# 未配置(unconf) : 本来就在等主AP，不用做
+
+log() { logger -t gwrt-mesh-pair "$@"; }
+
+role="$(uci -q get wifiroam.core.role)"
+
+case "$role" in
+	cap)
+		devs="$(ubus call wifiroam discover 2>/dev/null | \
+			jsonfilter -e '@.devices[*].mac' 2>/dev/null)"
+		if [ -z "$devs" ]; then
+			log "no unconfigured AP found"
+			exit 0
+		fi
+		for m in $devs; do
+			res="$(ubus call wifiroam pair "{\"mac\":\"$m\"}" 2>/dev/null)"
+			case "$res" in
+				*'"ok": true'*|*'"ok":true'*)
+					log "pairing $m" ;;
+				*)
+					log "pair $m failed: $res" ;;
+			esac
+		done
+		;;
+	sap)
+		capip="$(ubus call wifiroam status 2>/dev/null | \
+			jsonfilter -e '@.cap_ip' 2>/dev/null)"
+		if [ -n "$capip" ] && [ "$capip" != "null" ]; then
+			log "already paired (cap $capip)"
+			exit 0
+		fi
+		ubus call wifiroam set_role '{"role":"unconfigured"}' >/dev/null 2>&1
+		log "reset to unconfigured, waiting for main AP"
+		;;
+	*)
+		log "already unconfigured, waiting for main AP"
+		;;
+esac

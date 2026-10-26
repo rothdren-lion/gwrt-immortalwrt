@@ -1,0 +1,26 @@
+#!/bin/sh
+# gwrt-agent 默认值
+#
+# 现在 gwrt-agent 默认开启：APP/云端需要它在线才能看状态、下发 mesh 命令
+#   · 遥测上报 + mesh 状态（role / peers / ssid / apmode / discover）
+#   · mesh.* 命令默认允许（mesh_control=1），危险命令仍需 remote_exec=1
+#
+# 不想上报/被控：
+#   uci set gwrt-agent.main.mesh_control='0'
+#   /etc/init.d/gwrt-agent stop && /etc/init.d/gwrt-agent disable
+
+# mesh 控制开关（默认 1）
+uci -q get gwrt-agent.main.mesh_control >/dev/null 2>&1 || {
+	uci -q set gwrt-agent.main.mesh_control='1'
+	uci -q commit gwrt-agent
+}
+
+# 其余两个服务仍然默认关闭
+for s in gwrt-ipv6-auto gwrt-mesh-window; do
+	[ -x "/etc/init.d/$s" ] && "/etc/init.d/$s" disable >/dev/null 2>&1
+done
+
+# 让 agent 开机自启（首次启动会自注册）
+[ -x /etc/init.d/gwrt-agent ] && /etc/init.d/gwrt-agent enable >/dev/null 2>&1
+
+exit 0

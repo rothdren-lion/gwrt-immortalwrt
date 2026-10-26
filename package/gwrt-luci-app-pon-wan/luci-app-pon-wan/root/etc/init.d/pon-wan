@@ -1,0 +1,22 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# The PON WAN service VLAN is written before netifd and firewall4 start, so
+# the configuration is in place on every boot even when it was never applied
+# by hand. START=15 runs ahead of firewall (19) and network (20).
+
+START=15
+STOP=10
+USE_PROCD=1
+
+start_service() {
+	/usr/libexec/pon-wan-apply boot
+}
+
+reload_service() {
+	/usr/libexec/pon-wan-apply apply
+}
+
+service_triggers() {
+	procd_add_reload_trigger pon_wan
+}

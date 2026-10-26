@@ -1,0 +1,112 @@
+#!/bin/sh /etc/rc.common
+# GWRT EQoS — 全局 + 按设备限速（tc htb + u32）
+#
+# 上传方向：WAN 出口整形（按源 IP 分类）
+# 下载方向：LAN 出口整形（按目的 IP 分类，对客户端方向）
+#
+# 用法： /etc/init.d/eqos {start|stop|reload|restart}
+
+START=95
+STOP=10
+
+. /lib/functions.sh
+
+GWRTEQ_N=0
+
+to_kbit() {
+	local v="$1" u="$2" r
+	case "$u" in
+		gbit|gbps|Gbit|Gbit/s) r=$((v * 1000000)) ;;
+		mbit|mbps|Mbit|Mbit/s) r=$((v * 1000)) ;;
+		*) r=$((v)) ;;
+	esac
+	[ "$r" -gt 0 ] 2>/dev/null || r=1
+	echo "$r"
+}
+
+ifaces() {
+	WAN_IF="$(uci -q get network.wan.device)"
+	[ -n "$WAN_IF" ] || WAN_IF="$(uci -q get network.wan.ifname)"
+	[ -n "$WAN_IF" ] || WAN_IF="eth1"
+	LAN_IF="$(uci -q get network.lan.device)"
+	[ -n "$LAN_IF" ] || LAN_IF="$(uci -q get network.lan.ifname)"
+	[ -n "$LAN_IF" ] || LAN_IF="br-lan"
+}
+
+clear_dev() {
+	[ -n "$1" ] || return 0
+	tc qdisc del dev "$1" root >/dev/null 2>&1
+	tc qdisc del dev "$1" ingress >/dev/null 2>&1
+}
+
+add_device() {
+	local sec="$1" ip en dl du ul uu dlk ulk
+	config_get ip "$sec" ip
+	[ -n "$ip" ] || return 0
+	config_get_bool en "$sec" enabled 1
+	[ "$en" = "1" ] || return 0
+	config_get dl "$sec" download 1
+	config_get du "$sec" download_unit mbit
+	config_get ul "$sec" upload 1
+	config_get uu "$sec" upload_unit mbit
+	dlk=$(to_kbit "$dl" "$du")
+	ulk=$(to_kbit "$ul" "$uu")
+
+	GWRTEQ_N=$((GWRTEQ_N + 1))
+	local cid="$GWRTEQ_N"
+
+	tc class replace dev "$WAN_IF" parent 1:1 classid 1:"$cid" htb rate "${ulk}kbit" ceil "${GWRTEQ_UL}kbit" 2>/dev/null
+	tc filter replace dev "$WAN_IF" parent 1: protocol ip prio "$cid" u32 \
+		match ip src "$ip"/32 flowid 1:"$cid" 2>/dev/null
+	tc class replace dev "$LAN_IF" parent 2:1 classid 2:"$cid" htb rate "${dlk}kbit" ceil "${GWRTEQ_DL}kbit" 2>/dev/null
+	tc filter replace dev "$LAN_IF" parent 2: protocol ip prio "$cid" u32 \
+		match ip dst "$ip"/32 flowid 2:"$cid" 2>/dev/null
+
+	logger -t eqos "limit $ip up=${ulk}kbit down=${dlk}kbit"
+}
+
+apply_rules() {
+	local enabled dl dlu ul ulu
+
+	ifaces
+	clear_dev "$WAN_IF"
+	clear_dev "$LAN_IF"
+
+	config_load eqos
+	config_get enabled config enabled 0
+	[ "$enabled" = "1" ] || { logger -t eqos "disabled"; return 0; }
+
+	config_get dl config download 100
+	config_get dlu config download_unit mbit
+	config_get ul config upload 20
+	config_get ulu config upload_unit mbit
+
+	GWRTEQ_DL=$(to_kbit "$dl" "$dlu")
+	GWRTEQ_UL=$(to_kbit "$ul" "$ulu")
+
+	tc qdisc add dev "$WAN_IF" root handle 1: htb default 999 2>/dev/null || {
+		logger -t eqos "cannot add qdisc on $WAN_IF"; return 1; }
+	tc class add dev "$WAN_IF" parent 1: classid 1:1 htb rate "${GWRTEQ_UL}kbit" ceil "${GWRTEQ_UL}kbit" 2>/dev/null
+	tc class add dev "$WAN_IF" parent 1:1 classid 1:999 htb rate "${GWRTEQ_UL}kbit" ceil "${GWRTEQ_UL}kbit" 2>/dev/null
+
+	tc qdisc add dev "$LAN_IF" root handle 2: htb default 999 2>/dev/null || {
+		logger -t eqos "cannot add qdisc on $LAN_IF"; return 1; }
+	tc class add dev "$LAN_IF" parent 2: classid 2:1 htb rate "${GWRTEQ_DL}kbit" ceil "${GWRTEQ_DL}kbit" 2>/dev/null
+	tc class add dev "$LAN_IF" parent 2:1 classid 2:999 htb rate "${GWRTEQ_DL}kbit" ceil "${GWRTEQ_DL}kbit" 2>/dev/null
+
+	GWRTEQ_N=0
+	config_foreach add_device device
+
+	logger -t eqos "applied total up=${GWRTEQ_UL}kbit down=${GWRTEQ_DL}kbit devices=$GWRTEQ_N ($WAN_IF/$LAN_IF)"
+}
+
+start() { apply_rules; }
+reload() { apply_rules; }
+restart() { apply_rules; }
+stop() {
+	ifaces
+	clear_dev "$WAN_IF"
+	clear_dev "$LAN_IF"
+	logger -t eqos "stopped"
+}
+boot() { start; }

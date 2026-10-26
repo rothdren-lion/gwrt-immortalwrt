@@ -1,0 +1,122 @@
+# AGENTS.md — GWRT MT7981 固件项目
+
+本仓库是 **GWRT** 定制 ImmortalWrt 源码树，目标机型：
+
+- **XINGLOO AX3000**（COMFAST CF-WR630AX，MT7981B + MT7531AE + MT7976CN）
+- **Qihoo 360T7**（MT7981B，原厂分区 / UBI 两个 profile）
+
+> 详细 mesh 设计见 `docs/GWRT-MESH.md`；完整构建/调试记录见
+> `BUILD-NOTES-cf-wr630ax-261025-01.md`。
+
+---
+
+## 1. 构建与刷机
+
+本地树就是源码树；实际编译在 `/home/godsun/build/immortalwrt-mt7981`
+（通过 rsync 同步 `package/` 等目录）。
+
+```sh
+# 生成配置（同时启用 wr630ax + 360T7，一次编出 4 个 profile）
+VER=<版本> sh gwrt-mk-wr630ax-config.sh
+
+# 编译（build 树）
+cd /home/godsun/build/immortalwrt-mt7981
+sh gwrt-build-wr630ax.sh 6 <版本>
+
+# 产物
+bin/targets/mediatek/filogic/gwrt-mediatek-filogic-*
+```
+
+刷机（设备 LAN 默认 `192.168.3.3`，root 空密码）：
+
+```sh
+scp <sysupgrade.bin> root@192.168.3.3:/tmp/su.bin
+ssh root@192.168.3.3 'sysupgrade -n /tmp/su.bin'
+```
+
+注意：build 树没有 `.git`，必须给 `REVISION`（`gwrt-build-wr630ax.sh` 已处理）。
+
+---
+
+## 2. 代码地图
+
+| 路径 | 内容 |
+|---|---|
+| `gwrt-mk-wr630ax-config.sh` | 配置生成器（设备 profile、插件集、turboacc/coremark 选项） |
+| `target/linux/mediatek/dts/mt7981b-comfast-cf-wr630ax*.dts` | XINGLOO 设备树（含 512M 变体） |
+| `target/linux/mediatek/image/filogic.mk` | 设备定义（`comfast_cf-wr630ax*`、`qihoo_360t7*`） |
+| `package/gwrt-device-defaults/` | 首启默认值（LAN IP、SSID、wifiroam、防火墙、APK 预置） |
+| `package/gwrt-mesh-led/` | mesh 状态灯 + WPS/MESH 一键配对 |
+| `package/gwrt-mesh-apmode/` | 路由 ↔ 真 AP 状态机（服务开关、桥接、SSID 快照恢复） |
+| `package/gwrt-agent/` | gwrt-agent shim（遥测 + APP 命令，含 mesh.*） |
+| `package/gwrt-theme/luci-theme-gwrt/` | gwrt 主题（首页/温度/拓扑/mesh 行） |
+| `gwrt-theme-V3/` | 主题源码（同步到 `package/gwrt-theme/`） |
+| `docs/GWRT-MESH.md` | mesh 设计、协议、APP 命令契约、验证清单 |
+| `bin-wr630ax-<ver>/`、`bin-360t7-<ver>/` | 每版归档镜像（只保留最新） |
+
+---
+
+## 3. mesh 关键实现（改动前必读）
+
+1. **配对发现**：`wifiroamd.uc` 的 `send_hello()` 同时发 LAN 广播和
+   `255.255.255.255`，`ip` 用默认路由源地址（WAN IP），否则主AP 发现不了/连不上。
+2. **SSID/密码同步**：主AP `wifi_export()` 随 `push_roam_config` 下发；
+   子AP `apply_wifi_from_cap()` 按频段套用；`gwrt.mesh_apmode.enabled=0` 时忽略。
+3. **原 SSID 快照**：`/etc/gwrt-wireless-orig`，回滚路由模式时恢复，
+   否则子AP 一直广播主路由 SSID，回退后连不上。
+4. **桥接 WAN 必须先关 HNAT**：`echo 0 > /sys/kernel/debug/hnat/hook_toggle`
+   （路径存在时），并先停 turboacc/eqos；否则 MTK 网卡 TX 队列挂死。
+5. **dropbear 用 `-l br-lan` 绑定**：切 AP/回路由/开机 AP 模式后必须 restart，
+   否则 22 端口消失。
+6. **AP 模式停用服务**：dnsmasq/odhcpd/turboacc/eqos/shadowsocksr/microsocks/
+   easytier/bandix-plus/appfilter/ttyd；回路由时按原启用状态恢复。
+7. **强制退出 AP**：`/usr/libexec/gwrt-mesh-apmode off` 或 APP
+   `mesh.apmode {"enabled":0}` → 解绑 + 回 192.168.3.3 + 恢复原 SSID + 停止广播。
+
+---
+
+## 4. APP 命令契约
+
+上报字段：`gwrt_mesh`（role/cap_ip/peers_online/apmode/ssids/discover/firmware）。
+
+命令（pull → commands[]）：
+
+| action | 参数 |
+|---|---|
+| `mesh.pair` | `mac`（可选） |
+| `mesh.role` | `role` = cap/sap/unconfigured |
+| `mesh.apmode` | `enabled` = 0/1 |
+| `mesh.ssid_sync` | 无 |
+| `system.reboot` / `system.hostname.set` | 需 `remote_exec=1` |
+
+---
+
+## 5. 验证清单
+
+```sh
+# 未组网
+uci get wifiroam.core.role          # unconfigured
+ip -4 addr show br-lan | grep inet  # 192.168.3.3
+uci show wireless | grep ssid=      # GWRT_2.4G_xxxx / GWRT_5.2G_xxxx
+
+# 配对后
+uci get wifiroam.core.role          # sap
+ip -4 addr show br-lan | grep inet  # 主路由分配
+uci show wireless | grep ssid=      # 与主AP 相同
+logread | grep -E "wifi sync|state .*-> ok|AP mode ok"
+
+# 强制退出
+/usr/libexec/gwrt-mesh-apmode off
+# → unconfigured / 192.168.3.3 / GWRT_* / 插件恢复 / discover 为空
+```
+
+---
+
+## 6. 同步 mesh 到其它源码树
+
+```sh
+sh scripts/gwrt-sync-mesh.sh /path/to/openwrt
+```
+
+复制 `gwrt-mesh-led`、`gwrt-mesh-apmode`、`gwrt-device-defaults`、
+`gwrt-agent`、`gwrt-theme` 以及 `docs/GWRT-MESH.md`。

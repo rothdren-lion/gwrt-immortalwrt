@@ -1,0 +1,20 @@
+#!/bin/sh
+# mesh AP 模式默认值
+#
+# gwrt.mesh_apmode.enabled:
+#   1（默认）= 组网成功后自动切成真 AP（关本机 DHCP、LAN 取主路由地址、
+#              有线回传时把 WAN 并进 br-lan）
+#   0         = 永远保持普通路由（192.168.3.3）
+
+[ -f /etc/config/gwrt ] || touch /etc/config/gwrt
+uci -q get gwrt.mesh_apmode >/dev/null 2>&1 || {
+	uci -q set gwrt.mesh_apmode='mesh_apmode'
+	uci -q set gwrt.mesh_apmode.enabled='1'
+	uci -q commit gwrt
+}
+
+if [ "$(uci -q get gwrt.mesh_apmode.enabled)" != "0" ]; then
+	/etc/init.d/gwrt-mesh-apmode enable >/dev/null 2>&1
+fi
+
+exit 0

@@ -1,0 +1,88 @@
+#!/bin/sh
+# wifiroam（漫游组网）默认值 + 去掉“打赏”
+#
+# - 角色默认 unconfigured（普通 AP，等主AP 配对；可一键改主AP）
+# - 无线回传 SSID/密码：mesh-gwrt / Abc123abc8888
+# - 用我们打过补丁的 topology.js 覆盖安装包里的版本（去掉“用得爽，打个赏”）
+
+SRC=/usr/share/gwrt/wifiroam
+VIEW=/www/luci-static/resources/view/wifiroam
+
+# 0) 打过补丁的守护进程：支持主AP 下发 SSID/密码（同一 ESS 才能无缝漫游）
+if [ -f "$SRC/wifiroamd.uc" ] && [ -d /usr/share/wifiroam ]; then
+	cmp -s "$SRC/wifiroamd.uc" /usr/share/wifiroam/wifiroamd.uc || \
+		cp -f "$SRC/wifiroamd.uc" /usr/share/wifiroam/wifiroamd.uc
+fi
+
+# 1) 打赏按钮/弹窗 + 中文标题（补丁版页面）
+if [ -d "$SRC" ]; then
+	for f in topology.js clients.js pairing.js settings.js; do
+		[ -f "$SRC/$f" ] && [ -d "$VIEW" ] || continue
+		cmp -s "$SRC/$f" "$VIEW/$f" || cp -f "$SRC/$f" "$VIEW/$f"
+	done
+	# 菜单标题：无线漫游 / 网络拓扑 / 客户端 / 漫游设置 / Mesh 配对
+	if [ -f "$SRC/menu.json" ] && [ -f /usr/share/luci/menu.d/luci-app-wifiroam.json ]; then
+		cmp -s "$SRC/menu.json" /usr/share/luci/menu.d/luci-app-wifiroam.json || \
+			cp -f "$SRC/menu.json" /usr/share/luci/menu.d/luci-app-wifiroam.json
+	fi
+	rm -f /tmp/luci-indexcache
+fi
+
+# 2) UCI 默认值
+if [ -f /etc/config/wifiroam ]; then
+	uci -q set wifiroam.core.enabled='1'
+	# 默认「AP / 未配置」：上电就是普通 AP，插网线或靠近主AP 都能被
+	# 主AP 发现并一键配对（配对后自动变成子AP）。
+	# 要当主路由：无线漫游 → Mesh 配对 → 设为主AP，
+	#   或 ubus call wifiroam set_role '{"role":"cap"}'
+	uci -q set wifiroam.core.role='unconfigured'
+	uci -q set wifiroam.backhaul.enabled='1'
+	uci -q set wifiroam.backhaul.ssid='mesh-gwrt'
+	uci -q set wifiroam.backhaul.key='Abc123abc8888'
+	# 漫游组：把本机 AP 的 SSID 预选进去（同 SSID + 同密码才能无缝漫游）
+	ssids=""
+	for i in $(uci -q show wireless | sed -n 's/^wireless\.\([^.]*\)=wifi-iface$/\1/p'); do
+		[ "$(uci -q get "wireless.$i.mode")" = ap ] || continue
+		s="$(uci -q get "wireless.$i.ssid")"
+		[ -n "$s" ] || continue
+		case " $ssids " in *" $s "*) continue ;; esac
+		ssids="$ssids $s"
+	done
+	ssids="$(echo $ssids)"
+	# 注意：必须是 UCI list（add_list），写成 "a b" 会被守护进程当成一个 SSID，
+	# 结果 802.11k/v/r 一个都匹配不上（roam.ssids 里是带空格的单条字符串）。
+	uci -q delete wifiroam.roam.ssids
+	for s in $ssids; do
+		uci -q add_list wifiroam.roam.ssids="$s"
+	done
+	[ -n "$ssids" ] && uci -q set wifiroam.roam.enabled='1'
+
+	uci -q commit wifiroam
+
+	[ -x /etc/init.d/wifiroam ] && /etc/init.d/wifiroam restart >/dev/null 2>&1
+
+	# 立即把 k/v/r + FT 参数写到 wireless（守护进程只在 set_roam 时应用，
+	# 光改 uci 不会生效，必须调用一次 ubus；要等守护进程起来）
+	if [ "$(uci -q get wifiroam.core.role)" = "cap" ] && \
+	   [ "$(uci -q get wifiroam.roam.enabled)" = "1" ]; then
+		i=0
+		while [ "$i" -lt 15 ]; do
+			ubus -S list wifiroam >/dev/null 2>&1 && break
+			sleep 1
+			i=$((i + 1))
+		done
+		json_ssids=""
+		for s in $(uci -q get wifiroam.roam.ssids); do
+			json_ssids="$json_ssids\"$s\","
+		done
+		json_ssids="[${json_ssids%,}]"
+		ubus call wifiroam set_roam "{\"enabled\":true,\"ssids\":$json_ssids,\"r_fast\":true,\"ft_mode\":\"simple\",\"ft_over_ds\":true,\"k_neighbor\":true,\"k_beacon\":true,\"v_bss_transition\":true,\"rssi_profile\":\"balanced\",\"rssi_threshold\":-70}" >/dev/null 2>&1 || true
+	fi
+fi
+
+# 自动配对服务（主 AP 发现未配置 AP 自动配对）
+[ -x /etc/init.d/gwrt-wifiroam-autopair ] && {
+	/etc/init.d/gwrt-wifiroam-autopair enable >/dev/null 2>&1
+}
+
+exit 0

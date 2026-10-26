@@ -1,0 +1,443 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause)
+/*
+ * Xfinity XER5 (Wi-Fi 6E AP, IPQ9574, RTL8261N 5G + QCA8075 GbE)
+ *
+ * Hardware reverse-engineered from original firmware dump at
+ *   F:\Xgpro_T76\UserData\EMMC_Data\route\xer5-5G\
+ *
+ * Reference platforms: 8devices Kiwi-DVK (mainline qualcommbe target),
+ *                      Qualcomm RDP433 / AP-AL02-Cx series.
+ *
+ * Adapted for immortalwrt master (kernel 6.18):
+ *  - RTL8261N PHY is supported by the mainline realtek driver
+ *    (generic pending-6.18 742/743 + backport-6.18 800-03..06);
+ *    firmware: rtl826x-firmware (rtl8261n.bin)
+ *  - eMMC-only device, no NAND/UBI anywhere
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/leds/common.h>
+#include "ipq9574.dtsi"
+
+/ {
+	model = "Xfinity XER5 (IPQ9574)";
+	compatible = "xfinity,xer5", "qcom,ipq9574-ap-al02-c7", "qcom,ipq9574-ap-al02-c1", "qcom,ipq9574";
+
+	aliases {
+		serial0 = &blsp1_uart2;
+		ethernet0 = &xgmac1;   /* LAN1 : port1  QCA8075     MDIO 0x10 1G   */
+		ethernet1 = &xgmac2;   /* LAN2 : port2  QCA8075     MDIO 0x11 1G   */
+		ethernet2 = &xgmac3;   /* LAN3 : port3  QCA8075     MDIO 0x12 1G   */
+		ethernet3 = &xgmac4;   /* LAN4 : port4  QCA8075     MDIO 0x13 NC   */
+		ethernet4 = &xgmac5;   /* LAN5 : port5  RTL8261N    MDIO 0x1f 5G   */
+		ethernet5 = &xgmac6;   /* WAN  : port6  RTL8261N    MDIO 0x00 5G   */
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+		bootargs-append = " root=/dev/mmcblk0p43 rootwait";
+		/* mmcblk0p43 = "rootfs" per XER5 GPT (LBA 3141632, 384 MB) */
+	};
+
+	regulator_fixed_1p8: s1800 {
+		compatible = "regulator-fixed";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		regulator-boot-on;
+		regulator-always-on;
+		regulator-name = "fixed_1p8";
+	};
+
+	regulator_fixed_3p3: s3300 {
+		compatible = "regulator-fixed";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		regulator-boot-on;
+		regulator-always-on;
+		regulator-name = "fixed_3p3";
+	};
+
+	regulator_fixed_0p925: s0925 {
+		compatible = "regulator-fixed";
+		regulator-min-microvolt = <925000>;
+		regulator-max-microvolt = <925000>;
+		regulator-boot-on;
+		regulator-always-on;
+		regulator-name = "fixed_0p925";
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+		pinctrl-0 = <&gpio_keys_default>;
+		pinctrl-names = "default";
+
+		button-wps {
+			label = "wps";
+			linux,code = <KEY_WPS_BUTTON>;
+			gpios = <&tlmm 37 GPIO_ACTIVE_LOW>;
+			debounce-interval = <60>;
+		};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		pinctrl-0 = <&gpio_leds_default>;
+		pinctrl-names = "default";
+
+		led-0 {
+			color = <LED_COLOR_ID_GREEN>;
+			function = LED_FUNCTION_WLAN;
+			gpios = <&tlmm 64 GPIO_ACTIVE_LOW>;
+			linux,default-trigger = "phy0tx";
+			default-state = "off";
+		};
+	};
+};
+
+&blsp1_uart2 {
+	pinctrl-0 = <&uart2_pins>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
+/* CPU supplies: ipq9574.dtsi has no cpu0-3 labels, skip */
+
+&rpm_requests {
+	regulators {
+		compatible = "qcom,rpm-mp5496-regulators";
+
+		mp5496_s1: s1 {
+			regulator-min-microvolt = <725000>;
+			regulator-max-microvolt = <1075000>;
+		};
+
+		/* ipq9574.dtsi references ipq9574_s1 for cpu-supply */
+		ipq9574_s1: pm8150-s1 {
+			regulator-min-microvolt = <725000>;
+			regulator-max-microvolt = <1075000>;
+		};
+
+		mp5496_l2: l2 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-always-on;
+			regulator-boot-on;
+		};
+
+		mp5496_l5: l5 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-always-on;
+			regulator-boot-on;
+		};
+	};
+};
+
+/*
+ * XER5 uses eMMC (Toshiba THGBMUG6C1LBAIL 4GB, HS400 enhanced strobe).
+ * 44-partition GPT layout from original Xfinity firmware is preserved;
+ * OpenWrt sysupgrade/T76 flashing targets the primary (A) slot:
+ *   0:HLOS    (LBA 131072 / 0x20000,  64 MB)   -> kernel FIT
+ *   rootfs    (LBA 3141632 / 0x2FE000, 384 MB) -> squashfs
+ * The secondary (_1) slot stays empty as T76 brick-recovery fallback.
+ */
+&sdhc_1 {
+	vmmc-supply = <&regulator_fixed_3p3>;
+	vqmmc-supply = <&regulator_fixed_1p8>;
+	bus-width = <8>;
+	max-frequency = <384000000>;
+	mmc-ddr-1_8v;
+	mmc-hs200-1_8v;
+	mmc-hs400-1_8v;
+	mmc-hs400-enhanced-strobe;
+	non-removable;
+	status = "okay";
+};
+
+&sleep_clk { clock-frequency = <32000>; };
+
+/*
+ * Ethernet:
+ *   6 PPE ports (1 WAN 5G + 1 LAN 5G + 3 LAN GbE + 1 NC)
+ *   - QCA8075 quad GbE PHY (MDIO 0x10..0x13, only 0x10/0x11/0x12 wired
+ *     to RJ45; addr 0x13 left floating per teardown).
+ *   - 2x Realtek RTL8261N 5G PHY @ MDIO 0x1F (LAN1) and 0x00 (WAN).
+ *
+ * PPE port mapping (matches RDP433 reference + stock switch_lan/wan_bmp):
+ *   switch_lan_bmp = 0x3e (bits 1-5), switch_wan_bmp = 0x40 (bit 6)
+ *   port1 -> xgmac1 -> QCA8075 phy@0x10 -> RJ45 "LAN1"  1G
+ *   port2 -> xgmac2 -> QCA8075 phy@0x11 -> RJ45 "LAN2"  1G
+ *   port3 -> xgmac3 -> QCA8075 phy@0x12 -> RJ45 "LAN3"  1G
+ *   port4 -> xgmac4 -> QCA8075 phy@0x13 -> (NC, disabled)
+ *   port5 -> xgmac5 -> RTL8261N phy@0x1f -> RJ45 "LAN4" 5G
+ *   port6 -> xgmac6 -> RTL8261N phy@0x00 -> RJ45 "WAN"  5G
+ */
+&qcom_ppe {
+	status = "okay";
+
+	switch_lan_bmp = <0x3e>;  /* bits 1-5 = LAN */
+	switch_wan_bmp = <0x40>;  /* bit 6 = WAN */
+
+	ethernet-ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		xgmac1: port@1 {
+			reg = <1>;
+			phy-mode = "qsgmii";
+			label = "lan1";
+			phy-handle = <&qca8075_p1>;
+			pcs-handle = <&pcs0_ch0>;
+			local-mac-address = [00 00 00 00 00 00];
+			clocks = <&nsscc NSS_CC_PORT1_MAC_CLK>,
+				 <&nsscc NSS_CC_PORT1_RX_CLK>,
+				 <&nsscc NSS_CC_PORT1_TX_CLK>;
+			clock-names = "mac", "rx", "tx";
+			resets = <&nsscc PORT1_MAC_ARES>,
+				 <&nsscc PORT1_RX_ARES>,
+				 <&nsscc PORT1_TX_ARES>;
+			reset-names = "mac", "rx", "tx";
+		};
+
+		xgmac2: port@2 {
+			reg = <2>;
+			phy-mode = "qsgmii";
+			label = "lan2";
+			phy-handle = <&qca8075_p2>;
+			pcs-handle = <&pcs0_ch1>;
+			local-mac-address = [00 00 00 00 00 00];
+			clocks = <&nsscc NSS_CC_PORT2_MAC_CLK>,
+				 <&nsscc NSS_CC_PORT2_RX_CLK>,
+				 <&nsscc NSS_CC_PORT2_TX_CLK>;
+			clock-names = "mac", "rx", "tx";
+			resets = <&nsscc PORT2_MAC_ARES>,
+				 <&nsscc PORT2_RX_ARES>,
+				 <&nsscc PORT2_TX_ARES>;
+			reset-names = "mac", "rx", "tx";
+		};
+
+		xgmac3: port@3 {
+			reg = <3>;
+			phy-mode = "qsgmii";
+			label = "lan3";
+			phy-handle = <&qca8075_p3>;
+			pcs-handle = <&pcs0_ch2>;
+			local-mac-address = [00 00 00 00 00 00];
+			clocks = <&nsscc NSS_CC_PORT3_MAC_CLK>,
+				 <&nsscc NSS_CC_PORT3_RX_CLK>,
+				 <&nsscc NSS_CC_PORT3_TX_CLK>;
+			clock-names = "mac", "rx", "tx";
+			resets = <&nsscc PORT3_MAC_ARES>,
+				 <&nsscc PORT3_RX_ARES>,
+				 <&nsscc PORT3_TX_ARES>;
+			reset-names = "mac", "rx", "tx";
+		};
+
+		xgmac4: port@4 {
+			reg = <4>;
+			phy-mode = "qsgmii";
+			label = "lan4";
+			phy-handle = <&qca8075_p4>;
+			pcs-handle = <&pcs0_ch3>;
+			local-mac-address = [00 00 00 00 00 00];
+			status = "disabled";  /* phy@0x13 NC, no RJ45 */
+			clocks = <&nsscc NSS_CC_PORT4_MAC_CLK>,
+				 <&nsscc NSS_CC_PORT4_RX_CLK>,
+				 <&nsscc NSS_CC_PORT4_TX_CLK>;
+			clock-names = "mac", "rx", "tx";
+			resets = <&nsscc PORT4_MAC_ARES>,
+				 <&nsscc PORT4_RX_ARES>,
+				 <&nsscc PORT4_TX_ARES>;
+			reset-names = "mac", "rx", "tx";
+		};
+
+		xgmac5: port@5 {
+			reg = <5>;
+			phy-mode = "usxgmii";
+			label = "lan5";
+			phy-handle = <&rtl8261n_lan>;
+			pcs-handle = <&pcs1_ch0>;
+			local-mac-address = [00 00 00 00 00 00];
+			clocks = <&nsscc NSS_CC_PORT5_MAC_CLK>,
+				 <&nsscc NSS_CC_PORT5_RX_CLK>,
+				 <&nsscc NSS_CC_PORT5_TX_CLK>;
+			clock-names = "mac", "rx", "tx";
+			resets = <&nsscc PORT5_MAC_ARES>,
+				 <&nsscc PORT5_RX_ARES>,
+				 <&nsscc PORT5_TX_ARES>;
+			reset-names = "mac", "rx", "tx";
+		};
+
+		xgmac6: port@6 {
+			reg = <6>;
+			phy-mode = "usxgmii";
+			label = "wan";
+			phy-handle = <&rtl8261n_wan>;
+			pcs-handle = <&pcs2_ch0>;
+			local-mac-address = [00 00 00 00 00 00];
+			clocks = <&nsscc NSS_CC_PORT6_MAC_CLK>,
+				 <&nsscc NSS_CC_PORT6_RX_CLK>,
+				 <&nsscc NSS_CC_PORT6_TX_CLK>;
+			clock-names = "mac", "rx", "tx";
+			resets = <&nsscc PORT6_MAC_ARES>,
+				 <&nsscc PORT6_RX_ARES>,
+				 <&nsscc PORT6_TX_ARES>;
+			reset-names = "mac", "rx", "tx";
+		};
+	};
+};
+
+&mdio {
+	status = "okay";
+	pinctrl-0 = <&mdio_pins>;
+	pinctrl-names = "default";
+	reset-gpios = <&tlmm 60 GPIO_ACTIVE_LOW>;	/* PHY hard reset, was 0x3c in stock */
+
+	/* QCA8075 quad-port GbE PHY:
+	 * addresses 0x10..0x13 (XER5 stock DTS), but only 0x10/0x11/0x12
+	 * are wired out to RJ45 jacks. 0x13 left disabled. */
+	qca8075_p1: ethernet-phy@10 {
+		reg = <0x10>;
+	};
+	qca8075_p2: ethernet-phy@11 {
+		reg = <0x11>;
+	};
+	qca8075_p3: ethernet-phy@12 {
+		reg = <0x12>;
+	};
+
+	qca8075_p4: ethernet-phy@13 {
+		reg = <0x13>;
+	};
+
+	/* Realtek RTL8261N 5G PHY (LAN1 5G):
+	 * driver: mainline realtek PHY driver (kernel 6.18)
+	 * PHY ID 0x001CCAF3, c45 clause 45
+	 * NOTE: actual hardware uses MDIO addr 0x1F, NOT 0x08 from the AL02-C1 ref DTS */
+	rtl8261n_lan: ethernet-phy@1f {
+		compatible = "ethernet-phy-ieee802.3-c45";
+		reg = <0x1f>;
+		reset-assert-us = <40>;
+		reset-deassert-us = <150000>;
+	};
+
+	/* Realtek RTL8261N 5G PHY (WAN 5G) */
+	rtl8261n_wan: ethernet-phy@0 {
+		compatible = "ethernet-phy-ieee802.3-c45";
+		reg = <0x00>;
+		reset-assert-us = <40>;
+		reset-deassert-us = <150000>;
+	};
+};
+
+/* QCN9224 #1 -- 5GHz radio */
+&pcie1 {
+	pinctrl-0 = <&pcie1_default>;
+	pinctrl-names = "default";
+	perst-gpios = <&tlmm 26 GPIO_ACTIVE_LOW>;
+	wake-gpios = <&tlmm 27 GPIO_ACTIVE_LOW>;
+	status = "okay";
+};
+&pcie1_phy { status = "okay"; };
+
+/* QCN9224 #2 -- 6GHz radio (Wi-Fi 6E) */
+&pcie2 {
+	pinctrl-0 = <&pcie2_default>;
+	pinctrl-names = "default";
+	perst-gpios = <&tlmm 29 GPIO_ACTIVE_LOW>;
+	wake-gpios = <&tlmm 30 GPIO_ACTIVE_LOW>;
+	status = "okay";
+};
+&pcie2_phy { status = "okay"; };
+
+/* USB 3.0 host (single port) */
+&usb_0_dwc3 { dr_mode = "host"; };
+&usb_0_qmpphy {
+	vdda-pll-supply = <&mp5496_l5>;
+	vdda-phy-supply = <&regulator_fixed_0p925>;
+	status = "okay";
+};
+&usb_0_qusbphy {
+	vdd-supply = <&regulator_fixed_0p925>;
+	vdda-pll-supply = <&mp5496_l5>;
+	vdda-phy-dpdm-supply = <&regulator_fixed_3p3>;
+	status = "okay";
+};
+&usb3 { status = "okay"; };
+
+&tlmm {
+	pcie1_default: pcie1-default-state {
+		clkreq-n-pins {
+			pins = "gpio25";
+			function = "pcie1_clk";
+			drive-strength = <6>;
+			bias-pull-up;
+		};
+		perst-n-pins {
+			pins = "gpio26";
+			function = "gpio";
+			drive-strength = <8>;
+			bias-pull-down;
+			output-low;
+		};
+		wake-n-pins {
+			pins = "gpio27";
+			function = "pcie1_wake";
+			drive-strength = <6>;
+			bias-pull-up;
+		};
+	};
+
+	pcie2_default: pcie2-default-state {
+		clkreq-n-pins {
+			pins = "gpio28";
+			function = "pcie2_clk";
+			drive-strength = <6>;
+			bias-pull-up;
+		};
+		perst-n-pins {
+			pins = "gpio29";
+			function = "gpio";
+			drive-strength = <8>;
+			bias-pull-down;
+			output-low;
+		};
+		wake-n-pins {
+			pins = "gpio30";
+			function = "pcie2_wake";
+			drive-strength = <6>;
+			bias-pull-up;
+		};
+	};
+
+	gpio_keys_default: gpio-keys-default-state {
+		pins = "gpio37";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-pull-up;
+	};
+
+	gpio_leds_default: gpio-leds-default-state {
+		pins = "gpio64";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-pull-up;
+	};
+};
+
+&ref_48mhz_clk {
+	clock-div = <1>;
+	clock-mult = <1>;
+};
+
+&xo_board_clk {
+	clock-div = <2>;
+	clock-mult = <1>;
+};
+
+&xo_clk {
+	clock-frequency = <48000000>;
+};

@@ -1,0 +1,48 @@
+. /lib/functions/uci-defaults.sh
+
+board=$(board_name)
+
+board_config_update
+
+# 2026-09-20（用户要求）：
+#   本文件**不再设置任何默认 SSID**，无线命名交回「源码原始行为」——
+#   wifi-scripts 的 mac80211.uc 在 board.json 没有 ssid defaults 时，
+#   落到它自己的兜底值（上游原值 ImmortalWrt）。
+#   GWRT_2.4G/5.8G/5.2G_<MAC后4> 这套命名由用户自己的钩子脚本在部署时写入，
+#   固件源码侧不再预置（"没有我的钩子脚本就换原"）。
+#
+#   同步还原的还有 mac80211.uc 的硬编码兜底：
+#     fork 曾把 `defaults?.ssid || "ImmortalWrt"` 改成 `|| "GWRT"`，
+#     已改回上游原值（两份副本：files/ 与 wifi-scripts/wifi-scripts/，
+#     构建实际读后者，见 md/BUILD-RULES.md 血泪坑 #10）。
+#
+# 保留的无线相关设置：各射频 MAC 地址数量（结构性，非命名）+ 5G 信道——
+# wifi-scripts 的 mac80211.uc 读 band_defaults.mac_count。
+#
+# 2026-10-03（硬件实测确认）：
+#   - SS-01：只有 2 个射频（IPQ6018 集成 2.4G + 5G），无 PCI、无 QCN9074。
+#     实测 /sys/class/ieee80211 只有 phy0/phy1。
+#   - CS-02（含 GWRT2）：3 个射频（IPQ6018 集成 2.4G + 5G，另加 PCI QCN9074
+#     做 5.2G）。QCN9074 由 hotplug hook 单独固定 ch36。
+#   - IPQ6018 集成 5G 必须走 5.8G 信道（ch149-165），不能用 ch36（5.2G 段）。
+#     phy 自带 default_channel=100（DFS 段），country 为空时 AP 起不来，
+#     故此处显式固定 ch149（5.8G），不用 auto，避免 hostapd 选到 DFS/5.2G。
+case "$board" in
+jdcloud,re-ss-01)
+	# SS-01：2 射频，无 QCN9074，以下无 5.2G 相关设置。
+	ucidef_set_wireless_mac_count 2g 7
+	ucidef_set_wireless_mac_count 5g 7
+	ucidef_set_wireless_channel 5g 149
+	;;
+jdcloud,re-cs-02|jdcloud,re-cs-02-gwrt2)
+	# CS-02：3 射频。集成 5G 走 5.8G（ch149）；
+	# PCI QCN9074（5.2G）由 hotplug hook 单独固定 ch36，覆盖 band 默认。
+	ucidef_set_wireless_mac_count 2g 7
+	ucidef_set_wireless_mac_count 5g 7
+	ucidef_set_wireless_channel 5g 149
+	;;
+esac
+
+board_config_flush
+
+exit 0

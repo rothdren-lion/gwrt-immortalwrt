@@ -1,0 +1,23 @@
+{
+	"luci-app-ecm": {
+		"description": "Grant access to NSS ECM settings and status",
+		"read": {
+			"file": {
+				"/sys/kernel/debug/ecm": [ "list" ],
+				"/sys/kernel/debug/ecm/ecm_db/connection_count_simple": [ "read" ],
+				"/sys/kernel/debug/ecm/ecm_nss_ipv4/*": [ "read" ],
+				"/sys/kernel/debug/ecm/ecm_nss_ipv6/*": [ "read" ],
+				"/sys/kernel/debug/qca-nss-drv/stats/ipv4": [ "read" ],
+				"/sys/kernel/debug/qca-nss-drv/stats/ipv6": [ "read" ],
+				"/proc/sys/dev/nss/general/redirect": [ "read" ]
+			},
+			"ubus": {
+				"file": [ "read", "list" ]
+			},
+			"uci": [ "ecm" ]
+		},
+		"write": {
+			"uci": [ "ecm" ]
+		}
+	}
+}

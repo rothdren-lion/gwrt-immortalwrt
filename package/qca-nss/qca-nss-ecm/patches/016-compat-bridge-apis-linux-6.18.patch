@@ -1,0 +1,86 @@
+--- a/frontends/cmn/ecm_ipv4.c
++++ b/frontends/cmn/ecm_ipv4.c
+@@ -1939,7 +1939,7 @@
+ 	bool can_accel = true;
+ 	unsigned int result = NF_ACCEPT;
+ 	struct net_device *dest_dev __maybe_unused;
+-	uint16_t vid __maybe_unused;
++	uint16_t vid __maybe_unused = 0;
+ 
+ 	DEBUG_TRACE("%px: IPv4 CMN Bridge: %s skb=%px\n", out, out->name, skb);
+ 
+@@ -2077,7 +2077,7 @@
+ 	 * enabled/disabled for ports individually.
+ 	 */
+ 	if (in == out) {
+-		if (!br_is_hairpin_enabled(in)) {
++		if (!br_port_flag_is_set(in, BR_HAIRPIN_MODE)) {
+ 			DEBUG_TRACE("skb: %px, bridge: %px (%s), ignoring"
+ 					"the packet, hairpin not enabled"
+ 					"on port %px (%s)\n", skb, bridge,
+@@ -2107,7 +2107,9 @@
+ 		 * TODO: Enhance br_fdb_has_entry() to make it VLAN filter aware.
+ 		 */
+ 		rcu_read_lock();
+-		dest_dev = br_fdb_find_vid_by_mac(bridge, skb_eth_hdr->h_dest, &vid);
++		dest_dev = br_fdb_find_port(bridge, skb_eth_hdr->h_dest, vid);
++		if (dest_dev)
++			dev_hold(dest_dev);
+ 		if (!dest_dev) {
+ 			DEBUG_TRACE("skb: %px, br_fdb_find_vid_by_mac() returned NULL dest_dev for dest_mac(%pM) %px (%s) vid=%d\n",
+ 					skb, skb_eth_hdr->h_dest, bridge, bridge->name, vid);
+--- a/frontends/cmn/ecm_ipv6.c
++++ b/frontends/cmn/ecm_ipv6.c
+@@ -2056,7 +2056,7 @@
+ 	bool can_accel = true;
+ 	unsigned int result = NF_ACCEPT;
+ 	struct net_device *dest_dev __maybe_unused;
+-	uint16_t vid __maybe_unused;
++	uint16_t vid __maybe_unused = 0;
+ 
+ 	DEBUG_TRACE("%px: IPv6 CMN Bridge: %s\n", out, out->name);
+ 
+@@ -2194,7 +2194,7 @@
+ 	 * enabled/disabled for ports individually.
+ 	 */
+ 	if (in == out) {
+-		if (!br_is_hairpin_enabled(in)) {
++		if (!br_port_flag_is_set(in, BR_HAIRPIN_MODE)) {
+ 			DEBUG_TRACE("skb: %px, bridge: %px (%s), ignoring"
+ 					"the packet, hairpin not enabled"
+ 					"on port %px (%s)\n", skb, bridge,
+@@ -2221,7 +2221,9 @@
+ 		 */
+ #ifdef ECM_BRIDGE_VLAN_FILTERING_ENABLE
+ 		rcu_read_lock();
+-		dest_dev = br_fdb_find_vid_by_mac(bridge, skb_eth_hdr->h_dest, &vid);
++		dest_dev = br_fdb_find_port(bridge, skb_eth_hdr->h_dest, vid);
++		if (dest_dev)
++			dev_hold(dest_dev);
+ 		if (!dest_dev) {
+ 			DEBUG_TRACE("skb: %px, br_fdb_find_vid_by_mac() returned NULL dest_dev for dest_mac(%pM) %px (%s) vid=%d\n",
+ 					skb, skb_eth_hdr->h_dest, bridge, bridge->name, vid);
+--- a/ecm_db/ecm_db_connection.c
++++ b/ecm_db/ecm_db_connection.c
+@@ -2822,7 +2822,9 @@
+ 				/*
+ 				 * Find src_mac addr in the "bridge" fdb table, to get vlan id.
+ 				 */
+-				netdev = br_fdb_find_vid_by_mac(bridge, src_mac_addr, vid);
++				netdev = br_fdb_find_port(bridge, src_mac_addr, *vid);
++				if (netdev)
++					dev_hold(netdev);
+ 				if (!netdev) {
+ 					DEBUG_TRACE("skb: %px, VID was not found for src_mac(%pM) on bridge: %px (%s)\n",
+ 							skb, src_mac_addr, bridge, bridge->name);
+@@ -3002,7 +3004,9 @@
+ 				/*
+ 				 * Find src_mac addr in the "bridge" fdb table, to get vlan id.
+ 				 */
+-				netdev = br_fdb_find_vid_by_mac(bridge, src_mac_addr, vid);
++				netdev = br_fdb_find_port(bridge, src_mac_addr, *vid);
++				if (netdev)
++					dev_hold(netdev);
+ 				if (!netdev) {
+ 					DEBUG_TRACE("skb: %px, VID was not found for src_mac(%pM) on bridge: %px (%s)\n",
+ 							skb, src_mac_addr, bridge, bridge->name);

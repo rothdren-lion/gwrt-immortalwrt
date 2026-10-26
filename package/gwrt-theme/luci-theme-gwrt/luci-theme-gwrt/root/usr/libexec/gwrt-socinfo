@@ -1,0 +1,10 @@
+#!/bin/sh
+# GWRT dashboard helper: 输出 SoC/CPU 信息（每行一个字段）
+#   line1: SoC 代号（如 mt7981，取不到则为空）
+#   line2: CPU 核数
+#   line3: 最高频率 kHz（无 cpufreq 时为空）
+tr '\0' '\n' < /proc/device-tree/compatible 2>/dev/null \
+	| grep -m1 -o 'mediatek,mt[0-9]*[a-z]*' \
+	| sed 's/^mediatek,//'
+grep -c '^processor' /proc/cpuinfo 2>/dev/null
+cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null

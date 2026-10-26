@@ -1,0 +1,50 @@
+#!/bin/sh
+# GWRT SSID 命名：GWRT_<频段>_<MAC后4>
+#   2.4G -> GWRT_2.4G_XXXX
+#   5G   -> GWRT_5.2G_XXXX（信道 < 149）/ GWRT_5.8G_XXXX（>= 149）
+# 只改"默认/空"SSID，用户自定义的不动。幂等，可反复调用。
+
+[ -f /etc/config/wireless ] || exit 0
+
+mac="$(cat /sys/class/net/eth0/address 2>/dev/null)"
+[ -n "$mac" ] || mac="$(cat /sys/class/net/br-lan/address 2>/dev/null)"
+[ -n "$mac" ] || mac="$(cat /sys/class/net/eth1/address 2>/dev/null)"
+mac4="$(printf '%s' "$mac" | tr -d ':' | tr 'a-f' 'A-F' | tail -c 4)"
+[ ${#mac4} -eq 4 ] || mac4="0000"
+
+is_default_ssid() {
+	case "$1" in
+		""|GWRT|OpenWrt|ImmortalWrt|LEDE|GWRT-AX3000|GWRT-AX3000-5G) return 0 ;;
+		GWRT_2.4G_*|GWRT_5.2G_*|GWRT_5.8G_*|GWRT_5G_*|GWRT_6G_*)
+			# 只有后缀 = 本机 MAC4 才算默认名；别的后缀是主AP mesh 下发的
+			[ "$(printf '%s' "${1##*_}" | tr 'a-f' 'A-F')" = "$(printf '%s' "$mac4" | tr 'a-f' 'A-F')" ] && return 0
+			return 1 ;;
+	esac
+	return 1
+}
+
+changed=0
+for iface in $(uci -q show wireless | sed -n 's/^wireless\.\([^.]*\)=wifi-iface$/\1/p'); do
+	[ "$(uci -q get "wireless.$iface.mode")" = ap ] || continue
+	dev="$(uci -q get "wireless.$iface.device")"
+	[ -n "$dev" ] || continue
+	band="$(uci -q get "wireless.$dev.band")"
+	ch="$(uci -q get "wireless.$dev.channel")"
+	case "$band" in
+		2g) label="2.4G" ;;
+		5g) if [ "${ch:-0}" -ge 149 ] 2>/dev/null; then label="5.8G"; else label="5.2G"; fi ;;
+		*) label="5G" ;;
+	esac
+	cur="$(uci -q get "wireless.$iface.ssid")"
+	is_default_ssid "$cur" || continue
+	new="GWRT_${label}_${mac4}"
+	[ "$cur" = "$new" ] && continue
+	uci -q set "wireless.$iface.ssid=$new" && changed=1
+done
+
+if [ "$changed" = "1" ]; then
+	uci -q commit wireless
+	logger -t gwrt-ssid "SSID -> GWRT_<band>_$mac4"
+	[ "$1" = "--reload" ] && wifi reload >/dev/null 2>&1
+fi
+exit 0

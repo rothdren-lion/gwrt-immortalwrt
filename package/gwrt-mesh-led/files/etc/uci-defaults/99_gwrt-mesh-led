@@ -1,0 +1,23 @@
+#!/bin/sh
+# mesh 状态灯默认值 + 开机启用
+#
+# gwrt.mesh_led.leds:
+#   auto                     自动选（有 blue:status 用蓝灯，否则 red+green）
+#   blue:status              XINGLOO AX3000 默认
+#   "red:status green:status" Qihoo 360T7（两灯同亮 = 琥珀色）
+
+[ -f /etc/config/gwrt ] || touch /etc/config/gwrt
+uci -q get gwrt.mesh_led >/dev/null 2>&1 || {
+	uci -q set gwrt.mesh_led='mesh_led'
+	uci -q set gwrt.mesh_led.leds='auto'
+	uci -q set gwrt.mesh_led.enabled='1'
+	uci -q commit gwrt
+}
+
+if [ "$(uci -q get gwrt.mesh_led.enabled)" != "0" ]; then
+	# 只 enable：本脚本跑在 S10boot（rcS 之前），rcS 会正常启动一次；
+	# 这里再 restart 会和 rcS 各起一个实例
+	/etc/init.d/gwrt-mesh-led enable >/dev/null 2>&1
+fi
+
+exit 0

@@ -1,0 +1,13 @@
+{
+	"admin/services/kixdns": {
+		"title": "KixDNS",
+		"order": 60,
+		"action": {
+			"type": "view",
+			"path": "kixdns-lite/main"
+		},
+		"depends": {
+			"acl": [ "luci-app-kixdns-lite" ]
+		}
+	}
+}

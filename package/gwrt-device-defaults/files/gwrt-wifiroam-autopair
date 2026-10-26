@@ -1,0 +1,67 @@
+#!/bin/sh
+# 主 AP：自动发现“未配置”的 AP 并配对（同一二层 / 同一回传 SSID）
+#
+# - 常驻循环：角色可以在运行时从 unconfigured 切成 cap（UI 里“设为主AP”），
+#   所以不能启动时判断一次就退出
+# - role=cap 且 backhaul 开启时：每 60s 发现并配对 role=unconfigured 的设备
+# - 配对成功后守护进程会把漫游/回传配置推给对方
+# - 顺便保证本机漫游配置（k/v/r + FT）已写入 wireless：
+#   守护进程只在 set_roam 时写 wireless，重启后不会自己应用
+
+log() { logger -t wifiroam-autopair "$@"; }
+
+wait_ubus() {
+	i=0
+	while [ "$i" -lt 30 ]; do
+		ubus -S list wifiroam >/dev/null 2>&1 && return 0
+		sleep 1
+		i=$((i + 1))
+	done
+	return 1
+}
+
+apply_roam() {
+	[ "$(uci -q get wifiroam.roam.enabled)" = "1" ] || return 0
+	ssids="$(uci -q get wifiroam.roam.ssids)"
+	[ -n "$ssids" ] || return 0
+
+	need=0
+	for i in $(uci -q show wireless | sed -n 's/^wireless\.\([^.]*\)=wifi-iface$/\1/p'); do
+		[ "$(uci -q get "wireless.$i.mode")" = ap ] || continue
+		s="$(uci -q get "wireless.$i.ssid")"
+		case " $ssids " in *" $s "*) ;; *) continue ;; esac
+		[ "$(uci -q get "wireless.$i.ieee80211r")" = "1" ] || need=1
+	done
+	[ "$need" = 1 ] || return 0
+
+	json=""
+	for s in $ssids; do
+		json="$json\"$s\","
+	done
+	json="[${json%,}]"
+	ubus call wifiroam set_roam "{\"enabled\":true,\"ssids\":$json,\"r_fast\":true,\"ft_mode\":\"simple\",\"ft_over_ds\":true,\"k_neighbor\":true,\"k_beacon\":true,\"v_bss_transition\":true,\"rssi_profile\":\"balanced\",\"rssi_threshold\":-70}" >/dev/null 2>&1 \
+		&& log "roam config applied"
+}
+
+wait_ubus || exit 0
+
+while true; do
+	if [ "$(uci -q get wifiroam.core.role)" = "cap" ]; then
+		apply_roam
+		if [ "$(uci -q get wifiroam.backhaul.enabled)" = "1" ]; then
+			devs="$(ubus call wifiroam discover 2>/dev/null | \
+				jsonfilter -e '@.devices[*].mac' 2>/dev/null)"
+			for m in $devs; do
+				[ -n "$m" ] || continue
+				res="$(ubus call wifiroam pair "{\"mac\":\"$m\"}" 2>/dev/null)"
+				case "$res" in
+					*'"ok":true'*|*'"ok": true'*)
+						log "auto paired $m" ;;
+					*)
+						: ;;
+				esac
+			done
+		fi
+	fi
+	sleep 60
+done

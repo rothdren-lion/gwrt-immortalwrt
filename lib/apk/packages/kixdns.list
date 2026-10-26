@@ -1,0 +1,4 @@
+/etc/config/kixdns
+/etc/init.d/kixdns
+/etc/kixdns/pipeline.json
+/usr/bin/kixdns

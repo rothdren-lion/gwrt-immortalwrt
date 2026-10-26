@@ -1,0 +1,211 @@
+#!/bin/sh
+# podmanmarket - ubus rpcd service for luci-app-podman-market
+
+. /usr/share/libubox/jshn.sh
+. /usr/share/podman-market/lib.sh
+
+json_escape_str() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\r\n\t'; }
+
+list() {
+	local have=0 ver
+	if ver=$(podman_version); then
+		have=1
+	fi
+
+	json_init
+	json_add_boolean podman_present "$have"
+	json_add_string podman_version "${ver:-}"
+
+	# graphroot 缓存 60s（podman info 较慢）
+	local graphroot="" gfile="$RUNDIR/graphroot"
+	if [ "$have" = "1" ]; then
+		if [ ! -f "$gfile" ] || ! touch -r "$gfile" >/dev/null 2>&1; then
+			graphroot=$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null)
+			mkdir -p "$RUNDIR"
+			printf '%s' "$graphroot" > "$gfile"
+		else
+			local age
+			age=$(awk -v now="$(date +%s)" -v mt="$(stat -c %Y "$gfile" 2>/dev/null)" 'BEGIN{print now-mt}')
+			if [ -n "$age" ] && [ "$age" -gt 60 ]; then
+				graphroot=$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null)
+				printf '%s' "$graphroot" > "$gfile"
+			else
+				graphroot=$(cat "$gfile")
+			fi
+		fi
+	fi
+	json_add_string graphroot "${graphroot:-}"
+
+	# 单次 podman ps: |name=state|
+	local psmap="" line name st
+	[ "$have" = "1" ] && while IFS=$'\t' read -r name st; do
+		[ -n "$name" ] && psmap="$psmap|$name=$st|"
+	done <<EOF
+$(podman ps -a --format '{{.Names}}	{{.State}}' 2>/dev/null)
+EOF
+
+	json_add_array apps
+	local id name desc icon image web
+	while IFS=$'\t' read -r id name desc icon image web; do
+		[ -n "$id" ] || continue
+		json_add_object
+		json_add_string id "$id"
+		json_add_string name "$name"
+		json_add_string desc "$desc"
+		json_add_string icon "$icon"
+		json_add_string image "$image"
+		json_add_string web "$web"
+		local deployed=0 running=0 st au pt dt hd=0 dd
+		case "$psmap" in
+			*"|$id="*)
+				deployed=1
+				case "$psmap" in *"|$id=running|"*) running=1 ;; esac
+			;;
+		esac
+		json_add_boolean deployed "$deployed"
+		json_add_boolean running "$running"
+		au=$(uci -q get "podman-market.$id.autostart")
+		pt=$(uci -q get "podman-market.$id.port")
+		dt=$(uci -q get "podman-market.$id.data")
+		json_add_int autostart "${au:-0}"
+		json_add_string port "${pt:-}"
+		json_add_string data "${dt:-}"
+		if [ "$deployed" = "0" ]; then
+			dd="${dt:-$DATAROOT_DEFAULT/$id}"
+			if [ -d "$dd" ] && [ -n "$(ls -A "$dd" 2>/dev/null | head -c1)" ]; then
+				hd=1
+			fi
+		fi
+		json_add_boolean has_data "$hd"
+		json_add_string job "$(job_state "$id")"
+		local lt=""
+		[ -f "$RUNDIR/$id.log" ] && lt=$(tail -n 3 "$RUNDIR/$id.log" 2>/dev/null | tr '\n' ' ' | cut -c1-200)
+		json_add_string log_tail "$(json_escape_str "$lt")"
+		json_close_object
+	done < /usr/share/podman-market/catalog.tsv
+	json_close_array
+	json_dump
+}
+
+job() {
+	read input
+	json_load "$input"
+	json_get_var id id
+	json_init
+	json_add_string state "$(job_state "$id")"
+	local lt=""
+	[ -f "$RUNDIR/$id.log" ] && lt=$(tail -n 40 "$RUNDIR/$id.log" 2>/dev/null)
+	json_add_string log "$(json_escape_str "$lt")"
+	local ex=""
+	[ -f "$RUNDIR/$id.exit" ] && ex=$(cat "$RUNDIR/$id.exit")
+	json_add_string exit "$ex"
+	json_dump
+}
+
+deploy() {
+	read input
+	json_load "$input"
+	json_get_var id id
+	json_get_var port port
+	json_get_var data data
+	json_get_var autostart autostart
+
+	have_podman || { echo '{"ok":false,"error":"no_podman"}'; return; }
+	valid_id "$id" || { echo '{"ok":false,"error":"bad_id"}'; return; }
+
+	start_job "$id" sh -c ". /usr/share/podman-market/lib.sh; do_deploy '$(sanitize "$id")' '$(sanitize "$port")' '$(sanitize "$data")' '$([ "$autostart" = "0" ] && echo 0 || echo 1)'"
+	echo '{"ok":true}'
+}
+
+update_app() {
+	read input
+	json_load "$input"
+	json_get_var id id
+	container_exists "$id" || { echo '{"ok":false,"error":"not_deployed"}'; return; }
+	start_job "$id" sh -c ". /usr/share/podman-market/lib.sh; redeploy_stored '$(sanitize "$id")'"
+	echo '{"ok":true}'
+}
+
+action() {
+	read input
+	json_load "$input"
+	json_get_var id id
+	json_get_var op op
+
+	have_podman || { echo '{"ok":false,"error":"no_podman"}'; return; }
+	valid_id "$id" || { echo '{"ok":false,"error":"bad_id"}'; return; }
+
+	case "$op" in
+		start)   container_exists "$id" && podman start "$id" >/dev/null 2>&1 ;;
+		stop)    container_exists "$id" && podman stop "$id" >/dev/null 2>&1 ;;
+		restart) container_exists "$id" && podman restart "$id" >/dev/null 2>&1 ;;
+		remove)  podman rm -f "$id" >/dev/null 2>&1; uci -q delete "podman-market.$id"; uci commit podman-market ;;
+		*) echo '{"ok":false,"error":"bad_op"}'; return ;;
+	esac
+	echo '{"ok":true}'
+}
+
+set_autostart() {
+	read input
+	json_load "$input"
+	json_get_var id id
+	json_get_var on on
+	valid_id "$id" || { echo '{"ok":false,"error":"bad_id"}'; return; }
+	uci set "podman-market.$id=app"
+	uci set "podman-market.$id.autostart=$([ "$on" = "1" ] && echo 1 || echo 0)"
+	uci commit podman-market
+	echo '{"ok":true}'
+}
+
+logs() {
+	read input
+	json_load "$input"
+	json_get_var id id
+	json_init
+	json_add_string log "$(json_escape_str "$(podman logs --tail 100 "$id" 2>&1 | tail -n 100)")"
+	json_dump
+}
+
+case "$1" in
+	list)
+		json_init
+		json_add_object list
+			json_close_object
+		json_add_object job
+			json_add_string id "string"
+		json_close_object
+		json_add_object deploy
+			json_add_string id "string"
+			json_add_string port "string"
+			json_add_string data "string"
+			json_add_string autostart "string"
+		json_close_object
+		json_add_object update
+			json_add_string id "string"
+		json_close_object
+		json_add_object action
+			json_add_string id "string"
+			json_add_string op "string"
+		json_close_object
+		json_add_object autostart
+			json_add_string id "string"
+			json_add_string on "string"
+		json_close_object
+		json_add_object logs
+			json_add_string id "string"
+		json_close_object
+		json_dump
+		;;
+	call)
+		case "$2" in
+			list)      list ;;
+			job)       job ;;
+			deploy)    deploy ;;
+			update)    update_app ;;
+			action)    action ;;
+			autostart) set_autostart ;;
+			logs)      logs ;;
+			*)         echo '{}' ;;
+		esac
+		;;
+esac

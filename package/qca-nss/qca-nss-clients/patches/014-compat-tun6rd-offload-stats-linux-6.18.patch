@@ -1,0 +1,14 @@
+--- a/nss_connmgr_tun6rd.c
++++ b/nss_connmgr_tun6rd.c
+@@ -115,7 +115,10 @@
+ 	stats.tx_bytes = sync_stats->node_stats.tx_bytes;
+ #endif
+ 
+-	ipip6_update_offload_stats(dev, (void *)&stats);
++	/* ipip6_update_offload_stats() was removed in Linux 6.18;
++	 * per-iface offload counters are no longer pushed from NSS sync. */
++	(void)dev;
++	(void)stats;
+ }
+ 
+ /*

@@ -1,0 +1,71 @@
+#!/bin/sh
+# XINGLOO AX3000 (CF-WR630AX) 首次启动无线默认值
+#
+# - 打开所有 radio
+# - 默认/空 SSID -> GWRT_<频段>_<MAC后4>（命名逻辑在 /usr/libexec/gwrt-ssid-name）
+# - 加密 none/空 -> WPA2(psk2+ccmp) + 默认口令 12345678
+# 用户自己改过的 SSID/密码不会被覆盖。
+
+DEF_KEY="12345678"
+
+[ -f /etc/config/wireless ] || exit 0
+
+fix_radio() {
+	local radio="$1"
+	uci -q get "wireless.$radio" >/dev/null 2>&1 || return 0
+	uci -q set "wireless.$radio.disabled=0"
+
+	local sec
+	sec="$(uci -q show wireless | sed -n "s/^wireless\.\([^.]*\)\.device='$radio'.*/\1/p" | grep -v '^default_' | head -n1)"
+	[ -n "$sec" ] || sec="default_$radio"
+
+	if ! uci -q get "wireless.$sec" >/dev/null 2>&1; then
+		uci -q set "wireless.$sec=wifi-iface"
+		uci -q set "wireless.$sec.device=$radio"
+		uci -q set "wireless.$sec.mode=ap"
+		uci -q set "wireless.$sec.network=lan"
+	fi
+
+	local enc key
+	enc="$(uci -q get "wireless.$sec.encryption")"
+	key="$(uci -q get "wireless.$sec.key")"
+	case "$enc" in
+		*"'"*)
+			# 之前误写成带引号的值（如 'psk2+ccmp'），修回来
+			uci -q set "wireless.$sec.encryption=psk2+ccmp"
+			[ -n "$key" ] || uci -q set "wireless.$sec.key=$DEF_KEY"
+			;;
+		none|"")
+			if [ -z "$key" ]; then
+				uci -q set "wireless.$sec.encryption=psk2+ccmp"
+				uci -q set "wireless.$sec.key=$DEF_KEY"
+			fi
+			;;
+	esac
+	uci -q set "wireless.$sec.disabled=0"
+
+	# 5G：硬件支持 VHT/HE 160MHz，默认开 160（36 信道 36-64 整段）
+	case "$(uci -q get "wireless.$radio.band")" in
+		5g)
+			uci -q set "wireless.$radio.htmode=HE160"
+			uci -q set "wireless.$radio.channel=36"
+			;;
+	esac
+	# 区域码（160MHz / DFS 需要）
+	uci -q set "wireless.$radio.country=CN"
+}
+
+for r in $(uci -q show wireless | sed -n 's/^wireless\.\([^.]*\)=wifi-device$/\1/p'); do
+	fix_radio "$r"
+done
+
+uci -q commit wireless
+
+# SSID 命名（GWRT_<频段>_<MAC后4>）
+if [ -x /usr/libexec/gwrt-ssid-name ]; then
+	/usr/libexec/gwrt-ssid-name --reload
+else
+	wifi reload >/dev/null 2>&1 || true
+fi
+
+exit 0

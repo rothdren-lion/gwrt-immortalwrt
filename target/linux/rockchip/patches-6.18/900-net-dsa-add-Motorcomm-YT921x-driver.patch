@@ -1,0 +1,65 @@
+From: BDY G98 port <g98@local>
+Subject: [PATCH] net: dsa: add Motorcomm YT921x switch driver
+
+Add the DSA driver and tag driver for the Motorcomm YT921x switch family
+(YT9213/YT9214/YT9215/YT9218), as used on the BDY (彼度云) G98 RK3588
+router with two YT9215S chips behind GMAC0/GMAC1.
+
+Driver source is taken verbatim from the BDY G98 kernel tree
+(https://github.com/yifengyou/BDY_G98_RK3588-kernel, drivers/net/dsa/yt921x.c),
+Copyright (c) 2025 David Yang, SPDX-License-Identifier: GPL-2.0-or-later.
+The .c/.h files themselves are shipped via target/linux/rockchip/files/, this
+patch only wires up Kconfig and Makefile.
+
+DT binding: Documentation/devicetree/bindings/net/dsa/motorcomm,yt921x.yaml
+  compatible = "motorcomm,yt9215", reg = <0x0|0x1d> on an mdio bus,
+  plus a standard DSA ethernet-ports subnode.
+---
+--- a/drivers/net/dsa/Kconfig
++++ b/drivers/net/dsa/Kconfig
+@@ -154,4 +154,12 @@
+ 	  This enables support for the Vitesse VSC7385, VSC7388, VSC7395
+ 	  and VSC7398 SparX integrated ethernet switches, connected over
+ 	  a CPU-attached address bus and work in memory-mapped I/O mode.
++
++config NET_DSA_YT921X
++	tristate "Motorcomm YT9215 ethernet switch chip support"
++	select NET_DSA_TAG_YT921X
++	select NET_IEEE8021Q_HELPERS if DCB
++	help
++	  This enables support for the Motorcomm YT9215 ethernet switch
++	  chip.
+ endmenu
+--- a/drivers/net/dsa/Makefile
++++ b/drivers/net/dsa/Makefile
+@@ -14,6 +14,7 @@
+ obj-$(CONFIG_NET_DSA_VITESSE_VSC73XX) += vitesse-vsc73xx-core.o
+ obj-$(CONFIG_NET_DSA_VITESSE_VSC73XX_PLATFORM) += vitesse-vsc73xx-platform.o
+ obj-$(CONFIG_NET_DSA_VITESSE_VSC73XX_SPI) += vitesse-vsc73xx-spi.o
++obj-$(CONFIG_NET_DSA_YT921X) += yt921x.o
+ obj-y				+= b53/
+ obj-y				+= hirschmann/
+ obj-y				+= lantiq/
+--- a/net/dsa/Kconfig
++++ b/net/dsa/Kconfig
+@@ -190,4 +190,10 @@
+ 	  Say Y or M if you want to enable support for tagging frames for
+ 	  Arrow SpeedChips XRS700x switches that use a single byte tag trailer.
+ 
++config NET_DSA_TAG_YT921X
++	tristate "Tag driver for Motorcomm YT921x switches"
++	help
++	  Say Y or M if you want to enable support for tagging frames for
++	  Motorcomm YT921x switches.
++
+ endif
+--- a/net/dsa/Makefile
++++ b/net/dsa/Makefile
+@@ -39,6 +39,7 @@
+ obj-$(CONFIG_NET_DSA_TAG_TRAILER) += tag_trailer.o
+ obj-$(CONFIG_NET_DSA_TAG_VSC73XX_8021Q) += tag_vsc73xx_8021q.o
+ obj-$(CONFIG_NET_DSA_TAG_XRS700X) += tag_xrs700x.o
++obj-$(CONFIG_NET_DSA_TAG_YT921X) += tag_yt921x.o
+ 
+ # for tracing framework to find trace.h
+ CFLAGS_trace.o := -I$(src)
