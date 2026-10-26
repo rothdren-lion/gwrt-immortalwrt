@@ -557,3 +557,32 @@ daemon.err oafd: killall: rule_manager: no process killed   ← 因为 rule_mana
 - `bin-wr630ax-261025-34/`（sysupgrade sha256 `eb65c7e369489eba…`）
 - `bin-360t7-261025-34/`（`qihoo_360t7` `81e8f4aa3e381f58…`；
   `-ubi` `8a6425ade3f085f0…`）
+
+---
+
+# 追加：GWRT 261025-35 ~ 43（纯无线配对 + 回传策略定稿）
+
+## 型号显示
+- 去掉 `DEVICE_ALT0`（COMFAST CF-WR630AX），UI/APP 统一 XINGLOO AX3000
+- profile 名保留 `comfast_cf-wr630ax`（sysupgrade BOARD 校验需要），镜像文件名不变
+
+## 纯无线配对（已验证）
+- 未组网 + 无网线：自动建 **2.4G STA（wds=0，network=wwan）** 连主AP 的 `mesh-gwrt`
+- 主AP 2.4G 隐藏 AP（`wifiroam_bh2`，ch1）由守护进程创建
+- 子AP 拿到 192.168.9.110 → 主AP discover → 配对成功
+
+## 回传策略（最终）
+| 上行 | 模式 |
+|---|---|
+| 有线 | 真 AP（WAN 并 br-lan、LAN DHCP、关插件、无缝漫游） |
+| 无线 | 路由/NAT（STA 2.4G wds=0 在 wwan，LAN 192.168.3.3+DHCP，NAT） |
+
+实测（无网线）：配对后 `ping 8.8.8.8` 通（~190ms），5G 热点保持 ch36/160 给客户端。
+- 4-addr WDS：JDCloud 主AP 会 40s 后移除 WDS station → 不可用
+- relayd：本树 netifd 缺 `relay` proto handler → 不可用
+- 因此无线用 NAT 保证有网；要无缝漫游用有线
+
+## 版本
+- **GWRT 261025-43**（真机已刷，无线 NAT 模式验证通过）
+- `bin-wr630ax-261025-43/`（sysupgrade `3073f3a0c0e6caad…`）
+- `bin-360t7-261025-43/`（`0f4753d8236528a7…` / UBI `738a1446a89203bb…`）

@@ -257,3 +257,23 @@ logread | grep -E "wifi sync|state .*-> ok|AP mode ok"
 /usr/libexec/gwrt-mesh-apmode off
 # → unconfigured / 192.168.3.3 / GWRT_* SSID / 插件恢复 / discover 为空
 ```
+
+---
+
+## 14. 最终回传策略（261025-43 起）
+
+| 上行 | 模式 | 说明 |
+|---|---|---|
+| **有线（eth1 carrier=1）** | 真 AP | WAN 并入 br-lan、LAN DHCP 取主路由地址、关 10 个插件；无缝漫游 |
+| **无线（无网线）** | 路由/NAT | STA（默认 2.4G，3-addr）在 wwan 拿主路由地址；本机 LAN 保持 192.168.3.3 + DHCP；NAT 出网；SSID 已同步；**没有无缝漫游**（不同网段） |
+| 解绑/掉线 | 回路由 | 恢复原 SSID/密码 + 192.168.3.3 + 插件 |
+
+### 为什么无线不做桥接
+- 4-addr WDS：主AP（JDCloud ath11k）会 `WDS-STA-INTERFACE-ADDED` 后约 40s `REMOVED`，桥接断、DHCP 不通。
+- relayd：本树 netifd 没有 `relay` proto handler（`/lib/netifd/proto/relay.sh` 缺失），`proto relay` 接口建不起来。
+- 因此无线回传采用 **3-addr STA + NAT**，保证“有网”；要无缝漫游请用有线回传。
+
+### 配对阶段
+- 未组网 + 无有线：自动建 **2.4G STA（wds=0，network=wwan）** 连主AP 的 `mesh-gwrt`（主AP 2.4G 隐藏 AP，ch1），拿地址后被 discover。
+- 配对后：`wifiroam_bh` 保持 wds=0/wwan（NAT 用），LAN 回 192.168.3.3 + DHCP。
+- 5G 回传（可选）：`uci set wifiroam.backhaul.band=5g`，主AP 下发 channel，子AP 5G 热点自动对齐（AP+STA 同频）；默认 `auto`→2.4G（最稳）。

@@ -36,6 +36,21 @@ ssh root@192.168.3.3 'sysupgrade -n /tmp/su.bin'
 
 注意：build 树没有 `.git`，必须给 `REVISION`（`gwrt-build-wr630ax.sh` 已处理）。
 
+### MT7621（京东云鲁班 RE-CP-02）— 走 GitHub Actions 云端编译
+
+本地磁盘不足（剩 ~40G，全量树需 ~25G），MT7621 编译在私有仓
+`rothdren-lion/gwrt-immortalwrt`（含同名源码快照 + CI）：
+
+```sh
+# 触发云端编译（可加 -f version=261026-01 -f release=true）
+gh workflow run gwrt-build.yml -R rothdren-lion/gwrt-immortalwrt -f device=cp02
+gh run list -R rothdren-lion/gwrt-immortalwrt --limit 3
+gh run download <run-id> -R rothdren-lion/gwrt-immortalwrt -D /tmp/cp02-out
+```
+
+改 cp02 相关文件后需同步到该仓（导出副本在 `/home/godsun/build/gwrt-github-export`，
+rsync + commit + push）。本地备份编译步骤见 `docs/WORKLOG-20261026-jdcloud-cp02-mt7621.md`。
+
 ---
 
 ## 2. 代码地图
@@ -43,6 +58,7 @@ ssh root@192.168.3.3 'sysupgrade -n /tmp/su.bin'
 | 路径 | 内容 |
 |---|---|
 | `gwrt-mk-wr630ax-config.sh` | 配置生成器（设备 profile、插件集、turboacc/coremark 选项） |
+| `gwrt-mk-cp02-config.sh` / `gwrt-build-cp02.sh` | MT7621 鲁班 RE-CP-02 最低 mesh 配置生成器 + 本地编译脚本（主走 GitHub CI） |
 | `target/linux/mediatek/dts/mt7981b-comfast-cf-wr630ax*.dts` | XINGLOO 设备树（含 512M 变体） |
 | `target/linux/mediatek/image/filogic.mk` | 设备定义（`comfast_cf-wr630ax*`、`qihoo_360t7*`） |
 | `package/gwrt-device-defaults/` | 首启默认值（LAN IP、SSID、wifiroam、防火墙、APK 预置） |
@@ -72,6 +88,12 @@ ssh root@192.168.3.3 'sysupgrade -n /tmp/su.bin'
    easytier/bandix-plus/appfilter/ttyd；回路由时按原启用状态恢复。
 7. **强制退出 AP**：`/usr/libexec/gwrt-mesh-apmode off` 或 APP
    `mesh.apmode {"enabled":0}` → 解绑 + 回 192.168.3.3 + 恢复原 SSID + 停止广播。
+8. **回传策略**：有线 = 真 AP（无缝）；无线 = 3-addr STA + NAT（保证有网，无漫游）。
+   4-addr WDS 在 JDCloud 主AP 上不稳定；relayd 在本树缺 proto handler。
+9. **跨架构（MT7621/mipsel）**：`gwrt-agent` 的 aarch64 预编译二进制仅随 aarch64 目标安装
+   （PKGARCH:=all + Makefile 架构条件），mipsel 上 shim 自动退回最小遥测载荷；
+   `ucode-mod-socket`/`ucode-mod-digest` 必须编入固件（cp02 配置已选）；
+   预置 apk（含 aarch64 ucode-mod-socket）在 mipsel 不安装。
 
 ---
 
@@ -120,3 +142,10 @@ sh scripts/gwrt-sync-mesh.sh /path/to/openwrt
 
 复制 `gwrt-mesh-led`、`gwrt-mesh-apmode`、`gwrt-device-defaults`、
 `gwrt-agent`、`gwrt-theme` 以及 `docs/GWRT-MESH.md`。
+
+---
+
+## 7. 操作日志索引
+
+- `docs/WORKLOG-20261026-jdcloud-cp02-mt7621.md` — cp02 最低 mesh 集成、
+  gwrt-agent/device-defaults 跨架构改造、GitHub Actions 云端编译（ipq5018 待确认机型后移植）
