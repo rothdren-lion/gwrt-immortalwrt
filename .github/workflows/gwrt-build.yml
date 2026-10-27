@@ -10,6 +10,7 @@ on:
         type: choice
         options:
           - cp02
+          - pzl8
       version:
         description: 'Version (YYMMDD-NN), empty = today-01'
         required: false
@@ -61,6 +62,14 @@ jobs:
           restore-keys: |
             gwrt-dl-
 
+      - name: Cache toolchain
+        uses: actions/cache@v4
+        with:
+          path: staging_dir/toolchain-*
+          key: gwrt-tc-${{ hashFiles('toolchain/**', 'tools/**', 'include/kernel*', 'rules.mk', 'Config.in') }}
+          restore-keys: |
+            gwrt-tc-
+
       - name: Install feeds
         run: |
           ./scripts/feeds update -a
@@ -73,6 +82,7 @@ jobs:
           echo "VER=$VER" >> "$GITHUB_ENV"
           case "${{ inputs.device }}" in
             cp02) OUT=.config VER="$VER" sh gwrt-mk-cp02-config.sh ;;
+            pzl8) OUT=.config VER="$VER" sh gwrt-mk-pzl8-config.sh ;;
             *) echo "unknown device preset: ${{ inputs.device }}"; exit 1 ;;
           esac
           make defconfig
