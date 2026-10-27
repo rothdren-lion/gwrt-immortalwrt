@@ -104,6 +104,8 @@ jobs:
         run: |
           mkdir -p out
           find bin/targets -type f \( -name '*sysupgrade*' -o -name '*factory*' -o -name '*initramfs*' -o -name '*.manifest' -o -name 'sha256sums' \) -exec cp -v {} out/ \;
+          find bin/targets -maxdepth 3 -type f \( -name 'profiles.json' -o -name 'version.buildinfo' -o -name 'config.buildinfo' -o -name 'feeds.buildinfo' \) -exec cp -v {} out/ \;
+          find bin/packages -type f -name 'easytier*.apk' -exec cp -v {} out/ \;
           cp .config "out/config-${{ inputs.device }}-${{ env.VER }}"
 
       - name: Upload artifact
