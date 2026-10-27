@@ -70,6 +70,10 @@ config-$(call config_package,ath11k) += ATH11K
 config-$(call config_package,ath11k-ahb) += ATH11K_AHB
 config-$(call config_package,ath11k-pci) += ATH11K_PCI
 config-$(call config_package,ath12k) += ATH12K
+ifdef CONFIG_PACKAGE_kmod-ath12k
+  config-y += ATH12K_AHB
+  config-$(CONFIG_TARGET_qualcommbe) += ATH12K_COREDUMP ATH12K_PPE_DS_SUPPORT
+endif
 
 config-$(call config_package,ath5k) += ATH5K ATH5K_PCI
 
@@ -353,7 +357,7 @@ define KernelPackage/ath11k/config
        config ATH11K_THERMAL
                bool "Enable thermal sensors and throttling support"
                depends on PACKAGE_kmod-ath11k
-               default y if TARGET_qualcommax
+               default y if TARGET_qualcommax || TARGET_qualcommbe_ipq95xx
 
 endef
 
@@ -361,7 +365,7 @@ define KernelPackage/ath11k-ahb
   $(call KernelPackage/mac80211/Default)
   TITLE:=Qualcomm 802.11ax AHB wireless chipset support
   URL:=https://wireless.wiki.kernel.org/en/users/drivers/ath11k
-  DEPENDS+= @TARGET_qualcommax +kmod-ath11k +kmod-qrtr-smd
+  DEPENDS+= @(TARGET_qualcommax||TARGET_qualcommbe_ipq95xx) +kmod-ath11k +kmod-qrtr-smd
   FILES:=$(PKG_BUILD_DIR)/drivers/net/wireless/ath/ath11k/ath11k_ahb.ko
   AUTOLOAD:=$(call AutoProbe,ath11k_ahb)
 endef
@@ -391,7 +395,8 @@ define KernelPackage/ath12k
   URL:=https://wireless.wiki.kernel.org/en/users/drivers/ath12k
   DEPENDS+= @PCI_SUPPORT +kmod-ath +@DRIVER_11AC_SUPPORT +@DRIVER_11AX_SUPPORT \
   +kmod-crypto-michael-mic +kmod-qrtr-mhi \
-  +kmod-qcom-qmi-helpers +@DRIVER_11BE_SUPPORT \
+  +TARGET_qualcommax:kmod-qrtr-smd +TARGET_qualcommbe:kmod-qrtr-smd \
+  +kmod-qcom-qmi-helpers +@DRIVER_11BE_SUPPORT +TARGET_qualcommbe:kmod-qcom-ppe \
   +ATH12K_THERMAL:kmod-hwmon-core +ATH12K_THERMAL:kmod-thermal
   FILES:= \
 	$(PKG_BUILD_DIR)/drivers/net/wireless/ath/ath12k/ath12k.ko \
@@ -409,6 +414,7 @@ define KernelPackage/ath12k/config
        config ATH12K_THERMAL
                bool "Enable ath12k thermal sensor support"
                depends on PACKAGE_kmod-ath12k
+               default y if TARGET_qualcommbe
 
 endef
 
