@@ -81,3 +81,40 @@ sh gwrt-build-cp02.sh 6 $VER    # -j6 铁律，禁 -j8
 - gh 账号：rothdren-lion；git 推送用 https + keyring token（`gh auth setup-git` 已跑）
 - 编译并行度：本地 **-j6** 禁 -j8（gwrt-firmware-delivery 技能）；CI 用 `-j$(nproc)`（runner 4 核）
 - 本地构建树无 .git，编译必须显式传 `REVISION`（脚本已处理，fallback cb793d3）
+
+---
+
+# 追加 2026-10-28 — GitHub Actions 首跑成功 + pzl8 预设
+
+## 云端编译踩坑记录（cp02）
+
+| # | 问题 | 根因 | 修复 |
+|---|---|---|---|
+| 1 | 推送被拒 workflow scope | token 只有 repo | `gh auth refresh -s workflow`（设备码授权） |
+| 2 | 私有仓 Actions 被计费锁死 | 账号付款失败/限额 | 用户选择转**公开仓**（内容已含 mesh 文档，知悉） |
+| 3 | `./scripts/feeds: No such file` | rsync `--exclude feeds` 未锚定，误删 `scripts/feeds`、`package/base-files/files/bin/*` 等 245 个文件 | 改为 `--exclude /feeds` 锚定根目录重新同步 |
+| 4 | 内核补丁 102-01-pwm-mediatek 打不上 | 树里残留上游已删除的陈旧补丁（内核已到 6.18.55） | 删除该补丁，其余 46 个 ramips 补丁与上游对齐 |
+| 5 | artifact 缺 easytier 核心 apk | collect 只收 bin/targets | 增加 `bin/packages/**/easytier*.apk` 与 buildinfo 收集 |
+
+## 成功构建
+
+- **run 40560326049**：cp02 `gwrt-ramips-mt7621-jdcloud_re-cp-02` **261027-01**（rev 13c2b66），1h18m ✅
+- 拆包验证 7/7 通过：DISTRIB_RELEASE=261027-01；agent shim 在 / **aarch64 .bin 不在**（mipsel 降级生效）；
+  ucode socket.so ✓ / wifiroamd.uc ✓ / mesh.html ✓ / easytier 核心 =m 不占 flash ✓ / 预置 aarch64 apk 不在 ✓
+- 归档：`bin-cp02-261027-01/`（sysupgrade + initramfs + manifest + config + sha256sums 全部 OK）
+- 注意：cp02 的 easytier 核心 apk 在 261027-01 artifact 里**未收集**，261027-02 起补齐（bin/packages）
+
+## 新增
+
+- `gwrt-mk-pzl8-config.sh`：CMCC PZ-L8（用户叫 PL08）IPQ5018+QCN6122 预设；
+  树内设备定义缺 WiFi 固件包 → 预设显式选 `ath11k-firmware-ipq5018-qcn6122`
+  （该包自带 IPQ5018 通用 board-2）；128M NAND，easytier 核心直接进镜像
+- 工作流 preset：cp02 / pzl8；工具链缓存（staging_dir/toolchain-*，跨 run 省 ~30min）
+- 定位确认：**这批固件都是给 GWRT mesh 当子 AP 用**（未组网→APP 配对→真 AP 模式）
+
+## 待办更新
+
+- [ ] cp02 261027-02（补收 easytier apk）+ pzl8 261028-01 首编（进行中）
+- [ ] pzl8 首编后拆包验证 WiFi 固件/board-2 是否齐全（设备定义未带 packages，若有问题需补 DEVICE_PACKAGES）
+- [ ] 羿哪吒 jdcloud_ax3000 移植（NAS 有 Nwrt factory.bin 可抽 DTB/board；或找 Nwrt 源码抄 DTS）
+- [ ] git 全局有 ghproxy 重写，本仓推送需用 `https://rothdren-lion@github.com/...` 直连 URL

@@ -55,6 +55,10 @@ gh run download <run-id> -R rothdren-lion/gwrt-immortalwrt -D /tmp/cp02-out
 改 cp02 相关文件后需同步到该仓（导出副本在 `/home/godsun/build/gwrt-github-export`，
 rsync + commit + push）。本地备份编译步骤见 `docs/WORKLOG-20261026-jdcloud-cp02-mt7621.md`。
 
+> **2026-10-28 首跑成功**：cp02 261027-01 已归档到 `bin-cp02-261027-01/`（拆包验证 7/7，
+> mipsel 降级生效）。preset：`cp02` / `pzl8`。注意推送需直连 URL
+> `https://rothdren-lion@github.com/...`（全局 ghproxy 重写不能认证推送）。
+
 ---
 
 ## 2. 代码地图
@@ -63,6 +67,7 @@ rsync + commit + push）。本地备份编译步骤见 `docs/WORKLOG-20261026-jd
 |---|---|
 | `gwrt-mk-wr630ax-config.sh` | 配置生成器（设备 profile、插件集、turboacc/coremark 选项） |
 | `gwrt-mk-cp02-config.sh` / `gwrt-build-cp02.sh` | MT7621 鲁班 RE-CP-02 最低 mesh 配置生成器 + 本地编译脚本（主走 GitHub CI） |
+| `gwrt-mk-pzl8-config.sh` | CMCC PZ-L8（PL08）IPQ5018 预设，mesh 子AP + easytier 全家桶 |
 | `target/linux/mediatek/dts/mt7981b-comfast-cf-wr630ax*.dts` | XINGLOO 设备树（含 512M 变体） |
 | `target/linux/mediatek/image/filogic.mk` | 设备定义（`comfast_cf-wr630ax*`、`qihoo_360t7*`） |
 | `package/gwrt-device-defaults/` | 首启默认值（LAN IP、SSID、wifiroam、防火墙、APK 预置） |
