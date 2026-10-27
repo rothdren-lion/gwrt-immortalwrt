@@ -1,0 +1,83 @@
+#!/bin/sh
+
+[ "$ACTION" = add ] || exit 0
+
+sys_class_net="${IPQ53XX_SYS_CLASS_NET:-/sys/class/net}"
+proc_interrupts="${IPQ53XX_PROC_INTERRUPTS:-/proc/interrupts}"
+proc_irq="${IPQ53XX_PROC_IRQ:-/proc/irq}"
+pci_devices="${IPQ53XX_PCI_DEVICES:-/sys/bus/pci/devices}"
+
+wifi=0
+qcn_bdfs=
+if [ -n "$DEVICENAME" ] && [ -L "$sys_class_net/$DEVICENAME/phy80211" ]; then
+	wifi=1
+	for pci_dev in "$pci_devices"/*; do
+		[ "$(cat "$pci_dev/vendor" 2>/dev/null)" = 0x17cb ] || continue
+		[ "$(cat "$pci_dev/device" 2>/dev/null)" = 0x1109 ] || continue
+		qcn_bdfs="$qcn_bdfs ${pci_dev##*/}"
+	done
+fi
+
+# One snapshot per event. Recheck EDMA after driver reloads instead of keeping
+# a done marker that can outlive the IRQs. Unchanged affinities need no write.
+awk -v wifi="$wifi" -v bdfs="$qcn_bdfs" '
+	function assign(cpu) {
+		if (cpu in online)
+			print irq, cpu
+	}
+	BEGIN {
+		split(bdfs, devices, " ")
+		for (i in devices)
+			qcn[devices[i]] = 1
+	}
+	$1 ~ /^CPU[0-9]+$/ {
+		for (i = 1; i <= NF; i++) {
+			cpu = $i
+			sub(/^CPU/, "", cpu)
+			online[cpu] = 1
+		}
+		next
+	}
+	$1 !~ /^[0-9]+:$/ { next }
+	{
+		irq = $1
+		sub(/:$/, "", irq)
+		name = $NF
+		sub(/:$/, "", name)
+		if (name ~ /^txcmpl_([4-9]|1[0-5])$/) {
+			sub(/^txcmpl_/, "", name)
+			assign((name - 4) % 4)
+		} else if (name ~ /^rxdesc_1[2-5]$/) {
+			sub(/^rxdesc_/, "", name)
+			assign(name - 12)
+		} else if (wifi) {
+			if (name ~ /^reo2host-destination-ring[1-4]$/ ||
+			    name ~ /^wbm2host-tx-completions-ring[1-4]$/) {
+				assign(substr(name, length(name)) - 1)
+			} else if (name == "reo2ost-exception" ||
+			           name == "wbm2host-rx-release" || name == "reo2host-status") {
+				assign(3)
+			} else {
+				for (i = 2; i <= NF; i++) {
+					bdf = $i
+					if (!sub(/^.*PCI-MSI-/, "", bdf) || !(bdf in qcn))
+						continue
+					# Shared DP actions use one affinity per MSI vector.
+					if ($0 ~ /(^|[[:space:],])DP_EXT_IRQ([[:space:],]|$)/)
+						assign(2 + (dp[bdf]++ % 2))
+					else if ($0 ~ /(^|[[:space:],])ce[0-9]+([[:space:],]|$)/)
+						assign(2 + (ce[bdf]++ % 2))
+					break
+				}
+			}
+		}
+	}
+' "$proc_interrupts" 2>/dev/null | while read -r irq cpu; do
+	affinity="$proc_irq/$irq/smp_affinity_list"
+	[ -w "$affinity" ] || continue
+	read -r current < "$affinity" && [ "$current" = "$cpu" ] && continue
+	# Some MSI controllers reject affinity changes. Keep the kernel fallback.
+	{ echo "$cpu" > "$affinity"; } 2>/dev/null
+done
+
+exit 0

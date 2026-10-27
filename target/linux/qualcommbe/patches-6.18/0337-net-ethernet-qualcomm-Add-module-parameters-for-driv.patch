@@ -60,7 +60,7 @@ Signed-off-by: Pavithra R <quic_pavir@quicinc.com>
  /* Priority to multi-queue mapping. */
  static u8 edma_pri_map[PPE_QUEUE_INTER_PRI_NUM] = {
  	0, 1, 2, 3, 4, 5, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7};
-@@ -829,7 +861,10 @@ int edma_setup(struct ppe_device *ppe_de
+@@ -843,7 +875,10 @@ int edma_setup(struct ppe_device *ppe_de
  	edma_ctx->hw_info = &ipq9574_hw_info;
  	edma_ctx->ppe_dev = ppe_dev;
  	edma_ctx->rx_buf_size = rx_buff_size;

@@ -103,7 +103,7 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
  
  		if (ret) {
  			pr_err("Failed with error: %d to set queue priority class for int_pri: %d for profile_id: %d\n",
-@@ -480,7 +481,7 @@ txcmpl_ring_irq_name_alloc_fail:
+@@ -494,7 +495,7 @@ txcmpl_ring_irq_name_alloc_fail:
  	return ret;
  }
  
@@ -112,7 +112,7 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
  {
  	struct edma_hw_info *hw_info = edma_ctx->hw_info;
  	struct edma_ring_info *txcmpl = hw_info->txcmpl;
-@@ -588,44 +589,23 @@ static int edma_hw_reset(void)
+@@ -602,44 +603,23 @@ static int edma_hw_reset(void)
  	struct device *dev = ppe_dev->dev;
  	struct reset_control *edma_hw_rst;
  	struct device_node *edma_np;
@@ -167,7 +167,7 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
  
  	of_node_put(edma_np);
  
-@@ -647,14 +627,12 @@ static int edma_hw_configure(void)
+@@ -661,14 +641,12 @@ static int edma_hw_configure(void)
  
  	pr_debug("EDMA ver %d hw init\n", data);
  
@@ -183,7 +183,7 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
  		return ret;
  	}
  
-@@ -668,7 +646,7 @@ static int edma_hw_configure(void)
+@@ -682,7 +660,7 @@ static int edma_hw_configure(void)
  	edma_ctx->dummy_dev = alloc_netdev_dummy(0);
  	if (!edma_ctx->dummy_dev) {
  		ret = -ENOMEM;
@@ -192,7 +192,7 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
  		goto dummy_dev_alloc_failed;
  	}
  
-@@ -682,7 +660,7 @@ static int edma_hw_configure(void)
+@@ -696,7 +674,7 @@ static int edma_hw_configure(void)
  
  	ret = edma_alloc_rings();
  	if (ret) {
@@ -201,7 +201,7 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
  		goto edma_alloc_rings_failed;
  	}
  
-@@ -702,7 +680,7 @@ static int edma_hw_configure(void)
+@@ -716,7 +694,7 @@ static int edma_hw_configure(void)
  
  	ret = edma_cfg_rx_rings();
  	if (ret) {
@@ -210,7 +210,7 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
  		goto edma_cfg_rx_rings_failed;
  	}
  
-@@ -720,15 +698,13 @@ static int edma_hw_configure(void)
+@@ -734,15 +712,13 @@ static int edma_hw_configure(void)
  	if (ret)
  		return ret;
  
@@ -227,7 +227,7 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
  	data = EDMA_MISC_AXI_RD_ERR_MASK |
  		EDMA_MISC_AXI_WR_ERR_MASK |
  		EDMA_MISC_RX_DESC_FIFO_FULL_MASK |
-@@ -743,15 +719,15 @@ static int edma_hw_configure(void)
+@@ -757,15 +733,15 @@ static int edma_hw_configure(void)
  	edma_cfg_rx_napi_add();
  	edma_cfg_rx_napi_enable();
  
@@ -246,7 +246,7 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
  	ret = (int)edma_configure_ucast_prio_map_tbl();
  	if (ret) {
  		pr_err("Failed to initialize unicast priority map table: %d\n",
-@@ -759,7 +735,6 @@ static int edma_hw_configure(void)
+@@ -773,7 +749,6 @@ static int edma_hw_configure(void)
  		goto configure_ucast_prio_map_tbl_failed;
  	}
  
@@ -254,16 +254,7 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
  	ret = edma_cfg_rx_rps_hash_map();
  	if (ret) {
  		pr_err("Failed to configure rps hash table: %d\n",
-@@ -767,6 +742,8 @@ static int edma_hw_configure(void)
- 		goto edma_cfg_rx_rps_hash_map_failed;
- 	}
- 
-+	pr_info("EDMA Hardware Configured\n");
-+
- 	return 0;
- 
- edma_cfg_rx_rps_hash_map_failed:
-@@ -803,14 +780,13 @@ void edma_destroy(struct ppe_device *ppe
+@@ -817,14 +792,13 @@ void edma_destroy(struct ppe_device *ppe
  		edma_ctx->rx_rps_ctl_table_hdr = NULL;
  	}
  
@@ -279,7 +270,7 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
  	for (i = 0; i < txcmpl->num_rings; i++) {
  		synchronize_irq(edma_ctx->intr_info.intr_txcmpl[i]);
  
-@@ -820,7 +796,7 @@ void edma_destroy(struct ppe_device *ppe
+@@ -834,7 +808,7 @@ void edma_destroy(struct ppe_device *ppe
  	}
  	kfree(edma_txcmpl_irq_name);
  
@@ -288,7 +279,7 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
  	for (i = 0; i < rx->num_rings; i++) {
  		synchronize_irq(edma_ctx->intr_info.intr_rx[i]);
  		free_irq(edma_ctx->intr_info.intr_rx[i],
-@@ -861,7 +837,7 @@ static struct ctl_table edma_rx_rps_core
+@@ -875,7 +849,7 @@ static struct ctl_table edma_rx_rps_core
   * edma_setup - EDMA Setup.
   * @ppe_dev: PPE device
   *
@@ -297,7 +288,7 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
   *
   * Return 0 on success, negative error code on failure.
   */
-@@ -889,22 +865,19 @@ int edma_setup(struct ppe_device *ppe_de
+@@ -903,22 +877,19 @@ int edma_setup(struct ppe_device *ppe_de
  		return -EINVAL;
  	}
  
@@ -322,7 +313,7 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
  	if (ret) {
  		dev_err(dev, "Error in irq initialization\n");
  		return ret;
-@@ -925,70 +898,3 @@ int edma_setup(struct ppe_device *ppe_de
+@@ -939,70 +910,3 @@ int edma_setup(struct ppe_device *ppe_de
  
  	return 0;
  }
@@ -522,11 +513,11 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
  	struct edma_ring_info *rx = hw_info->rx;
  	u32 i, data, reg;
  
-+        /* Set RXDESC2FILL_MAP_xx reg.
-+         * 3 registers hold the Rxfill mapping for all Rx desc rings.
-+         * 3 bits holds the Rx fill ring mapping for each of the
-+         * Rx descriptor ring.
-+         */
++	/* Set RXDESC2FILL_MAP_xx reg.
++	 * 3 registers hold the Rxfill mapping for all Rx desc rings.
++	 * 3 bits holds the Rx fill ring mapping for each of the
++	 * Rx descriptor ring.
++	 */
  	regmap_write(regmap, EDMA_BASE_OFFSET + EDMA_REG_RXDESC2FILL_MAP_0_ADDR, 0);
  	regmap_write(regmap, EDMA_BASE_OFFSET + EDMA_REG_RXDESC2FILL_MAP_1_ADDR, 0);
  	regmap_write(regmap, EDMA_BASE_OFFSET + EDMA_REG_RXDESC2FILL_MAP_2_ADDR, 0);
@@ -842,7 +833,7 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
   */
  
  /* ethtool support for EDMA */
-@@ -242,33 +242,6 @@ static int edma_set_pauseparam(struct ne
+@@ -243,33 +243,6 @@ static int edma_set_pauseparam(struct ne
  	return phylink_ethtool_set_pauseparam(port->phylink, pause);
  }
  
@@ -876,7 +867,7 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
  static const struct ethtool_ops edma_ethtool_ops = {
  	.get_strings = &edma_get_strings,
  	.get_sset_count = &edma_get_strset_count,
-@@ -278,8 +251,6 @@ static const struct ethtool_ops edma_eth
+@@ -279,8 +252,6 @@ static const struct ethtool_ops edma_eth
  	.set_link_ksettings = edma_set_link_ksettings,
  	.get_pauseparam = &edma_get_pauseparam,
  	.set_pauseparam = &edma_set_pauseparam,
@@ -1067,8 +1058,9 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
 - * status in descriptor.
 - */
 -static void edma_rx_checksum_verify(struct edma_rxdesc_pri *rxdesc_pri,
+-				    struct sk_buff *skb)
 +static inline uint8_t edma_rx_checksum_verify(struct edma_rxdesc_pri *rxdesc_pri,
- 				    struct sk_buff *skb)
++					      struct sk_buff *skb)
  {
  	u8 pid = EDMA_RXDESC_PID_GET(rxdesc_pri);
  
@@ -1292,58 +1284,51 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
  	while (likely(avail--)) {
  		/* The last descriptor holds the SKB pointer for scattered frames.
  		 * So skip the descriptors with more bit set.
-@@ -172,27 +164,13 @@ u32 edma_tx_complete(u32 work_to_do, str
+@@ -172,7 +164,21 @@ u32 edma_tx_complete(u32 work_to_do, str
  			++txcmpl_stats->invalid_buffer;
  			u64_stats_update_end(&txcmpl_stats->syncp);
  		} else {
 -			dev_dbg(dev, "TXCMPL: skb:%p, skb->len %d, skb->data_len %d, cons_idx:%d prod_idx:%d word2:0x%x word3:0x%x\n",
--				skb, skb->len, skb->data_len, cons_idx, prod_idx,
--				txcmpl->word2, txcmpl->word3);
--
--			txcmpl_errors = EDMA_TXCOMP_RING_ERROR_GET(txcmpl->word3);
--			if (unlikely(txcmpl_errors)) {
--				if (net_ratelimit())
--					dev_err(dev, "Error 0x%0x observed in tx complete %d ring\n",
--						txcmpl_errors, txcmpl_ring->id);
--
--				u64_stats_update_begin(&txcmpl_stats->syncp);
--				++txcmpl_stats->errors;
--				u64_stats_update_end(&txcmpl_stats->syncp);
--			}
- 
- 			/* Retrieve pool id for unmapping.
- 			 * 0 for linear skb and (pool id - 1) represents nr_frag index.
- 			 */
- 			if (!EDMA_TXCOMP_POOL_ID_GET(txcmpl)) {
- 				dma_unmap_single(dev, virt_to_phys(skb->data),
--						 skb->len, DMA_TO_DEVICE);
++			/* Retrieve pool id for unmapping.
++			 * 0 for linear skb and (pool id - 1) represents nr_frag index.
++			 */
++			if (!EDMA_TXCOMP_POOL_ID_GET(txcmpl)) {
++				dma_unmap_single(dev, virt_to_phys(skb->data),
 +						 skb_headlen(skb), DMA_TO_DEVICE);
- 			} else {
- 				u8 frag_index = (EDMA_TXCOMP_POOL_ID_GET(txcmpl) - 1);
- 				skb_frag_t *frag = &skb_shinfo(skb)->frags[frag_index];
-@@ -201,6 +179,21 @@ u32 edma_tx_complete(u32 work_to_do, str
- 					       PAGE_SIZE, DMA_TO_DEVICE);
- 			}
- 
-+			dev_dbg(dev, "TXCMPL: skb:%pK, skb->len %d, skb->data_len %d, cons_idx:%d prod_idx:%d word2:0x%x word3:0x%x\n",
-+				skb, skb->len, skb->data_len, cons_idx, prod_idx,
-+				txcmpl->word2, txcmpl->word3);
++			} else {
++				u8 frag_index = (EDMA_TXCOMP_POOL_ID_GET(txcmpl) - 1);
++				skb_frag_t *frag = &skb_shinfo(skb)->frags[frag_index];
 +
-+			txcmpl_errors = EDMA_TXCOMP_RING_ERROR_GET(txcmpl->word3);
-+			if (unlikely(txcmpl_errors)) {
-+				if (net_ratelimit())
-+					dev_err(dev, "Error 0x%0x observed in tx complete %d ring\n",
-+						txcmpl_errors, txcmpl_ring->id);
-+
-+				u64_stats_update_begin(&txcmpl_stats->syncp);
-+				++txcmpl_stats->errors;
-+				u64_stats_update_end(&txcmpl_stats->syncp);
++				dma_unmap_page(dev, virt_to_phys(frag),
++					       PAGE_SIZE, DMA_TO_DEVICE);
 +			}
 +
++			dev_dbg(dev, "TXCMPL: skb:%pK, skb->len %d, skb->data_len %d, cons_idx:%d prod_idx:%d word2:0x%x word3:0x%x\n",
+ 				skb, skb->len, skb->data_len, cons_idx, prod_idx,
+ 				txcmpl->word2, txcmpl->word3);
+ 
+@@ -187,20 +193,6 @@ u32 edma_tx_complete(u32 work_to_do, str
+ 				u64_stats_update_end(&txcmpl_stats->syncp);
+ 			}
+ 
+-			/* Retrieve pool id for unmapping.
+-			 * 0 for linear skb and (pool id - 1) represents nr_frag index.
+-			 */
+-			if (!EDMA_TXCOMP_POOL_ID_GET(txcmpl)) {
+-				dma_unmap_single(dev, virt_to_phys(skb->data),
+-						 skb->len, DMA_TO_DEVICE);
+-			} else {
+-				u8 frag_index = (EDMA_TXCOMP_POOL_ID_GET(txcmpl) - 1);
+-				skb_frag_t *frag = &skb_shinfo(skb)->frags[frag_index];
+-
+-				dma_unmap_page(dev, virt_to_phys(frag),
+-					       PAGE_SIZE, DMA_TO_DEVICE);
+-			}
+-
  			dev_kfree_skb(skb);
  		}
  
-@@ -211,7 +204,7 @@ u32 edma_tx_complete(u32 work_to_do, str
+@@ -211,7 +203,7 @@ u32 edma_tx_complete(u32 work_to_do, str
  	txcmpl_ring->cons_idx = cons_idx;
  	txcmpl_ring->avail_pkt -= count;
  
@@ -1352,7 +1337,7 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
  		txcmpl_ring->id, count, prod_idx, cons_idx);
  	reg = EDMA_BASE_OFFSET + EDMA_REG_TXCMPL_CONS_IDX(txcmpl_ring->id);
  	regmap_write(regmap, reg, cons_idx);
-@@ -265,7 +258,7 @@ int edma_tx_napi_poll(struct napi_struct
+@@ -265,7 +257,7 @@ int edma_tx_napi_poll(struct napi_struct
  	/* No more packets to process. Finish NAPI processing. */
  	napi_complete(napi);
  
@@ -1361,16 +1346,20 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
  	reg = EDMA_BASE_OFFSET + EDMA_REG_TX_INT_MASK(txcmpl_ring->id);
  	regmap_write(regmap, reg, edma_ctx->intr_info.intr_mask_txcmpl);
  
-@@ -392,7 +385,7 @@ static u32 edma_tx_skb_nr_frags(struct e
+@@ -392,9 +384,9 @@ static u32 edma_tx_skb_nr_frags(struct e
  	return num_descs;
  }
  
 -static void edma_tx_fill_pp_desc(struct edma_port_priv *port_priv,
+-				 struct edma_txdesc_pri *txd, struct sk_buff *skb,
+-	struct edma_port_tx_stats *stats)
 +static void edma_tx_fill_desc(struct edma_port_priv *port_priv,
- 				 struct edma_txdesc_pri *txd, struct sk_buff *skb,
- 	struct edma_port_tx_stats *stats)
++			      struct edma_txdesc_pri *txd, struct sk_buff *skb,
++			      struct edma_port_tx_stats *stats)
  {
-@@ -463,7 +456,7 @@ static struct edma_txdesc_pri *edma_tx_s
+ 	struct ppe_port *port = port_priv->ppe_port;
+ 	int port_id = port->port_id;
+@@ -463,7 +455,7 @@ static struct edma_txdesc_pri *edma_tx_s
  
  	EDMA_TXDESC_BUFFER_ADDR_SET(txd, buff_addr);
  	EDMA_TXDESC_POOL_ID_SET(txd, 0);
@@ -1379,7 +1368,7 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
  
  	/* Set packet length in the descriptor. */
  	EDMA_TXDESC_DATA_LEN_SET(txd, buf_len);
-@@ -528,6 +521,23 @@ static u32 edma_tx_skb_sg_fill_desc(stru
+@@ -528,6 +520,23 @@ static u32 edma_tx_skb_sg_fill_desc(stru
  	/* Head skb processed already. */
  	num_descs++;
  
@@ -1403,7 +1392,7 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
  	if (unlikely(skb_has_frag_list(skb))) {
  		struct edma_txdesc_pri *start_desc = NULL;
  		u32 start_idx = 0, end_idx = 0;
-@@ -608,23 +618,9 @@ skip_primary:
+@@ -608,23 +617,9 @@ skip_primary:
  		u64_stats_update_begin(&stats->syncp);
  		stats->tx_fraglist_pkts++;
  		u64_stats_update_end(&stats->syncp);
@@ -1428,7 +1417,7 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
  		skb, num_descs, skb_shinfo(skb)->nr_frags, num_sg_frag_list);
  
  	*txdesc = txd;
-@@ -775,7 +771,7 @@ enum edma_tx_status edma_tx_ring_xmit(st
+@@ -775,7 +770,7 @@ enum edma_tx_status edma_tx_ring_xmit(st
  			netdev_dbg(netdev, "No descriptor available for ring %d\n",
  				   txdesc_ring->id);
  			dma_unmap_single(dev, virt_to_phys(skb->data),
@@ -1437,7 +1426,7 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
  			u64_stats_update_begin(&txdesc_stats->syncp);
  			++txdesc_stats->no_desc_avail;
  			u64_stats_update_end(&txdesc_stats->syncp);
-@@ -792,10 +788,12 @@ enum edma_tx_status edma_tx_ring_xmit(st
+@@ -792,10 +787,12 @@ enum edma_tx_status edma_tx_ring_xmit(st
  	txdesc_ring->prod_idx = hw_next_to_use & EDMA_TXDESC_PROD_IDX_MASK;
  	txdesc_ring->avail_desc -= num_desc_filled;
  
@@ -1602,7 +1591,7 @@ Signed-off-by: Balsam CHIHI <balsam.chihi@moment.tech>
 + * @type: The type can be internal priority or PPE hash
 + * @index: Class index, which can be internal priority or hash value
 + * @queue_offset: Queue offset value which is added by the queue base to get
-+ * 		  the egress queue ID.
++ *		  the egress queue ID.
 + *
 + * PPE EDMA queue offset is configured based on the PPE internal priority or
 + * RSS hash value, the profile ID is fixed to 0 for the EDMA interface.
