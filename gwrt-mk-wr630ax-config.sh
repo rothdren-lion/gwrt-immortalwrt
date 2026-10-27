@@ -57,6 +57,10 @@ CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_comfast_cf-wr630ax=y
 CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_comfast_cf-wr630ax-512m=y
 CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_qihoo_360t7=y
 CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_qihoo_360t7-ubi=y
+CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_h3c_magic-nx30-pro=y
+CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_xiaomi_mi-router-ax3000t=y
+CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_xiaomi_mi-router-ax3000t-ubootmod=y
+CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_rax3000m=y
 CONFIG_TARGET_ROOTFS_PARTSIZE=48
 CONFIG_TARGET_ROOTFS_SQUASHFS=y
 CONFIG_TARGET_ROOTFS_INITRAMFS=y
@@ -238,6 +242,6 @@ cp "$TOP/.config" "$OUT"
 echo
 echo "==> 完成: $OUT"
 echo "==> 目标设备:"
-grep -E '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_(comfast_cf-wr630ax|qihoo_360t7)' "$OUT" || true
+grep -E '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_(comfast_cf-wr630ax|qihoo_360t7|h3c_magic|xiaomi_mi-router-ax3000t|cmcc_rax3000m)' "$OUT" || true
 echo "==> 体积/布局:"
 grep -E '^CONFIG_TARGET_(ROOTFS_PARTSIZE|MULTI_PROFILE|PER_DEVICE_ROOTFS|ROOTFS_INITRAMFS)=' "$OUT" || true

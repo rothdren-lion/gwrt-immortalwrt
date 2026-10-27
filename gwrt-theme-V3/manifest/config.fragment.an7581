@@ -1,0 +1,19 @@
+# AN7581 光猫固件专用主题 fragment（体积预算 ~50MB）
+#
+# 与 manifest/config.fragment 的区别：去掉 openclash / bandix-plus /
+# coremark / ttyd / oaf 这一档——本次光猫固件只留面板，插件后期设备自行安装。
+#
+# 用法：
+#   cp gwrt-theme-V3/manifest/config.fragment.an7581 \
+#      gwrt-theme-V3/manifest/config.fragment
+#   ./gwrt-theme-V3/scripts/integrate.sh --tree .
+CONFIG_PACKAGE_luci-theme-gwrt=y
+CONFIG_PACKAGE_luci-app-oaf=y
+CONFIG_LUCI_LANG_zh_Hans=y
+CONFIG_PACKAGE_luci-i18n-oaf-zh-cn=y
+CONFIG_PACKAGE_curl=y
+CONFIG_PACKAGE_ca-bundle=y
+CONFIG_PACKAGE_ca-certificates=y
+CONFIG_PACKAGE_jsonfilter=y
+CONFIG_PACKAGE_xz-utils=y
+CONFIG_PACKAGE_tar=y

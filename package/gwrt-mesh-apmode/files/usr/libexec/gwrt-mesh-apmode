@@ -299,9 +299,9 @@ have_uplink() {
 }
 
 apply_apmode() {
-	in_apmode && return 0
-	log "mesh paired -> switching to AP mode"
-	save_state
+	if [ "$1" != "force" ] && in_apmode; then return 0; fi
+	log "mesh paired -> switching to AP mode (force=$1)"
+	[ -f "$STATE" ] || save_state
 
 	local brsec wan_up carrier
 	brsec="$(brlan_dev_section)"
@@ -377,6 +377,49 @@ apply_apmode() {
 	log "no uplink after 25s, rolling back"
 	restore_routermode
 	return 1
+}
+
+# 只恢复网络部分（不恢复无线 SSID、不删 state）：用于上行从无线<->有线切换时重放
+restore_network_only() {
+	[ -f "$STATE" ] || return 0
+	. "$STATE"
+	local brsec ports newp p
+	brsec="${brdev:-$(brlan_dev_section)}"
+	hnat_off
+	case "${wan_proto:-none}" in
+		none|"") : ;;
+		*)
+			if [ -n "$brsec" ]; then
+				ports="$(uci -q get "network.$brsec.ports")"
+				newp=""
+				for p in $ports; do
+					[ "$p" = "eth1" ] && continue
+					newp="$newp $p"
+				done
+				uci -q delete "network.$brsec.ports"
+				for p in $newp; do
+					uci -q add_list "network.$brsec.ports=$p"
+				done
+			fi
+			;;
+	esac
+	uci -q get network.relay >/dev/null 2>&1 && uci -q delete network.relay
+	uci -q get network.wwan >/dev/null 2>&1 && uci -q delete network.wwan
+	uci -q set dropbear.@dropbear[0].Interface="${db_iface:-lan}"
+	uci -q set network.lan.proto="${lan_proto:-static}"
+	[ -n "$lan_ipaddr" ] && uci -q set network.lan.ipaddr="$lan_ipaddr"
+	[ -n "$lan_netmask" ] && uci -q set network.lan.netmask="$lan_netmask"
+	if [ -n "$dhcp_ignore" ]; then
+		uci -q set dhcp.lan.ignore="$dhcp_ignore"
+	else
+		uci -q delete dhcp.lan.ignore
+	fi
+	[ -n "$wan_proto" ] && uci -q set network.wan.proto="$wan_proto"
+	[ -n "$wan6_proto" ] && uci -q set network.wan6.proto="$wan6_proto"
+	uci -q commit network
+	uci -q commit dhcp
+	uci -q commit dropbear
+	/etc/init.d/network reload >/dev/null 2>&1
 }
 
 restore_routermode() {
@@ -501,12 +544,23 @@ case "$1" in
 		fi
 		ok_streak=0
 		off_streak=0
+		LAST_CARRIER="$(cat /sys/class/net/eth1/carrier 2>/dev/null)"
 		while true; do
 			tick=$((tick + 1))
 			if [ "$(uci -q get gwrt.mesh_apmode.enabled)" = "0" ]; then
 				in_apmode && restore_routermode
 				sleep 10
 				continue
+			fi
+			# 上行有线<->无线切换：自动重放 AP/路由模式
+			carrier_now="$(cat /sys/class/net/eth1/carrier 2>/dev/null)"
+			if [ "$carrier_now" != "$LAST_CARRIER" ]; then
+				LAST_CARRIER="$carrier_now"
+				if in_apmode; then
+					log "uplink carrier changed to $carrier_now, re-applying"
+					restore_network_only
+					apply_apmode force
+				fi
 			fi
 			in_apmode && hnat_off
 			refresh_orig

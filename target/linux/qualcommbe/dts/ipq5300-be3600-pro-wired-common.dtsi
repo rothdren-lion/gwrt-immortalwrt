@@ -1,0 +1,200 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause)
+
+#include "ipq5332-common.dtsi"
+
+/ {
+	aliases {
+		i2c0 = &blsp1_i2c0;
+		led-boot = &led_system_blue;
+		led-failsafe = &led_system_orange;
+		led-running = &led_system_blue;
+		led-upgrade = &led_system_orange;
+	};
+
+	chosen {
+		bootargs-append = " root=/dev/ubiblock0_1";
+	};
+
+	keys {
+		compatible = "gpio-keys";
+		pinctrl-0 = <&button_pins>;
+		pinctrl-names = "default";
+
+		button-reset {
+			label = "reset";
+			gpios = <&tlmm 43 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_RESTART>;
+			debounce-interval = <60>;
+		};
+	};
+
+	leds {
+		compatible = "pwm-leds";
+
+		led_system_blue: system-blue {
+			color = <LED_COLOR_ID_BLUE>;
+			function = LED_FUNCTION_STATUS;
+			pwms = <&pwm 2 50000 0>;
+			max-brightness = <255>;
+			linux,default-trigger = "default-on";
+		};
+
+		led_system_orange: system-orange {
+			color = <LED_COLOR_ID_ORANGE>;
+			function = LED_FUNCTION_STATUS;
+			pwms = <&pwm 1 50000 0>;
+			max-brightness = <255>;
+		};
+	};
+};
+
+&blsp1_i2c0 {
+	status = "okay";
+	clock-frequency = <400000>;
+	/* Apply PSE reset electrical settings after TLMM functions are ready. */
+	pinctrl-0 = <&poe_i2c_pins &poe_reset_pins>;
+	pinctrl-names = "default";
+};
+
+&ref_48mhz_clk {
+	clock-div = <1>;
+	clock-mult = <1>;
+};
+
+&xo_clk {
+	clock-frequency = <48000000>;
+};
+
+&pwm {
+	status = "okay";
+
+	pinctrl-names = "default";
+	pinctrl-0 = <&pwm_pins>;
+};
+
+&tlmm {
+	/* Stock GPIO504 = TLMM offset45 (legacy base459, 53 GPIOs). */
+	gpio-line-names =
+		"", "", "", "", "", "", "", "",
+		"", "", "", "", "", "", "", "",
+		"", "", "", "", "", "", "", "",
+		"", "", "", "", "", "", "", "",
+		"", "", "", "", "", "", "", "",
+		"", "", "", "", "", "poe-reset", "", "",
+		"", "", "", "", "";
+
+	poe_i2c_pins: poe-i2c-state {
+		pins = "gpio16", "gpio17";
+		function = "blsp0_i2c";
+		drive-strength = <8>;
+		bias-pull-up;
+	};
+
+	poe_reset_pins: poe-reset-state {
+		pins = "gpio45";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-pull-up;
+	};
+
+	button_pins: button-pins {
+		pins = "gpio43";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-pull-up;
+	};
+
+	pwm_pins: pwm-pins {
+		pins = "gpio30", "gpio31";
+		function = "pwm1";
+		drive-strength = <8>;
+	};
+};
+
+&qcom_ppe {
+	status = "okay";
+
+	ethernet-ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@1 {
+			reg = <1>;
+			phy-mode = "usxgmii";
+			pcs-handle = <&pcs0_ch0>;
+			nvmem-cells = <&base_macaddr 1>;
+			nvmem-cell-names = "mac-address";
+			clocks = <&nsscc NSS_CC_PORT1_MAC_CLK>,
+				 <&nsscc NSS_CC_PORT1_RX_CLK>,
+				 <&nsscc NSS_CC_PORT1_TX_CLK>;
+			clock-names = "mac", "rx", "tx";
+			resets = <&nsscc NSS_CC_PORT1_MAC_CLK_ARES>,
+				 <&nsscc NSS_CC_PORT1_RX_CLK_ARES>,
+				 <&nsscc NSS_CC_PORT1_TX_CLK_ARES>;
+			reset-names = "mac", "rx", "tx";
+		};
+
+		port@2 {
+			reg = <2>;
+			phy-mode = "usxgmii";
+			pcs-handle = <&pcs1_ch0>;
+			nvmem-cells = <&base_macaddr 0>;
+			nvmem-cell-names = "mac-address";
+			clocks = <&nsscc NSS_CC_PORT2_MAC_CLK>,
+				 <&nsscc NSS_CC_PORT2_RX_CLK>,
+				 <&nsscc NSS_CC_PORT2_TX_CLK>;
+			clock-names = "mac", "rx", "tx";
+			resets = <&nsscc NSS_CC_PORT2_MAC_CLK_ARES>,
+				 <&nsscc NSS_CC_PORT2_RX_CLK_ARES>,
+				 <&nsscc NSS_CC_PORT2_TX_CLK_ARES>;
+			reset-names = "mac", "rx", "tx";
+		};
+	};
+};
+
+&qpic_nand {
+	status = "okay";
+
+	pinctrl-0 = <&qspi_pins>;
+	pinctrl-names = "default";
+
+	flash@0 {
+		compatible = "spi-nand";
+		reg = <0>;
+		#address-cells = <1>;
+		#size-cells = <1>;
+		nand-ecc-strength = <8>;
+		nand-ecc-step-size = <512>;
+		nand-bus-width = <8>;
+		nand-ecc-engine = <&qpic_nand>;
+
+		partitions {
+			compatible = "qcom,smem-part";
+
+			partition-0-art {
+				label = "0:art";
+				read-only;
+
+				nvmem-layout {
+					compatible = "fixed-layout";
+					#address-cells = <1>;
+					#size-cells = <1>;
+
+					base_macaddr: macaddr@0 {
+						compatible = "mac-base";
+						reg = <0x0 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+				};
+			};
+		};
+	};
+};
+
+&q6_region {
+	reg = <0x0 0x4a900000 0x0 0x800000>;
+};
+
+&tzapp {
+	reg = <0x0 0x4b100000 0x0 0x800000>;
+};

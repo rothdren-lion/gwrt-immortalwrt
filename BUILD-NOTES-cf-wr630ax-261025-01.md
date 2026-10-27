@@ -586,3 +586,33 @@ daemon.err oafd: killall: rule_manager: no process killed   ← 因为 rule_mana
 - **GWRT 261025-43**（真机已刷，无线 NAT 模式验证通过）
 - `bin-wr630ax-261025-43/`（sysupgrade `3073f3a0c0e6caad…`）
 - `bin-360t7-261025-43/`（`0f4753d8236528a7…` / UBI `738a1446a89203bb…`）
+
+---
+
+# 追加：GWRT 261025-44 ~ 45（有线/无线自动切换 + 多机型 MT7981）
+
+## 261025-44：上行自动切换（已验证）
+- apmode 循环跟踪 `eth1 carrier`，变化时 `restore_network_only` + `apply_apmode force`
+- 插 WAN：~30s 内切「真 AP」（br-lan 拿主路由 IP、eth1 并入 br-lan、插件关闭）
+- 拔 WAN：~40s 内切「无线 NAT」（LAN 192.168.3.3、STA 在 wwan、NAT 出网）
+- 实测：插线后 `AP mode ok (wired), br-lan 192.168.9.243`；拔线后
+  `router/NAT mode`，`ping 8.8.8.8` 通（~180ms）
+
+## 261025-45：多机型 MT7981 NAND（同配置一次编译）
+新增设备 profile（均加 `kmod-ledtrig-network gwrt-eqos gwrt-device-defaults`）：
+- `h3c_magic-nx30-pro`（H3C Magic NX30 Pro）
+- `xiaomi_mi-router-ax3000t` / `-ubootmod`（小米 AX3000T）
+- `cmcc_rax3000m`（CMCC RAX3000M）
+- 原有 `comfast_cf-wr630ax(+512m)`、`qihoo_360t7(+ubi)`
+
+产物：`bin-mt7981-261025-45/`（8 个 profile）
+```
+wr630ax     5f06504dd6a0fe38
+360t7       18e71a853e3c46c0 / ubi d586a66982bb96a3
+h3c nx30pro 62e4565264d15067
+ax3000t     b80e4977e4c3bcca / ubootmod 24f94e403859cf13
+rax3000m    a63d9545ce8aff02
+```
+- 这些机型共用同一套 mesh/插件/默认值；LED 由 `gwrt.mesh_led.leds=auto` 自动识别
+  （有 blue:status 用蓝灯，否则 red+green）
+- 未上机验证（H3C/小米/CMCC 无硬件）；XINGLOO 已验证

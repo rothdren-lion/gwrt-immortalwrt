@@ -4,6 +4,10 @@
 
 - **XINGLOO AX3000**（COMFAST CF-WR630AX，MT7981B + MT7531AE + MT7976CN）
 - **Qihoo 360T7**（MT7981B，原厂分区 / UBI 两个 profile）
+- **H3C Magic NX30 Pro**（MT7981B，OpenWrt U-Boot 布局）
+- **Xiaomi Mi Router AX3000T**（原厂 / OpenWrt U-Boot 布局）
+- **CMCC RAX3000M**（MT7981B，NAND/eMMC/UBI）
+> 以上 MT7981 NAND 机型共用同一套 GWRT 插件/默认值/ mesh，配置生成器一次全编。
 
 > 详细 mesh 设计见 `docs/GWRT-MESH.md`；完整构建/调试记录见
 > `BUILD-NOTES-cf-wr630ax-261025-01.md`。
