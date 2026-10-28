@@ -64,6 +64,11 @@ rsync + commit + push）。本地备份编译步骤见 `docs/WORKLOG-20261026-jd
 > PZ-L8 上游默认禁用 WiFi（缺 board 文件），已从原厂 Nwrt 镜像抽 BDF 做
 > `package/firmware/pz-l8-wifi-board` + DTS/hotplug 使能，随 pzl8 261027-02 验证。
 > PZ-L8 重分区说明见 WORKLOG（smem 分区表，先上机取 `cat /proc/mtd` 再定方案）。
+>
+> **2026-10-28 续**：全插件方案（SSR/HomeProxy/IPTV/UPnP/工具，easytier 只留界面）
+> 已推 cp02/pzl8 新配置；羿哪吒（JDCloud AX3000/RE-CS-03，IPQ5018+eMMC）移植完成
+> （DTS+设备定义+BDF 包+caldata+单槽 eMMC 升级），四线并编中
+> （cp02-261028-01 / pzl8-261028-01 / nezha-261028-01 + pzl8-261027-02 WiFi 版）。
 
 ---
 
@@ -74,6 +79,7 @@ rsync + commit + push）。本地备份编译步骤见 `docs/WORKLOG-20261026-jd
 | `gwrt-mk-wr630ax-config.sh` | 配置生成器（设备 profile、插件集、turboacc/coremark 选项） |
 | `gwrt-mk-cp02-config.sh` / `gwrt-build-cp02.sh` | MT7621 鲁班 RE-CP-02 最低 mesh 配置生成器 + 本地编译脚本（主走 GitHub CI） |
 | `gwrt-mk-pzl8-config.sh` | CMCC PZ-L8（PL08）IPQ5018 预设，mesh 子AP + easytier 全家桶 |
+| `gwrt-mk-nezha-config.sh` | 京东云 AX3000（羿哪吒 RE-CS-03）IPQ5018 eMMC 预设，全插件，mesh 子AP |
 | `target/linux/mediatek/dts/mt7981b-comfast-cf-wr630ax*.dts` | XINGLOO 设备树（含 512M 变体） |
 | `target/linux/mediatek/image/filogic.mk` | 设备定义（`comfast_cf-wr630ax*`、`qihoo_360t7*`） |
 | `package/gwrt-device-defaults/` | 首启默认值（LAN IP、SSID、wifiroam、防火墙、APK 预置） |

@@ -176,3 +176,81 @@ sh gwrt-build-cp02.sh 6 $VER    # -j6 铁律，禁 -j8
   - C（重做 bootloader 分区表，高风险）：改 MIBIB/SMEM 分区 → 需串口救砖 + 原厂全盘备份；
     且 SBL 签名/校验链（CMCC 定制机常见）可能拒绝改过的分区表。**等 A 的数据回来再定**。
 - 要推进 A：把 PZ-L8 上 `cat /proc/mtd` 和 `ubinfo -a` 的输出贴给我（跑 Nwrt v1.6 或我们的 261027-01 都行）。
+
+---
+
+# 追加 2026-10-28 — 全插件方案 + 羿哪吒移植 + 四线并编
+
+## 需求变更（用户）
+
+- easytier：**只留 LuCI 界面（70K），核心不编**（用户自理）
+- 加：SSR（gwrt-ssr-plus-luci）/ HomeProxy / IPTV（igmpproxy+udpxy）/ UPnP / 常用工具
+  （htop/nano/usbutils-lsusb/lsblk/blkid，另 cp02 上 fdisk=m、pzl8 上 fdisk=y）
+- cp02（16M SPI）尽量塞满；pzl8 按最优方案；羿哪吒一起做，GitHub 编译
+
+## 包体积侦察（aarch64 apk 实测，mipsel 接近）与决策
+
+| 包 | 体积 | cp02(16M) | pzl8(58M) | 依据 |
+|---|---|---|---|---|
+| xray-core | 11M | =m | =y | SSR 核心 |
+| sing-box | 15M | =m | =m | HomeProxy 核心，pzl8 也放不下（32+15+11+…>58） |
+| v2ray-geoip+geosite | 5M | =m | =y | xray 路由数据 |
+| chinadns-ng | 264K | =m | =y | 16M 差 0.26M 只能让路 |
+| gwrt-ssr-plus-luci | 3.2M | =y | =y | lua/js，跨架构同体积 |
+| luci-app-homeproxy+i18n | 0.57M | =y | =y | 核心另装 |
+| dns2socks/dns2tcp/ipt2socks/microsocks | ~0.06M | =y | =y | |
+| miniupnpd-nftables+luci+i18n | ~0.1M | =y | =y | 显式钉 nftables 变体（勿选 iptables） |
+| igmpproxy+udpxy | ~0.12M | =y | =y | luci-app-iptv 树里不存在，直接用核心包 |
+| htop/nano/usbutils/lsblk/blkid+libs | ~0.75M | =y | =y | cp02 自带 kmod-usb 系列，lsusb 可用 |
+| kmod-tun / kmod-inet-diag | 小 | y / =m | y / =m | sing-box 依赖 inet-diag，=m 会连带编 apk |
+| easytier core | 15/9M | 删除 | 删除 | 只留 luci-app-easytier+i18n |
+
+- cp02 算账：现状 11.8M/16M（剩 3.8M）+ 瘦身（去 ppp 全套 ~0.3M、
+  wpad-openssl→wpad-mesh-wolfssl ~0.3M（保留 11r，mt7981 实测 mesh 用 openssl，
+  mt76 配 wolfssl 为常规组合）、dnsmasq-full→dnsmasq ~0.07M（DHCPv6 由 odhcpd 接））
+  ≈ 4.5M 空间 vs 新增 ~4.6M（含 chinadns=m、fdisk=m）→ **擦线，check-size 仲裁**；
+  若爆，log 看溢出数再 demote（候选：homeproxy-luci→=m）。
+- xray/sing-box 均支持 mipsel（GO_ARCH_DEPENDS 含 mipsel，no-mips16 标志即为 MIPS 准备）；
+  ssr-plus 系 C/Go 实现跨架构无碍，用户判断正确。
+- workflow artifact 收集同步加：xray-core/sing-box/v2ray-geo*/chinadns-ng/fdisk/kmod-inet-diag。
+
+## 羿哪吒 = JDCloud RE-CS-03（u-boot 文件名实锤），IPQ5018，eMMC
+
+- 硬件解码来源：Nwrt-2025-06-01 factory.bin = FIT（5.4 内核+DTB，config@mp03.5-c2）
+  填充到 6M + squashfs rootfs；DTB 反编译得全机硬件；rootfs 得原厂 BDF。
+- GPT（jdcax3000gpt.bin）：0:HLOS 6M + rootfs 256M + rootfs_data 960M + swap 1G +
+  ART 512K（0:ART）+ APPSBLENV 等。**内核 FIT 必须 ≤6M**：实测本树 6.18 内核 4.47M
+  （从 pzl8 sysupgrade.tar 量出），FIT 后 ~4.6M，装得下。
+- 网口：ESS + 外置 QCA8337（复位 gpio39），LAN1-4 在外部 switch（phys 0-3，
+  lan_bmp=0x1e），WAN 在内部 GE PHY（wan_bmp=0x00，Nwrt 里 eth0=WAN）。
+  DTS：gmac0 直连 ge_phy（phy-mode gmii，label wan，仿 mx6200 的 standalone gmac+label
+  写法）；gmac1 SGMII 接 switch CPU 口。若 gmii 模式不对，WAN 不通但 LAN/WiFi 不受影响，
+  实机 dmesg 定。
+- 按键/LED：reset gpio25 / wps gpio38（低有效）；蓝31/绿32/红33（Nwrt flag 猜高有效，
+  错了只反相反，不致命，实机核对）。
+- WiFi：IPQ5018+QCN6122（同 PZ-L8），默认使能，calibration-variant "JDCloud-AX3000"，
+  BDF 用 Nwrt 自带两份（与 PZ-L8 的 md5 不同，已单独成包 jdcloud-ax3000-wifi-board）。
+- eMMC：chosen 不写 root=（APPSBL 按 GPT 自动给，同 Nwrt）；sysupgrade 单槽直写
+  0:HLOS + rootfs（platform.sh 新增 jdcloud,ax3000 分支，复用 emmc_do_upgrade）；
+  MAC/caldata 走 0:ART（caldata_extract_mmc + mmc_get_mac_binary，偏移套 CMCC 布局待核）。
+- 移植文件：dts/ipq5018-jdcloud-ax3000.dts、ipq50xx.mk Device 块（FitImage+EmmcImage，
+  DTS_CONFIG=config@mp03.5-c2 对齐原厂 bootloader 预期）、wifi-board 包、caldata、
+  02_network（lan1-4+wan，MAC art+12/+1）、platform.sh。
+- nezha 配置：rootfs 256M 全套 =y（含 xray+sing-box+geo），easytier 仅界面。
+- 待实机验证：WAN 通断、LAN1-4、双频、MAC、LED 极性、内存、sysupgrade 回写。
+
+## 在飞的构建（2026-10-28 14:0x 触发）
+
+| run | 内容 | 状态 |
+|---|---|---|
+| 40698610224 | pzl8 261027-02（WiFi 版，旧插件集） | 跑完即验证 WiFi 改动 |
+| 40700849063 | cp02 261028-01（全插件+16M 瘦身） | 并行跑，重点看 check-size |
+| 40700858548 | pzl8 261028-01（最优方案） | 排队（同组串行） |
+| 40702165180 | nezha 261028-01（首编，移植验证） | 并行跑，重点看 DTS/内核 FIT |
+
+## 待办更新
+
+- [ ] 四 run 收割：拆包验证 + 归档 bin-cp02-261028-01 / bin-pzl8-261028-01 / bin-nezha-261028-01
+- [ ] nezha 首刷建议 initramfs.itb 先行（串口看启动），再 sysupgrade
+- [ ] PZ-L8/羿哪吒都要回传：dmesg ath11k、iw list、cat /proc/mtd（含 ubinfo -a，定分区方案）
+- [ ] cp02 若 check-size 爆：按溢出数 demote（预案见上）
