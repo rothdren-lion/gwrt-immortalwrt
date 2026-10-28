@@ -254,3 +254,35 @@ sh gwrt-build-cp02.sh 6 $VER    # -j6 铁律，禁 -j8
 - [ ] nezha 首刷建议 initramfs.itb 先行（串口看启动），再 sysupgrade
 - [ ] PZ-L8/羿哪吒都要回传：dmesg ath11k、iw list、cat /proc/mtd（含 ubinfo -a，定分区方案）
 - [ ] cp02 若 check-size 爆：按溢出数 demote（预案见上）
+
+---
+
+# 追加 2026-10-28 — cp02 16M 爆炸根因 + homeproxy 硬依赖 + pzl8 WiFi 验证通过
+
+## cp02 261028-01：37.9M vs 16M，构建“成功”但无 sysupgrade
+
+- 现象：run 成功，artifact 只有 initramfs（35M）+ apks，没有 sysupgrade.bin。
+  查 log：`WARNING: Image file ...-squashfs-sysupgrade.bin is too big: 37879812 > 16384000`
+  —— oversize 只告警跳过该镜像，不 fail 整个构建（以后必须检查 artifact 有没有 sysupgrade）。
+- 根因：`luci-app-homeproxy` 的 Makefile 里 `LUCI_DEPENDS` 写死 `+sing-box`，
+  UI(=y) 强制把 19M 核心拽进镜像。本地版和 feeds 版都有这行，躲不掉。
+- 修复：cp02/pzl8 的 homeproxy UI+i18n 一律改为 =m（apk 手动装，workflow 已加收集）。
+  nezha（rootfs 256M）不受影响，保持全 =y。
+- 教训：任何带核心的 LuCI（如 homeproxy）先查 Makefile 的 LUCI_DEPENDS 有没有硬依赖；
+  ssr-plus-luci 无此问题（只依赖 luci-compat/curl）。
+
+## pzl8 261027-02 WiFi 验证（拆包，全部通过）
+
+- 双频 board.bin 都在镜像里（IPQ5018/hw1.0 + QCN6122/hw1.0），md5 与原厂 BDF 一致
+  （05abc70a… / 200f445b…），manifest 有 pz-l8-wifi-board 1.0-r1 +
+  ath11k-firmware-ipq5018-qcn6122。
+- 归档 `bin-pzl8-261027-02/`（factory.ubi+sysupgrade+initramfs+manifest+config+
+  easytier aarch64 apk，sha256 全过）。注意这是旧插件集（easytier 核心=y、无 ssr），
+  但 WiFi 部分与新配置一致，可先刷验证 WiFi。
+- 待实机：dmesg 确认 fallback icked board.bin（非 qmi-board-id 条目）、iw list 双频。
+
+## 在飞（2026-10-28 15:23 触发）
+
+- cp02 261028-02（homeproxy 双=m，16M 二次冲击，check-size 仲裁）
+- pzl8 261028-01（同修，58M 充裕，预期一次过）
+- nezha 261028-01（1h20m+，首编，重点 DTS/FIT）
