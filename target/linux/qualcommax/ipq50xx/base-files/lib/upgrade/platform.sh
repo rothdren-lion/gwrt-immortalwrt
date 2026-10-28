@@ -264,6 +264,13 @@ platform_do_upgrade() {
 		remove_oem_ubi_volume wifi_fw
 		nand_do_upgrade "$1"
 		;;
+	jdcloud,ax3000)
+		# eMMC GPT 单槽布局（HLOS 6M + rootfs 256M + rootfs_data 960M，
+		# 无 _1 备份槽，不走双槽逻辑，直接写固定分区）
+		CI_KERNPART="0:HLOS"
+		CI_ROOTPART="rootfs"
+		emmc_do_upgrade "$1"
+		;;
 	*)
 		default_do_upgrade "$1"
 		;;

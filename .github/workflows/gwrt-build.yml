@@ -11,6 +11,7 @@ on:
         options:
           - cp02
           - pzl8
+          - nezha
       version:
         description: 'Version (YYMMDD-NN), empty = today-01'
         required: false
@@ -83,6 +84,7 @@ jobs:
           case "${{ inputs.device }}" in
             cp02) OUT=.config VER="$VER" sh gwrt-mk-cp02-config.sh ;;
             pzl8) OUT=.config VER="$VER" sh gwrt-mk-pzl8-config.sh ;;
+            nezha) OUT=.config VER="$VER" sh gwrt-mk-nezha-config.sh ;;
             *) echo "unknown device preset: ${{ inputs.device }}"; exit 1 ;;
           esac
           make defconfig
