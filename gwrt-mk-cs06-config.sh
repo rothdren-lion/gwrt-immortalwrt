@@ -84,6 +84,12 @@ for p in \
 	sed -i "/^# CONFIG_PACKAGE_${p} is not set\$/d" "$OUT"
 done
 
+# --- 4. CS-06 必需开关（ath12k PPE-DS 直接引用 ab->debugfs_soc，
+#        该成员在 #ifdef CPTCFG_ATH12K_DEBUGFS 内，必须开 MAC80211_DEBUGFS） ---
+sed -i "s|^# CONFIG_PACKAGE_MAC80211_DEBUGFS is not set\$|CONFIG_PACKAGE_MAC80211_DEBUGFS=y|" "$OUT"
+grep -q "^CONFIG_PACKAGE_MAC80211_DEBUGFS=y\$" "$OUT" || \
+	echo "CONFIG_PACKAGE_MAC80211_DEBUGFS=y" >> "$OUT"
+
 echo "==> generated: $OUT"
 echo "    base: $(basename "$SRC")  VER: $VER"
 echo "    下一步: cp $OUT .config && make defconfig 后复核"
