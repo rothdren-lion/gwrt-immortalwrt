@@ -132,6 +132,7 @@ define Device/jdcloud_ax3000
 	$(call Device/EmmcImage)
 	DEVICE_VENDOR := JDCloud
 	DEVICE_MODEL := AX3000
+	DEVICE_DTS := ipq5018-jdcloud-ax3000
 	DEVICE_DTS_CONFIG := config@mp03.5-c2
 	SOC := ipq5018
 	# 0:HLOS 分区 6M（GPT 实测：8738-21025 扇区），内核 FIT 必须塞下
