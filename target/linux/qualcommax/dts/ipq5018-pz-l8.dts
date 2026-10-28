@@ -329,12 +329,14 @@
 };
 
 /*
- * ath11k Wi-Fi consumes too large memory spaces and too few spaces are
- * available for users. To prevent OOM when using LuCI or other softwares,
- * disable Wi-Fi related peripherals at the moment.
+ * GWRT mesh AP: Wi-Fi radios enabled (upstream keeps them disabled for
+ * lack of a CMCC-PZ-L8 board file / OOM caution). Board data comes from
+ * package/firmware/pz-l8-wifi-board (stock BDF as board.bin fallback);
+ * calibration/MAC from art via 11-ath11k-caldata (cmcc,pz-l8 case).
+ * If the box OOMs with LuCI + both radios, revisit fw-memory-mode / BDF.
  */
 &q6v5_wcss {
-	status = "disabled";
+	status = "okay";
 };
 
 &wifi {
@@ -346,7 +348,7 @@
 
 	ieee80211-freq-limit = <2400000 2483000>;
 
-	status = "disabled";
+	status = "okay";
 };
 
 &wifi1 {
@@ -360,5 +362,5 @@
 
 	ieee80211-freq-limit = <5150000 5730000>;
 
-	status = "disabled";
+	status = "okay";
 };

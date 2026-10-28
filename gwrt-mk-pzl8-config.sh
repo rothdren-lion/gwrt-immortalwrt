@@ -26,6 +26,7 @@ CONFIG_TARGET_qualcommax_ipq50xx_DEVICE_cmcc_pz-l8=y
 CONFIG_VERSION_NUMBER="$VER"
 CONFIG_VERSION_DIST="GWRT"
 CONFIG_PACKAGE_ath11k-firmware-ipq5018-qcn6122=y
+CONFIG_PACKAGE_pz-l8-wifi-board=y
 CONFIG_PACKAGE_gwrt-agent=y
 CONFIG_PACKAGE_gwrt-device-defaults=y
 CONFIG_PACKAGE_gwrt-mesh-apmode=y
