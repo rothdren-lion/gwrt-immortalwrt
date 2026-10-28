@@ -92,6 +92,27 @@
 产物仍在编译树 `bin/targets/qualcommbe/ipq53xx/`；交付盘（/run/media/...）未挂载，
 归档待用户定 cs-06 中文代号后执行（openwrt-rom/jdcloud_re-cs-06/）。
 
+## 交付（已归档，sha256sum -c 全 OK）
+
+| 机型 | 代号 | 归档目录 | 文件 |
+|---|---|---|---|
+| `jdcloud_re-cs-06` | **赵云**（= 京东云 BE6500） | `Rout/JDC-京东云/BE6500赵云/` | `gwrt-261026-01-赵云cs-06-{factory,sysupgrade}.bin` 120M<br>`...-initramfs.itb` 118M<br>`...-赵云cs-06.manifest` |
+| `jdcloud_re-cs-08` | **太乙2plus**（= ER2-Plus） | `Rout/JDC-京东云/JDC-ER2-Plus-IPQ53XX太乙2/` | `gwrt-261026-01-太乙2pluscs-08-{factory,sysupgrade}.bin` 108M<br>`...-initramfs.itb` 108M<br>`...-太乙2pluscs-08.manifest` |
+
+### cs-08 = cs-06 同方案（IPQ5322 eMMC + QCA8386），差异：
+
+| | cs-06 赵云 | cs-08 太乙2plus |
+|---|---|---|
+| 无线 | ath12k 内置 WiFi（ATH12K_AHB） | **无**（整条无线栈剔除） |
+| 万兆 | — | **SFP + Marvell 10G PHY**（kmod-sfp / kmod-phy-marvell / -10g） |
+| 插件数 | 635 | 624 |
+| 镜像 | 120M | 108M |
+
+- 配置派生：`gwrt-mk-cs08-config.sh`（基于 config.cs06-261026-01），编译 `gwrt-build-cs08.sh`
+- `libiwinfo` / `rpcd-mod-iwinfo` 因 luci-mod-network/status 硬依赖保留（~50KB，无法去）；
+  ath12k 固件通过 device 定义负号 `-ath12k-firmware-*` 剔除（子目标 DEFAULT 会强制带，
+  仅靠 config 改不掉）
+
 ## 验证清单
 
 - [x] CONFIG_TARGET_PROFILE="DEVICE_jdcloud_re-cs-06"
@@ -101,9 +122,23 @@
 - [x] be10000 / xer5 ipq95xx 内核冒烟（be6500 共用 ipq53xx 内核）
 - [x] 源码树 mediatek .config 回归冒烟
 
+## ⚠️ 事故：跨文件系统 mv 固件导致内容变异（已修复）
+
+把 `bin/targets/...` 的镜像 `mv` 到 NAS（`/mnt/syNAS/.../mark/openwrt-rom`）后，
+发现文件**大小不变、manifest 相同，但 sha256 与编译树记录不符**（3 个镜像全中）。
+
+- 编译树 `bin/.../ipq53xx/sha256sums`（14:19 生成）与早先 `cp` 到 `JDC-京东云/` 的副本一致，
+  说明 **cp 的副本是原件，mv 过去的那份被改动了**
+- 已用副本回写 openwrt-rom，重新生成 `sha256sums`，并做结构验证：
+  `tar -tf` 能列 CONTROL/kernel/root，`CONTROL` BOARD 正确，
+  kernel 为 FIT(Device Tree Blob)，squashfs(xz) 可读，全部 OK
+
+**教训：固件写入 NAS/移动介质后必须 `sha256sum` 对编译树记录复核，`mv` 不能当作“可靠传输”。**
+今后归档流程固定为：先 `cp` → 校验 sha256 → 再删源（即不要用 mv 直传）。
+
 ## 后续事项
 
 1. 实机刷机验证（eMMC 线刷 sysupgrade；京东云原厂布局 factory）
-2. ath12k PPE-DS Direct Switch 运行状态检查（/sys/kernel/debug/ppe）
-3. 归档固件到 openwrt-rom/jdcloud_re-cs-06/（需交付盘挂载 + 定中文代号）
+2. ath12k PPE-DS Direct Switch 运行状态检查（/sys/kernel/debug/ppe）——仅 cs-06
+3. cs-08 插 SFP 模块验证 Marvell 10G PHY 链路与 2500/10000BASE-X 协商
 4. 如需 bridge flowtable offload：加上游 675 系 generic 补丁（先 rebase 本地 699）
