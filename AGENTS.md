@@ -58,6 +58,12 @@ rsync + commit + push）。本地备份编译步骤见 `docs/WORKLOG-20261026-jd
 > **2026-10-28 首跑成功**：cp02 261027-01 已归档到 `bin-cp02-261027-01/`（拆包验证 7/7，
 > mipsel 降级生效）。preset：`cp02` / `pzl8`。注意推送需直连 URL
 > `https://rothdren-lion@github.com/...`（全局 ghproxy 重写不能认证推送）。
+>
+> **2026-10-28 续**：cp02 261027-02（补收 easytier mipsel apk）与 pzl8 261027-01
+> （首编，factory.ubi 32M）双成功，分别归档 `bin-cp02-261027-02/`、`bin-pzl8-261027-01/`。
+> PZ-L8 上游默认禁用 WiFi（缺 board 文件），已从原厂 Nwrt 镜像抽 BDF 做
+> `package/firmware/pz-l8-wifi-board` + DTS/hotplug 使能，随 pzl8 261027-02 验证。
+> PZ-L8 重分区说明见 WORKLOG（smem 分区表，先上机取 `cat /proc/mtd` 再定方案）。
 
 ---
 
@@ -156,5 +162,8 @@ sh scripts/gwrt-sync-mesh.sh /path/to/openwrt
 
 ## 7. 操作日志索引
 
+- `docs/WORKLOG-20261026-qualcommbe-cs06-be6500-be10000.md` — qualcommbe ipq53xx/ipq95xx
+  同步（BE6500/BE10000/CS-06 等新机型）、XER5 保留、CS-06 配置派生与编译验证、
+  generic 按需增量补丁（706/752/753/767/768/769/775/901）
 - `docs/WORKLOG-20261026-jdcloud-cp02-mt7621.md` — cp02 最低 mesh 集成、
   gwrt-agent/device-defaults 跨架构改造、GitHub Actions 云端编译（ipq5018 待确认机型后移植）

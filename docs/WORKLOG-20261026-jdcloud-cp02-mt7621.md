@@ -118,3 +118,61 @@ sh gwrt-build-cp02.sh 6 $VER    # -j6 铁律，禁 -j8
 - [ ] pzl8 首编后拆包验证 WiFi 固件/board-2 是否齐全（设备定义未带 packages，若有问题需补 DEVICE_PACKAGES）
 - [ ] 羿哪吒 jdcloud_ax3000 移植（NAS 有 Nwrt factory.bin 可抽 DTB/board；或找 Nwrt 源码抄 DTS）
 - [ ] git 全局有 ghproxy 重写，本仓推送需用 `https://rothdren-lion@github.com/...` 直连 URL
+
+---
+
+# 追加 2026-10-28 — cp02-02/pzl8-01 双成功 + PZ-L8 WiFi 使能 + 分区说明
+
+## 构建结果（全部成功）
+
+| run | 内容 | 结果 |
+|---|---|---|
+| 40602199533 | cp02 **261027-02**（补收 easytier mipsel apk 9.0M） | ✅ 1h03m |
+| 40602205139 | pzl8 **261027-01** 首编（factory.ubi 32M + sysupgrade 31M + easytier aarch64 apk 15M） | ✅ 1h10m |
+| 40698610224 | pzl8 **261027-02**（WiFi 使能版，见下） | 🏃 进行中 |
+
+- 归档：`bin-cp02-261027-02/`（sysupgrade+initramfs+manifest+config+easytier mipsel apk，sha256 全 OK）；
+  `bin-pzl8-261027-01/`（factory.ubi+sysupgrade+initramfs.itb+manifest+config+easytier aarch64 apk，sha256 全 OK）
+- pzl8 manifest 确认：ath11k-firmware-ipq5018-qcn6122 / easytier / gwrt 三件套 / ucode-mod-socket / kmod-ath11k 俱全
+- 注意：另一会话同期在树上活跃（cs06/cs08 qualcommbe、ss01 mesh 按键、mac80211/ath 补丁等），
+  本次只提交了 pzl8-wifi 相关 4 项，其余 290+ 文件未动
+
+## PZ-L8 WiFi 使能（上游默认禁用，本次打开）
+
+- 现状：上游 `ipq5018-pz-l8.dts` 把 `q6v5_wcss`/`wifi`/`wifi1` 全部 `status="disabled"`；
+  对比：有 board 文件的 gl-b3000/mr3000d-ci/elecom 全是 `okay`。
+  qca-wireless 快照（2026-09-10）里**没有** `cmcc_pz-l8` board，只有 mr3000d-ci/rm2-6。
+- 根因链：缺 board → 上游禁用 WiFi → 只剩有线路由，**当 mesh 子AP 无意义**。
+- 修复（4 项，已推仓，pzl8 261027-02 包含）：
+  1. `package/firmware/pz-l8-wifi-board/`（新包）：从 `PZL8-AX3000-openwrt-v1.6.bin`
+     的 wifi_fw 卷（squashfs，`hsqs` 魔数）抽出两份原厂 BDF（WLAN.HK.2.5，各 128K，
+     md5 已核对），分别装为 `ath11k/IPQ5018/hw1.0/board.bin`（2.4G）和
+     `ath11k/QCN6122/hw1.0/board.bin`（5G）fallback。
+     依据：DD-WRT 的 board-2.bin 只含 `bus=ahb,qmi-board-id=` 条目（4 条，无 variant），
+     对不上 PZ-L8 时驱动自动回落到 board.bin。
+  2. DTS：三处 `disabled`→`okay`，OOM 警告改为 GWRT mesh 说明。
+  3. `11-ath11k-caldata`：`cmcc,pz-l8` 并入 `cmcc,mr3000d-ci` 分支
+     （同为 CMCC 的 art 布局：0x1000/0x26800，MAC 取 art+12/+18）。
+  4. `gwrt-mk-pzl8-config.sh`：选中新包。
+- 待实机验证（261027-02 刷机后）：`dmesg | grep ath11k`（确认用了 board.bin 还是 qmi-board-id 条目）、
+  `iw list`（2.4G+5G 双频）、`cat /proc/mtd`（见下）、内存水位（上游 OOM 警告是否应验）。
+
+## PZ-L8（128M NAND）重分区说明
+
+- 分区表来源：DTS 用 `qcom,smem-part`，即**分区表由 SBL（bootloader）经 SMEM 传给内核**，
+  DTS 里只声明了 `0:art`。改分区 = 动 bootloader 区，**必须有串口 + 全盘 nanddump 备份**；
+  NAS 里没有 PZ-L8 的 uboot 备份（只有羿哪吒的 jdcax3000uboot.bin/gpt），先别碰 SBL。
+- 好消息：UBI 内部没有浪费 —— UbiFit + autoresize，overlay 自动吃掉 `ubi` 分区全部剩余 LEB。
+  当前 IMAGE_SIZE=59392k（58M）只是**镜像体积上限**，factory.ubi 实际 32M。
+- 原厂 Nwrt v1.6 的 UBI 实测（`ubireader_display_info`）：PEB 128K/LEB 126976，共 265 块 ≈ 34.7M
+  （kernel 30 + wifi_fw 29 + bt_fw 1 + ubi_rootfs 203 + rootfs_data 0）。
+  注意这是 Nwrt 自己的 ubi 像，不是全盘 128M 地图。
+- 三档方案（按风险排序）：
+  - A（推荐先做，零风险）：上机跑 `cat /proc/mtd; ubinfo -a; df -h`，看 smem 里 `ubi` 分区到底多大；
+    若有 80~90M，直接把 IMAGE_SIZE 放大到贴着分区上限重编，多出 20M+ overlay。
+    我们的 factory.ubi 只有 kernel+rootfs 卷，不碰 wifi_fw/bt_fw（Nwrt 遗留卷，sysupgrade 保留）。
+  - B（不动 SBL，用闲置分区）：若 `0:rootfs_data` 或其它数据分区有空闲，
+    首启脚本挂载为 `/opt` 给 easytier/docker 用，系统区不动。
+  - C（重做 bootloader 分区表，高风险）：改 MIBIB/SMEM 分区 → 需串口救砖 + 原厂全盘备份；
+    且 SBL 签名/校验链（CMCC 定制机常见）可能拒绝改过的分区表。**等 A 的数据回来再定**。
+- 要推进 A：把 PZ-L8 上 `cat /proc/mtd` 和 `ubinfo -a` 的输出贴给我（跑 Nwrt v1.6 或我们的 261027-01 都行）。
