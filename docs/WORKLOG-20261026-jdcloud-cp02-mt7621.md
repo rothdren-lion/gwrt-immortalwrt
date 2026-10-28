@@ -286,3 +286,36 @@ sh gwrt-build-cp02.sh 6 $VER    # -j6 铁律，禁 -j8
 - cp02 261028-02（homeproxy 双=m，16M 二次冲击，check-size 仲裁）
 - pzl8 261028-01（同修，58M 充裕，预期一次过）
 - nezha 261028-01（1h20m+，首编，重点 DTS/FIT）
+
+---
+
+# 追加 2026-10-29 — cp02-02 一次过 + 双机 uboot 本地编完
+
+## cp02 261028-02：16,122,402 / 16,384,000，剩 261K，擦线过 ✅
+
+- homeproxy UI+i18n 改 =m 后，sing-box 不再被拽入，sysupgrade 正常产出。
+- manifest 确认进镜像：ssr-plus-luci / upnp（nftables）/ igmpproxy+udpxy /
+  htop+nano+usbutils+lsblk+blkid+libs / wpad-mesh-wolfssl / dnsmasq-std /
+  easytier-luci / mesh 三件套 / socket；不在镜像（=m apk）：xray / sing-box /
+  geoip+geosite / chinadns / fdisk / homeproxy-UI。
+- 拆包：DISTRIB_RELEASE=261028-02，agent 降级 OK（无 .bin），socket OK，
+  ssr-plus 界面文件在（ssrurl.htm + i18n lmo）。
+- 归档 `bin-cp02-261028-02/`：sysupgrade + initramfs + manifest + config +
+  7 个 sideload apk（已改名 *-mipsel_24kc.apk，sha256 全过）。
+  刷机后手动装：xray → geo → chinadns → sing-box → homeproxy-UI（eMMC/overlay）。
+
+## uboot（QSDK 12.5 树，本地编，工具链自带）
+
+- 结论：`mark/uboot/uboot-qsdk12.5-build` 就是现成的（uBootKit，带 Web/ failsafe，
+  自己的 GitHub CI 也有）；`bl-mt798x-dhcpd` 是 MT798x 的用不上；
+  **mt7621/cp02 无对应源码**，鲁班沿用原厂 uboot（sysupgrade 不碰 uboot，无影响）。
+- PZ-L8：`./build.sh build cmcc_pz-l8` ✅ → uboot-ipq50xx-cmcc_pz-l8-261029.bin
+  （640K），已归档进 `bin-pzl8-261027-02/`。
+- 羿哪吒：`./build.sh build jdcloud_ax3000` ✅（defconfig 是上游自带的 f431dc42）→
+  uboot-ipq50xx-jdcloud_ax3000-261029.bin（640K），已放入 `bin-nezha-261028-01/`（等固件）。
+- 注意： Eventually 如需改动 uboot，走 fork（1.2G）+ 自己的 CI；目前只是用现成 defconfig 本地编。
+
+## 待收割
+
+- pzl8 261028-01（全插件最优，58M 充裕，预期过）
+- nezha 261028-02（DTS 文件名修复后重编，重点：dtb 过不过、FIT 体积 ≤6M、sysupgrade 产物）
