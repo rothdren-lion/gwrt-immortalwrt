@@ -55,9 +55,10 @@ CONFIG_PACKAGE_dns2socks=y
 CONFIG_PACKAGE_dns2tcp=y
 CONFIG_PACKAGE_ipt2socks=y
 CONFIG_PACKAGE_microsocks=y
-# --- HomeProxy（前端进镜像，sing-box 核心编 apk 装 eMMC）---
-CONFIG_PACKAGE_luci-app-homeproxy=y
-CONFIG_PACKAGE_luci-i18n-homeproxy-zh-cn=y
+# --- HomeProxy（UI+核心都太大，16M 放不下，双双编 apk 装 eMMC）---
+# 注意：luci-app-homeproxy 硬依赖 +sing-box（Makefile 写死），=y 会把 19M 核心拽进镜像
+CONFIG_PACKAGE_luci-app-homeproxy=m
+CONFIG_PACKAGE_luci-i18n-homeproxy-zh-cn=m
 CONFIG_PACKAGE_sing-box=m
 CONFIG_PACKAGE_kmod-inet-diag=m
 # --- IPTV ---

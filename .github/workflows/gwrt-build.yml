@@ -107,7 +107,7 @@ jobs:
           mkdir -p out
           find bin/targets -type f \( -name '*sysupgrade*' -o -name '*factory*' -o -name '*initramfs*' -o -name '*.manifest' -o -name 'sha256sums' \) -exec cp -v {} out/ \;
           find bin/targets -maxdepth 3 -type f \( -name 'profiles.json' -o -name 'version.buildinfo' -o -name 'config.buildinfo' -o -name 'feeds.buildinfo' \) -exec cp -v {} out/ \;
-          find bin/packages -type f \( -name 'easytier*.apk' -o -name 'xray-core*.apk' -o -name 'sing-box*.apk' -o -name 'v2ray-geo*.apk' -o -name 'chinadns-ng*.apk' -o -name 'fdisk*.apk' -o -name 'kmod-inet-diag*.apk' \) -exec cp -v {} out/ \;
+          find bin/packages -type f \( -name 'easytier*.apk' -o -name 'xray-core*.apk' -o -name 'sing-box*.apk' -o -name 'v2ray-geo*.apk' -o -name 'chinadns-ng*.apk' -o -name 'fdisk*.apk' -o -name 'kmod-inet-diag*.apk' -o -name 'luci-app-homeproxy*.apk' -o -name 'luci-i18n-homeproxy*.apk' \) -exec cp -v {} out/ \;
           cp .config "out/config-${{ inputs.device }}-${{ env.VER }}"
 
       - name: Upload artifact
