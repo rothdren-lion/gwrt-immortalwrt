@@ -319,3 +319,58 @@ sh gwrt-build-cp02.sh 6 $VER    # -j6 铁律，禁 -j8
 
 - pzl8 261028-01（全插件最优，58M 充裕，预期过）
 - nezha 261028-02（DTS 文件名修复后重编，重点：dtb 过不过、FIT 体积 ≤6M、sysupgrade 产物）
+
+---
+
+# 追加 2026-10-29 — cp02-03 / nezha-02 双成功归档 + 真机 mesh 修好
+
+## 真机排障（192.168.3.3，261028-02）：三症状根因全找到
+
+1. 无 mesh 漫游：wifiroam 三 apk 是纯脚本，却被 Makefile 架构条件误杀
+   （mipsel 不装），97 脚本三步全跳过。已真机手动装包+跑 97+启动，
+   mesh 活了（GWRT-BFE9/unconfigured，ubus 正常）。构建侧已修：
+   96 脚本 + wifiroam 三包全架构安装，仅 socket 包 aarch64 专属。
+2. ssr 报错：有界面无 xray 核心。按用户指示代理栈全拿掉。
+3. 无中文：LuCI 本身 zh_cn，mesh.html 中文；英文的是 SSR 旧式页面，随移除消失。
+4. 附带：hostname 改 gwrt（即时+commit）；5G 改 149 后重跑改名得 GWRT_5.8G_BFE9，
+   漫游组已同步；发现 overlay 落 tmpfs（rootfs_data 仅 64K，重启丢配置），
+   -03（~14.5M）留 ~1.7M overlay，自动解决。
+
+## WiFi 命名规则（用户定）
+
+- 双频：2.4G + 5.8G（第一个 5G 射频固定 149/HE80）
+- 三频：第三射频才用 5.2G（第二个 5G 射频 36/HE160）
+- 实现：95 脚本按 5G 射频顺序分配；命名脚本保持按信道判（>=149 → 5.8G）；
+  另补 6G 标签。已真机验证改名。
+
+## cp02 261028-03 ✅（14,484,002 / mtd3 16,187,392，余 1.7M）
+
+- 内容：mesh 全套（预置包进镜像）+ LuCI中文 + 精简主题 + UPnP + IPTV +
+  工具（htop/nano/lsusb/lsblk/blkid/fdisk 转正）+ easytier 界面 +
+  wol/eqos/vlmcsd；无代理/无ppp；wpad-mesh；hostname 默认 gwrt。
+- 拆包 7/7：agent 降级 / socket / wifiroamd / 预置三包（无 socket 包）/
+  96 脚本 / 主题目录 / 261028-03。
+- 归档 `bin-cp02-261028-03/`（sha256 5/5）。刷机建议 sysupgrade -n
+  （首次启动全自动：mesh/SSID/hostname/主题，旧手工配置无保留必要）。
+
+## 精简主题 luci-theme-gwrt-lite（新包，与完整版并存）
+
+- 去 app_icons(3.4M)+plugin_icons+containers，留 logo/brands/css/js/模板/后端，
+  源码 1.4M → apk 约 0.9M；同路径安装，uci-defaults 改名避免文件冲突。
+- 再生方法见包内 Makefile 头。完整版 3.0M 对 16M 太险，未采用。
+
+## nezha 261028-02 ✅（DTS 修后一次过）
+
+- 修：DEVICE_DTS 显式覆盖（设备名 lastword 映射到 ax3000，对不上 jdcloud-ax3000 文件名）。
+- 验证：内核 FIT 5,895,760 ≤ HLOS 6,291,456（余 386K）；BOARD=jdcloud_ax3000；
+  双频 board.bin md5 与 Nwrt 提取一致；mesh/agent/预置包/全插件俱全。
+- 归档 `bin-nezha-261028-02/`（factory.bin+sysupgrade+initramfs+manifest+config+uboot，
+  sha256 6/6）。首刷建议 initramfs 先行。
+
+## mtd 实测（cp02 鲁班 QWRT 下）
+
+- 16M SPI：bootloader 256K + config 64K + factory 256K + firmware 0xf70000
+  (16,187,392) + fullflash 16M。构建 IMAGE_SIZE(16,384,000) 比真实分区宽松，
+  **真上限是 mtd3**，以后加包以此为准。
+- stock uboot 备份（191K，U-Boot 2018.09）在 NAS，流程不碰 bootloader。
+- eMMC：用户明确不折腾，只做 mesh-AP（overlay 够用即止）。
