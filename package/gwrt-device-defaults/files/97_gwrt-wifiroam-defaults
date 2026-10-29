@@ -39,12 +39,42 @@ if [ -f /etc/config/wifiroam ]; then
 	uci -q set wifiroam.backhaul.enabled='1'
 	uci -q set wifiroam.backhaul.ssid='mesh-gwrt'
 	uci -q set wifiroam.backhaul.key='Abc123abc8888'
+
+	# 回传统一 3-addr（wds=0）：4-addr 在 JDCloud 主AP 上四步握手不稳
+	for sec in wifiroam_bh wifiroam_bh2; do
+		[ "$(uci -q get wireless.$sec.wds)" = "1" ] && uci -q set wireless.$sec.wds='0'
+	done
+
+	# 设备名唯一化：同一批机器 hostname 都是 GWRT，拓扑/配对列表里分不清。
+	# 用 br-lan MAC 后 4 位做后缀（例：GWRT-73E2），多台同型号一眼可分。
+	if [ -z "$(uci -q get wifiroam.core.name)" ]; then
+		# 注意：本脚本跑在 uci-defaults（S10boot）阶段，此时 network 还没起，
+		# br-lan/wan 都不存在 —— 必须用内核 probe 阶段就有的 eth0，再依次兜底。
+		mnl=""
+		for _d in eth0 wan lan1 br-lan lo; do
+			_m="$(cat /sys/class/net/$_d/address 2>/dev/null | tr -d ':' | tr 'a-z' 'A-Z')"
+			[ ${#_m} -eq 12 ] && { mnl="$_m"; break; }
+		done
+		sfx="$(printf '%s' "$mnl" | tail -c 4)"
+		if [ -n "$sfx" ]; then
+			uci -q set wifiroam.core.name="GWRT-$sfx"
+			# 主机名还是默认 GWRT 时也带上后缀，LuCI/DHCP 列表里同样能区分
+			if [ "$(uci -q get system.@system[0].hostname)" = "GWRT" ]; then
+				uci -q set system.@system[0].hostname="GWRT-$sfx"
+				uci -q commit system
+			fi
+		fi
+	fi
 	# 漫游组：把本机 AP 的 SSID 预选进去（同 SSID + 同密码才能无缝漫游）
+	# 回传 SSID（mesh-gwrt）是隐藏 WDS AP，绝不能进漫游组
+	bh_ssid="$(uci -q get wifiroam.backhaul.ssid)"
 	ssids=""
 	for i in $(uci -q show wireless | sed -n 's/^wireless\.\([^.]*\)=wifi-iface$/\1/p'); do
 		[ "$(uci -q get "wireless.$i.mode")" = ap ] || continue
+		case "$i" in wifiroam_bh*) continue ;; esac
 		s="$(uci -q get "wireless.$i.ssid")"
 		[ -n "$s" ] || continue
+		[ "$s" = "$bh_ssid" ] && continue
 		case " $ssids " in *" $s "*) continue ;; esac
 		ssids="$ssids $s"
 	done
@@ -84,5 +114,14 @@ fi
 [ -x /etc/init.d/gwrt-wifiroam-autopair ] && {
 	/etc/init.d/gwrt-wifiroam-autopair enable >/dev/null 2>&1
 }
+
+# 主机名默认 gwrt（仅出厂默认值时改一次，不覆盖用户已改的；
+# mesh 拓扑里的唯一名走 wifiroam.core.name=GWRT-$sfx，不受影响）
+case "$(uci -q get system.@system[0].hostname)" in
+ImmortalWrt|OpenWrt|"")
+	uci -q set system.@system[0].hostname='gwrt'
+	uci -q commit system
+	;;
+esac
 
 exit 0
