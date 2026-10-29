@@ -27,15 +27,16 @@
 set -e
 
 TOP=$(cd "$(dirname "$0")" && pwd)
-SRC=${SRC:-$TOP/config.cs06-261026-01}
+SRC=${SRC:-$TOP/configs/config.cs06-261026-01}
 VER=${VER:-261026-01}
 ARG1=${1:-}
 case "$ARG1" in
-	"") OUT=$TOP/config.cs08-$VER ;;
-	*/)  OUT=$ARG1/config.cs08-$VER ;;
-	*)   if [ -d "$ARG1" ]; then OUT=$ARG1/config.cs08-$VER; else OUT=$ARG1; fi ;;
+	"") OUT=$TOP/configs/config.cs08-$VER ;;
+	*/)  OUT=$ARG1/configs/config.cs08-$VER ;;
+	*)   if [ -d "$ARG1" ]; then OUT=$ARG1/configs/config.cs08-$VER; else OUT=$ARG1; fi ;;
 esac
 
+mkdir -p "$(dirname "$OUT")"
 [ -f "$SRC" ] || { echo "missing base config: $SRC" >&2; exit 1; }
 
 cp "$SRC" "$OUT"

@@ -30,7 +30,7 @@ TOP=$(cd "$(dirname "$0")" && pwd)
 cd "$TOP"
 
 VER=${VER:-$(date +%y%m%d)-01}
-OUT=${OUT:-$TOP/config.mt7981-wr632ax-$VER}
+OUT=${OUT:-$TOP/configs/config.mt7981-wr632ax-$VER}
 BAK="$TOP/.config.bak-$(date +%Y%m%d-%H%M%S)"
 
 echo "==> 输出: $OUT"

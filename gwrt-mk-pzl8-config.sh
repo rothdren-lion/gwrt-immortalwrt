@@ -26,7 +26,7 @@ TOP=$(cd "$(dirname "$0")" && pwd)
 cd "$TOP"
 
 VER=${VER:-$(date +%y%m%d)-01}
-OUT=${OUT:-$TOP/config.pzl8-$VER}
+OUT=${OUT:-$TOP/configs/config.pzl8-$VER}
 
 cat > "$OUT" <<EOF
 CONFIG_TARGET_qualcommax=y

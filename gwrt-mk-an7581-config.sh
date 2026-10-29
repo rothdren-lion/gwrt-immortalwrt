@@ -38,7 +38,7 @@ TOP=$(cd "$(dirname "$0")" && pwd)
 cd "$TOP"
 
 VER=${VER:-$(date +%y%m%d)-01}
-OUT=${OUT:-$TOP/config.an7581-$VER}
+OUT=${OUT:-$TOP/configs/config.an7581-$VER}
 BAK="$TOP/.config.bak-$(date +%Y%m%d-%H%M%S)"
 
 DEVICE=${DEVICE:-nokia_xg-040g-md-ubi}

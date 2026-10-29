@@ -39,10 +39,11 @@
 set -e
 
 TOP=$(cd "$(dirname "$0")" && pwd)
-SRC=${SRC:-$TOP/config.ss01-261018-01}
-OUT=${OUT:-$TOP/config.cs07-261021-01}
+SRC=${SRC:-$TOP/configs/config.ss01-261029-03}
+OUT=${OUT:-$TOP/configs/config.cs07-261021-01}
 VER=${VER:-261021-01}
 
+mkdir -p "$(dirname "$OUT")"
 [ -f "$SRC" ] || { echo "missing source config: $SRC" >&2; exit 1; }
 
 cp "$SRC" "$OUT"

@@ -26,7 +26,7 @@ TOP=$(cd "$(dirname "$0")" && pwd)
 cd "$TOP"
 
 VER=${VER:-$(date +%y%m%d)-01}
-OUT=${OUT:-$TOP/config.cp02-$VER}
+OUT=${OUT:-$TOP/configs/config.cp02-$VER}
 
 cat > "$OUT" <<EOF
 CONFIG_TARGET_ramips=y
