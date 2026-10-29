@@ -44,17 +44,26 @@ fix_radio() {
 	esac
 	uci -q set "wireless.$sec.disabled=0"
 
-	# 5G：硬件支持 VHT/HE 160MHz，默认开 160（36 信道 36-64 整段）
+	# 5G：按本机 5G 射频顺序分配 —— 第一个 5G 射频走高频 5.8G（149 信道，
+	# UNII-3 无 DFS，最高 80MHz），第二个（3 频机的第三射频）走低频 5.2G
+	# （36 信道，可开 160MHz）。命名脚本按信道 >=149 判 5.8G，会自动跟上。
 	case "$(uci -q get "wireless.$radio.band")" in
 		5g)
-			uci -q set "wireless.$radio.htmode=HE160"
-			uci -q set "wireless.$radio.channel=36"
+			if [ "$GWRT_5G_SEEN" != "1" ]; then
+				uci -q set "wireless.$radio.htmode=HE80"
+				uci -q set "wireless.$radio.channel=149"
+				GWRT_5G_SEEN=1
+			else
+				uci -q set "wireless.$radio.htmode=HE160"
+				uci -q set "wireless.$radio.channel=36"
+			fi
 			;;
 	esac
 	# 区域码（160MHz / DFS 需要）
 	uci -q set "wireless.$radio.country=CN"
 }
 
+GWRT_5G_SEEN=0
 for r in $(uci -q show wireless | sed -n 's/^wireless\.\([^.]*\)=wifi-device$/\1/p'); do
 	fix_radio "$r"
 done

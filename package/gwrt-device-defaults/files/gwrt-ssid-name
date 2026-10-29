@@ -1,7 +1,11 @@
 #!/bin/sh
 # GWRT SSID 命名：GWRT_<频段>_<MAC后4>
 #   2.4G -> GWRT_2.4G_XXXX
-#   5G   -> GWRT_5.2G_XXXX（信道 < 149）/ GWRT_5.8G_XXXX（>= 149）
+#   5G   -> GWRT_5.8G_XXXX（信道 >= 149，高频）
+#         -> GWRT_5.2G_XXXX（信道 < 149，低频；双频机只有一个 5G 射频时
+#            95 脚本会把它设到 149，所以双频机显示 5.8G；三频机的第三射频
+#            设 36，显示 5.2G）
+#   6G   -> GWRT_6G_XXXX
 # 只改"默认/空"SSID，用户自定义的不动。幂等，可反复调用。
 
 [ -f /etc/config/wireless ] || exit 0
@@ -32,6 +36,7 @@ for iface in $(uci -q show wireless | sed -n 's/^wireless\.\([^.]*\)=wifi-iface$
 	ch="$(uci -q get "wireless.$dev.channel")"
 	case "$band" in
 		2g) label="2.4G" ;;
+		6g|6e) label="6G" ;;
 		5g) if [ "${ch:-0}" -ge 149 ] 2>/dev/null; then label="5.8G"; else label="5.2G"; fi ;;
 		*) label="5G" ;;
 	esac
