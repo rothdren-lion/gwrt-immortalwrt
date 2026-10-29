@@ -280,7 +280,9 @@
 	phy-mode = "2500base-x";
 
 	nvmem-cell-names = "mac-address";
-	nvmem-cells = <&macaddr_factory_3e (0)>;
+	/* gdm2/WAN uses cell 0 and gdm1 uses cell 1.  gdm4 previously reused
+	 * cell 0, so Linux randomized lan1 and the FE MAC check failed. */
+	nvmem-cells = <&macaddr_factory_3e (2)>;
 };
 
 &usb0 {

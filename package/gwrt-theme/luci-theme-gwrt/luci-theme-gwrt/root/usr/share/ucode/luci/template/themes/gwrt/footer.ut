@@ -6,9 +6,11 @@
 
 	Licensed to the public under the Apache License 2.0
 -#}
-{% import { access } from 'fs'; -%}
+{% import { access, readfile } from 'fs'; -%}
 {% let _fqs = getenv('QUERY_STRING') ?? ''; %}
 {% let _fclean = match(_fqs, /(^|&)gwrt_clean=1(&|$)/) != null; %}
+{% let _gwrt_version = readfile('/usr/share/gwrt/theme-version') ?? '1.0'; %}
+{% let _gwrt_fw_version = trim(readfile('/usr/share/gwrt/firmware-version') ?? ''); %}
 			</div>
 			{% if (!_fclean): %}
 			<footer class="mobile-hide" style="text-wrap: auto">
@@ -17,11 +19,11 @@
 
 					<span class="footer-separator">|</span>
 
-					<a href="https://github.com/rothdren-lion/gwrt-ota" target="_blank">Theme GWRT {# vPKG_VERSION #}</a>
+					<a href="https://github.com/rothdren-lion/gwrt-ota" target="_blank">Theme GWRT {{ _gwrt_version }}</a>
 
 					<span class="footer-separator">|</span>
 
-					<a class="luci-link" href="{{ version.disturl }}" target="_blank">{{ version.distname }} {{ version.distversion }}-{{ version.distrevision }}</a>
+					<a class="luci-link" href="{{ version.disturl }}" target="_blank">{{ _gwrt_fw_version || version.distname }}</a>
 
 					<ul class="breadcrumb pull-right" id="modemenu" style="display:none"></ul>
 				</div>

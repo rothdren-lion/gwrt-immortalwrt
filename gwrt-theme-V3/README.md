@@ -4,6 +4,28 @@ This directory is the standalone source and integration entry point for the
 GWRT LuCI theme. It is independent of the OpenWrt `package/` scan, so keeping
 it in the firmware repository does not create a duplicate package.
 
+## Series: an7581 (this tree only)
+
+This copy is the **AN7581 series** theme (`SERIES` file). It is maintained
+independently from the MT7981 (AX3000 / 360T7 / NX30 Pro / AX3000T / RAX3000M)
+theme and carries hardware only AN7581 has:
+
+- real PPE / NPU counters (`gwrt-ppe-stats`, `pon.css`)
+- PON WAN status (`pon_wan`, `ponctl`)
+- dynamic WAN detection from UCI (`gwrtWanDeviceSet`, firewall `wan` zone)
+- firmware version from `/usr/share/gwrt/firmware-version`
+- mesh summary row (`gwrtMeshInfo` / `renderMeshInfo`, wifiroam)
+
+Rules:
+
+1. **Never** let `gwrt-sync-mesh.sh` from the MT7981 tree overwrite
+   `package/gwrt-theme` here. That script skips the theme automatically when
+   the target board is `airoha`, and this tree's own copy skips it always.
+2. Pull MT7981 improvements **selectively** with
+   `scripts/gwrt-theme-pull.sh` (list first, then apply one file at a time).
+3. After any change: `scripts/integrate.sh` (bumps `VERSION` and refreshes the
+   flat + nested package copies), then rebuild the apk.
+
 ## Layout
 
 - `theme/luci-theme-gwrt/`: canonical `luci-theme-gwrt` package source.

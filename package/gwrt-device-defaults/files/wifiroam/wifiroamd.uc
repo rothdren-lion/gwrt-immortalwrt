@@ -226,6 +226,7 @@ function current_backhaul_cfg() {
 		device: cur.get("wifiroam", "backhaul", "device") ?? "",
 		band: cur.get("wifiroam", "backhaul", "band") ?? "auto",
 		channel: int(cur.get("wifiroam", "backhaul", "channel") ?? "0"),
+		channel2g: int(cur.get("wifiroam", "backhaul", "channel2g") ?? "0"),
 		config_ver: int(cur.get("wifiroam", "backhaul", "config_ver") ?? "0"),
 	};
 }
@@ -389,6 +390,11 @@ function self_uptime() {
 	return int(split(trim(fs.readfile("/proc/uptime") ?? "0"), " ")[0]);
 }
 
+// 回传段（隐藏 WDS AP wifiroam_bh / wifiroam_bh2）：既不是用户热点，也不参与漫游/FT
+function is_backhaul_sec(name) {
+	return (name == BACKHAUL_SECTION || name == BACKHAUL_SECTION + "2");
+}
+
 function wifi_ifaces() {
 	let out = [];
 	let cur = uci.cursor();
@@ -396,6 +402,7 @@ function wifi_ifaces() {
 	cur.foreach("wireless", "wifi-iface", function(s) {
 		if (s.mode && s.mode != "ap") return;
 		if (s.disabled == "1") return;
+		if (is_backhaul_sec(s[".name"])) return;   // 隐藏回传 AP 不进漫游 SSID 组
 		push(out, {
 			ssid: s.ssid ?? "",
 			encryption: s.encryption ?? "none",
@@ -415,7 +422,7 @@ function wifi_export() {
 	cur.foreach("wireless", "wifi-iface", function(s) {
 		if (s.mode && s.mode != "ap") return;
 		if (s.disabled == "1") return;
-		if (s[".name"] == BACKHAUL_SECTION) return;
+		if (is_backhaul_sec(s[".name"])) return;   // bh 和 bh2 都不能当用户 SSID 下发
 		if ((s.ssid ?? "") == "") return;
 		push(out, {
 			ssid: s.ssid,
@@ -1022,7 +1029,7 @@ function apply_wifi_from_cap(list) {
 	let changed = 0;
 	cur.foreach("wireless", "wifi-iface", function(s) {
 		if (s.mode && s.mode != "ap") return;
-		if (s[".name"] == BACKHAUL_SECTION) return;
+		if (is_backhaul_sec(s[".name"])) return;   // 隐藏回传 AP（bh/bh2）不是用户热点
 		let band = cur.get("wireless", s.device, "band") ?? "?";
 		let w = by_band[band];
 		if (!w) return;
@@ -1142,9 +1149,11 @@ function apply_backhaul_local(bh, role) {
 	let exists = cur.get("wireless", BACKHAUL_SECTION) != null;
 	let band = bh.band ?? "auto";
 	if (role != "cap") {
-		// 子AP：运行期降级优先（state.bh_band=2g），否则 auto/5g 都先试 5G
+		// 子AP：运行期降级优先（state.bh_band=2g），否则显式 5g 才用 5G。
+		// 默认 2.4G：与 gwrt-mesh-apmode 的默认一致（两处代码抢写同一段会反复重配），
+		// 且 2.4G 穿透好、信道天然对齐，无线回传更稳。
 		if (state.bh_band) band = state.bh_band;
-		else band = (band == "2g") ? "2g" : "5g";
+		else band = (band == "5g") ? "5g" : "2g";
 	}
 
 	if (bh.enabled && (bh.ssid ?? "") != "" && (bh.key ?? "") != "") {
@@ -1153,6 +1162,7 @@ function apply_backhaul_local(bh, role) {
 			let r5 = pick_radio_by_band("5g");
 			let r2 = pick_radio_by_band("2g");
 			let ch = r5 ? radio_running_channel(r5) : 0;
+			let ch2 = r2 ? radio_running_channel(r2) : 0;
 			for (let spec in [ [BACKHAUL_SECTION, r5], [BACKHAUL_SECTION + "2", r2] ]) {
 				let sec = spec[0], dev = spec[1];
 				if (!dev) {
@@ -1167,12 +1177,15 @@ function apply_backhaul_local(bh, role) {
 				cur.set("wireless", sec, "encryption", "psk2+ccmp");
 				cur.set("wireless", sec, "key", bh.key);
 				cur.set("wireless", sec, "network", "lan");
-				cur.set("wireless", sec, "wds", "1");
+				cur.set("wireless", sec, "wds", "0");
 				cur.set("wireless", sec, "hidden", "1");
 				cur.set("wireless", sec, "disabled", "0");
 			}
 			let wc0 = uci.cursor(); wc0.load("wifiroam");
 			wc0.set("wifiroam", "backhaul", "channel", "" + ch);
+			// 2.4G 回传也要告诉子AP 本机 2.4G 信道：AP+STA 共用射频，
+			// 子AP 的 2.4G 热点不在同一信道时 STA 根本起不来
+			wc0.set("wifiroam", "backhaul", "channel2g", "" + ch2);
 			wc0.commit("wifiroam");
 			bh.channel = ch;
 			log(sprintf("backhaul APs: 5g=%s ch=%d, 2g=%s", r5 ?? "-", ch, r2 ?? "-"));
@@ -1189,6 +1202,15 @@ function apply_backhaul_local(bh, role) {
 					log(sprintf("align %s to channel %d", dev, bh.channel));
 				}
 			}
+			// 2.4G 回传：AP+STA 共用同一个射频，本机 2.4G 热点必须和主AP 同信道，
+			// 否则 STA 起不来（主AP 把 2.4G 改成 6/11 时就会碰）
+			if (band == "2g" && (bh.channel2g ?? 0) > 0 && bh.channel2g <= 14) {
+				let curch2 = int(cur.get("wireless", dev, "channel") ?? "0");
+				if (curch2 != bh.channel2g) {
+					cur.set("wireless", dev, "channel", "" + bh.channel2g);
+					log(sprintf("align %s to 2g channel %d", dev, bh.channel2g));
+				}
+			}
 			if (cur.get("wireless", BACKHAUL_SECTION) == null)
 				cur.set("wireless", BACKHAUL_SECTION, "wifi-iface");
 			cur.set("wireless", BACKHAUL_SECTION, "device", dev);
@@ -1197,7 +1219,9 @@ function apply_backhaul_local(bh, role) {
 			cur.set("wireless", BACKHAUL_SECTION, "encryption", "psk2+ccmp");
 			cur.set("wireless", BACKHAUL_SECTION, "key", bh.key);
 			cur.set("wireless", BACKHAUL_SECTION, "network", "lan");
-			cur.set("wireless", BACKHAUL_SECTION, "wds", "1");
+			// 3-addr（wds=0）：4-addr 在 JDCloud 主AP 上四步握手容易超时
+			// （子AP 侧还会被 apmode 写成 wds=0，两边不一致时 4WAY_HANDSHAKE_TIMEOUT）
+			cur.set("wireless", BACKHAUL_SECTION, "wds", "0");
 			cur.delete("wireless", BACKHAUL_SECTION, "hidden");
 			cur.set("wireless", BACKHAUL_SECTION, "disabled",
 				ethernet_uplink_port() ? "1" : "0");
@@ -1219,6 +1243,9 @@ function apply_backhaul_local(bh, role) {
 	wc.set("wifiroam", "backhaul", "key", bh.key ?? "");
 	wc.set("wifiroam", "backhaul", "device", bh.device ?? "");
 	wc.set("wifiroam", "backhaul", "channel", "" + (bh.channel ?? 0));
+	// 只有当对方真的带了 channel2g 才写（老版本主AP 推送里没这个字段，别把本机已有值抹成 0）
+	if (bh.channel2g != null)
+		wc.set("wifiroam", "backhaul", "channel2g", "" + bh.channel2g);
 	wc.set("wifiroam", "backhaul", "config_ver", "" + ver);
 	wc.commit("wifiroam");
 	state.backhaul_ver_applied = ver;

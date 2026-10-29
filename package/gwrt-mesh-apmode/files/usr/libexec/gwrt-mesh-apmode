@@ -36,6 +36,16 @@ hnat_on()  { [ -d /sys/kernel/debug/hnat ] && echo 1 >/sys/kernel/debug/hnat/hoo
 
 in_apmode() { [ -f "$STATE" ]; }
 
+# mesh 是否处于「用户想要的开启」状态。
+# 长按 MESH 键会 stop+disable wifiroam；此时 apmode 不能再自己建回传/配对 STA，
+# 否则「关了 mesh」但设备还在偷偷用 mesh-gwrt 连主AP。
+mesh_wanted() {
+	[ "$(uci -q get gwrt.mesh_apmode.enabled)" = "0" ] && return 1
+	[ -x /etc/init.d/wifiroam ] || return 1
+	/etc/init.d/wifiroam enabled >/dev/null 2>&1 || return 1
+	return 0
+}
+
 # 无线回传 STA 是否已连上主AP（接口名通常是 phyX-sta0）
 sta_up() {
 	local i
@@ -111,13 +121,14 @@ fw_add_wwan_wan() {
 # 这样主AP 才能发现并配对它（纯无线首次组网）
 ensure_wireless_pairing() {
 	local ssid key dev r
+	mesh_wanted || return 0
 	[ "$(uci -q get wifiroam.core.role)" = "unconfigured" ] || return 0
 	[ "$(uci -q get wifiroam.backhaul.enabled)" = "1" ] || return 0
 	ssid="$(uci -q get wifiroam.backhaul.ssid)"
 	key="$(uci -q get wifiroam.backhaul.key)"
 	[ -n "$ssid" ] && [ -n "$key" ] || return 0
 
-	if [ "$(cat /sys/class/net/eth1/carrier 2>/dev/null)" = "1" ]; then
+	if [ "$(wan_carrier)" = "1" ]; then
 		clear_wireless_pairing
 		return 0
 	fi
@@ -180,6 +191,7 @@ clear_wireless_pairing() {
 # 守护进程只在主AP 推送回传配置时创建它；如果没收到推送，拔网线后就不会走无线。
 ensure_backhaul() {
 	local ssid key dev r carrier band ch sig old want_dis
+	mesh_wanted || return 0
 	[ "$(uci -q get wifiroam.core.role)" = "sap" ] || return 0
 	[ "$(uci -q get wifiroam.backhaul.enabled)" = "1" ] || return 0
 	ssid="$(uci -q get wifiroam.backhaul.ssid)"
@@ -197,9 +209,9 @@ ensure_backhaul() {
 	done
 	[ -n "$dev" ] || dev=radio1
 
-	carrier="$(cat /sys/class/net/eth1/carrier 2>/dev/null)"
+	carrier="$(wan_carrier)"
 	if [ "$carrier" = "1" ]; then
-		net='lan'; wds='1'; want_dis=1
+		net='lan'; wds='0'; want_dis=1
 	else
 		net='wwan'; wds='0'; want_dis=0
 	fi
@@ -257,6 +269,25 @@ default_dev() {
 	ip route 2>/dev/null | sed -n 's/^default .* dev \([^ ]*\).*/\1/p' | head -1
 }
 
+# WAN 物理接口名（有线回传要把它并进 br-lan）
+#   MT7981 (wr630ax/360t7) : eth1
+#   IPQ6010/IPQ807x (DSA)  : wan / wan@eth0（network.wan.device='wan'）
+# 硬编码 eth1 会让 IPQ 机型永远判成「没有有线」，只能走无线 NAT，进不了主路由网段。
+wan_dev_name() {
+	local d
+	d="$(uci -q get network.wan.device)"
+	[ -n "$d" ] || d="$(default_dev)"
+	[ -n "$d" ] || d="eth1"
+	case "$d" in
+		""|lo|br-lan) d="eth1" ;;
+	esac
+	printf '%s' "$d"
+}
+
+wan_carrier() {
+	cat "/sys/class/net/$(wan_dev_name)/carrier" 2>/dev/null
+}
+
 save_state() {
 	local brsec
 	brsec="$(brlan_dev_section)"
@@ -270,9 +301,13 @@ save_state() {
 		echo "db_iface=$(uci -q get dropbear.@dropbear[0].Interface)"
 		echo "brdev=$brsec"
 		if [ -n "$brsec" ]; then
-			echo "bridged_eth1=$(uci -q get "network.$brsec.ports" | tr ' ' '\n' | grep -c '^eth1$')"
+			local wdev
+			wdev="$(wan_dev_name)"
+			echo "wandev=$wdev"
+			echo "bridged_wandev=$(uci -q get "network.$brsec.ports" | tr ' ' '\n' | grep -cx "$wdev")"
 		else
-			echo "bridged_eth1=0"
+			echo "wandev=$(wan_dev_name)"
+			echo "bridged_wandev=0"
 		fi
 		en=""
 		for s in $AP_OFF; do
@@ -291,7 +326,7 @@ have_lease() {
 
 have_uplink() {
 	# 有线：br-lan 拿到主路由地址；无线 relay：wwan 起来即可
-	if [ "$(cat /sys/class/net/eth1/carrier 2>/dev/null)" = "1" ]; then
+	if [ "$(wan_carrier)" = "1" ]; then
 		have_lease
 	else
 		ubus call network.interface.wwan status 2>/dev/null | grep -q '"up": true'
@@ -306,7 +341,7 @@ apply_apmode() {
 	local brsec wan_up carrier
 	brsec="$(brlan_dev_section)"
 	wan_up="$(default_dev)"
-	carrier="$(cat /sys/class/net/eth1/carrier 2>/dev/null)"
+	carrier="$(wan_carrier)"
 
 	for sv in $AP_OFF; do
 		[ -x "/etc/init.d/$sv" ] || continue
@@ -318,15 +353,20 @@ apply_apmode() {
 
 	if [ "$carrier" = "1" ]; then
 		# 有线回传：WAN 并进 br-lan，取消 NAT
-		if [ -n "$brsec" ] && [ "$wan_up" = "eth1" ]; then
-			uci -q add_list "network.$brsec.ports=eth1"
+		local wdev
+		wdev="$(wan_dev_name)"
+		if [ -n "$brsec" ] && [ -n "$wdev" ] && [ "$wdev" != "br-lan" ]; then
+			# 已经并过就不再重复加（避免 ports 里出现重复项）
+			if ! uci -q get "network.$brsec.ports" | tr ' ' '\n' | grep -qx "$wdev"; then
+				uci -q add_list "network.$brsec.ports=$wdev"
+			fi
 			uci -q set network.wan.proto='none'
 			uci -q delete network.wan.ipaddr 2>/dev/null
 			uci -q delete network.wan.netmask 2>/dev/null
 			uci -q delete network.wan.gateway 2>/dev/null
 			uci -q delete network.wan.dns 2>/dev/null
 			uci -q set network.wan6.proto='none' 2>/dev/null
-			log "bridged eth1 into br-lan (wired backhaul)"
+			log "bridged $wdev into br-lan (wired backhaul)"
 		fi
 		uci -q set network.lan.proto='dhcp'
 		uci -q delete network.lan.ipaddr 2>/dev/null
@@ -393,7 +433,7 @@ restore_network_only() {
 				ports="$(uci -q get "network.$brsec.ports")"
 				newp=""
 				for p in $ports; do
-					[ "$p" = "eth1" ] && continue
+					[ "$p" = "$(wan_dev_name)" ] && continue
 					newp="$newp $p"
 				done
 				uci -q delete "network.$brsec.ports"
@@ -420,6 +460,16 @@ restore_network_only() {
 	uci -q commit dhcp
 	uci -q commit dropbear
 	/etc/init.d/network reload >/dev/null 2>&1
+	# 网络 reload 会把 dropbear 带走，等地地址出现后再拉起来（否则 22 端口消失）
+	(
+		i=0
+		while [ "$i" -lt 20 ]; do
+			ip -4 addr show br-lan 2>/dev/null | grep -q 'inet ' && break
+			sleep 1
+			i=$((i + 1))
+		done
+		ps | grep -q '[d]ropbear' || /etc/init.d/dropbear restart >/dev/null 2>&1
+	) >/dev/null 2>&1 &
 }
 
 restore_routermode() {
@@ -432,7 +482,7 @@ restore_routermode() {
 	# 拆桥前先关 HNAT，避免驱动挂死
 	hnat_off
 
-	# 只要原来有 WAN（proto 不是 none），eth1 就不该留在 br-lan 里
+	# 只要原来有 WAN（proto 不是 none），WAN 口就不该留在 br-lan 里
 	case "${wan_proto:-none}" in
 		none|"")
 			: ;;   # 本来就是桥接 AP，不动
@@ -441,7 +491,7 @@ restore_routermode() {
 				ports="$(uci -q get "network.$brsec.ports")"
 				newp=""
 				for p in $ports; do
-					[ "$p" = "eth1" ] && continue
+					[ "$p" = "$(wan_dev_name)" ] && continue
 					newp="$newp $p"
 				done
 				uci -q delete "network.$brsec.ports"
@@ -488,6 +538,18 @@ restore_routermode() {
 
 	/etc/init.d/dropbear restart >/dev/null 2>&1
 	hnat_on
+
+	# dropbear 绑在 br-lan（DirectInterface=lan）：网络刚 reload完时地址可能还没下来，
+	# 这时 restart 会绑定失败 → 22 端口消失，只能靠串口救。等地址出现再补一次。
+	(
+		i=0
+		while [ "$i" -lt 20 ]; do
+			ip -4 addr show br-lan 2>/dev/null | grep -q 'inet ' && break
+			sleep 1
+			i=$((i + 1))
+		done
+		ps | grep -q '[d]ropbear' || /etc/init.d/dropbear restart >/dev/null 2>&1
+	) >/dev/null 2>&1 &
 
 	# 恢复之前启用的服务（dnsmasq 放最后，等 br-lan 拿到地址）
 	for sv in $svc_enabled; do
@@ -544,7 +606,7 @@ case "$1" in
 		fi
 		ok_streak=0
 		off_streak=0
-		LAST_CARRIER="$(cat /sys/class/net/eth1/carrier 2>/dev/null)"
+		LAST_CARRIER="$(wan_carrier)"
 		while true; do
 			tick=$((tick + 1))
 			if [ "$(uci -q get gwrt.mesh_apmode.enabled)" = "0" ]; then
@@ -553,7 +615,7 @@ case "$1" in
 				continue
 			fi
 			# 上行有线<->无线切换：自动重放 AP/路由模式
-			carrier_now="$(cat /sys/class/net/eth1/carrier 2>/dev/null)"
+			carrier_now="$(wan_carrier)"
 			if [ "$carrier_now" != "$LAST_CARRIER" ]; then
 				LAST_CARRIER="$carrier_now"
 				if in_apmode; then

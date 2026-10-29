@@ -1,0 +1,13 @@
+#!/bin/sh
+# Move the old factory default LAN address to this build's address.
+# A fresh install is already generated as 192.168.3.3/24; this only
+# touches a preserved config that still has the old 192.168.1.1/24.
+old="$(uci -q get network.lan.ipaddr)"
+case "$old" in
+	192.168.1.1|192.168.1.1/24)
+		uci -q set network.lan.ipaddr='192.168.3.3/24'
+		uci -q commit network
+		logger -t gwrt-lan-ip "LAN address migrated to 192.168.3.3/24"
+		;;
+esac
+exit 0

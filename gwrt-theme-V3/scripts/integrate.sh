@@ -52,6 +52,8 @@ NESTED_DST="$THEME_DST/luci-theme-gwrt"
 OVERLAY_SRC="$PROJECT_DIR/overlays"
 OVERLAY_LIST="$PROJECT_DIR/manifest/overlay-files.txt"
 CONFIG_FRAGMENT="$PROJECT_DIR/manifest/config.fragment"
+VERSION_FILE="$PROJECT_DIR/VERSION"
+VERSION_HASH_FILE="$PROJECT_DIR/.version-hash"
 
 fail() {
 	echo "gwrt-theme: $*" >&2
@@ -87,6 +89,52 @@ check_config() {
 	done < "$CONFIG_FRAGMENT"
 }
 
+theme_content_hash() {
+	(
+		cd "$THEME_SRC"
+		sed -e '/^PKG_VERSION:=/d' -e '/^PKG_RELEASE:=/d' Makefile
+		find htdocs root -type f -print0 |
+			LC_ALL=C sort -z | xargs -0 sha256sum
+	) | sha256sum | awk '{print $1}'
+}
+
+bump_theme_version() {
+	new_hash="$(theme_content_hash)"
+	old_hash="$(cat "$VERSION_HASH_FILE" 2>/dev/null || true)"
+	[ "$new_hash" = "$old_hash" ] && return 0
+
+	today="$(date +%Y.%m.%d)"
+	current_version="$(sed -n 's/^PKG_VERSION:=//p' "$THEME_SRC/Makefile" | sed -n '1p')"
+	current_release="$(sed -n 's/^PKG_RELEASE:=//p' "$THEME_SRC/Makefile" | sed -n '1p')"
+
+	case "$current_release" in
+		''|*[!0-9]*) current_release=0 ;;
+	esac
+	current_release="$(printf '%s' "$current_release" | sed 's/^0*//')"
+	[ -n "$current_release" ] || current_release=0
+
+	if [ ! -f "$VERSION_HASH_FILE" ]; then
+		# First tracked state: keep today's existing version, otherwise start at 01.
+		if [ "$current_version" != "$today" ]; then
+			current_version="$today"
+			current_release=1
+		fi
+		[ "$current_release" -ge 1 ] || current_release=1
+	elif [ "$current_version" = "$today" ]; then
+		current_release=$((current_release + 1))
+	else
+		current_version="$today"
+		current_release=1
+	fi
+
+	release="$(printf '%02d' "$current_release")"
+	sed -i "s/^PKG_VERSION:=.*/PKG_VERSION:=$current_version/" "$THEME_SRC/Makefile"
+	sed -i "s/^PKG_RELEASE:=.*/PKG_RELEASE:=$release/" "$THEME_SRC/Makefile"
+	printf '%s-%s\n' "$current_version" "$release" > "$VERSION_FILE"
+	printf '%s\n' "$new_hash" > "$VERSION_HASH_FILE"
+	echo "gwrt-theme: version $current_version-$release"
+}
+
 check_legacy_dashboard() {
 	! grep -Eq 'injectDashboard|buildDashboardHTML|__gwrtDashboard' \
 		"$THEME_SRC/htdocs/luci-static/gwrt/resources/gwrt.js"
@@ -110,6 +158,8 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
 	echo "gwrt-theme: source copies, overlays and config are synchronized"
 	exit 0
 fi
+
+bump_theme_version
 
 case "$THEME_DST" in
 	"$TREE"/package/gwrt-theme/luci-theme-gwrt) ;;

@@ -32,13 +32,15 @@ while [ $i -lt 15 ] && [ ! -d /lib/apk/db ]; do sleep 1; i=$((i+1)); done
 	done
 } >"$LOG" 2>&1
 
-# 记录结果；只有全部成功才清理预置包
-if ! grep -qiE 'ERROR|failed' "$LOG"; then
+# 记录结果；用 apk 数据库核对，而不是 grep 日志里的告警/重复安装提示
+# （apk add 对已装包会打 "already installed"/world 之类的字眼，旧逻辑永判失败
+#   → 每次开机重装一遍、预置包也永不删除）
+if apk info wifiroam >/dev/null 2>&1 && apk info luci-app-wifiroam >/dev/null 2>&1; then
 	mkdir -p /etc/gwrt
 	echo "ok $(date)" > "$MARK"
 	rm -rf "$APKDIR"
 else
-	logger -t gwrt-apk "preset APK install had errors, see $LOG"
+	logger -t gwrt-apk "preset APK install incomplete, see $LOG"
 fi
 
 exit 0

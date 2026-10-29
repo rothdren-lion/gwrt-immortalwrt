@@ -37,9 +37,9 @@
 			gpios = <&tlmm 71 GPIO_ACTIVE_LOW>;
 		};
 
-		wps {
-			label = "wps";
-			linux,code = <KEY_WPS_BUTTON>;
+		mesh {
+			label = "mesh";
+			linux,code = <BTN_0>;
 			gpios = <&tlmm 72 GPIO_ACTIVE_LOW>;
 		};
 	};

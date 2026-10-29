@@ -4,7 +4,7 @@
 #
 # 用法：
 #   sh gwrt-build-an7581.sh              # 用当前 .config 编译
-#   JOBS=8 sh gwrt-build-an7581.sh       # 指定并行度（默认 4，nice 15，避免抢隔壁编译）
+#   JOBS=8 sh gwrt-build-an7581.sh       # 指定并行度（默认 6，nice 15，避免抢隔壁编译）
 #
 # 说明：
 #   - 主题包已由 gwrt-theme-V3/scripts/integrate.sh 同步到 package/gwrt-theme/，
@@ -17,7 +17,7 @@ set -e
 TOP=$(cd "$(dirname "$0")" && pwd)
 cd "$TOP"
 
-JOBS=${JOBS:-4}
+JOBS=${JOBS:-6}
 PROFILE=$(grep -E "^CONFIG_TARGET_PROFILE=" .config 2>/dev/null | cut -d'"' -f2)
 
 echo "==> 目标机型: ${PROFILE:-未知}"

@@ -20,7 +20,7 @@
 
 - `docs/not-in-r92-package/34_gwrt-gecoosac-apk`：r82 本地树里有、**r92 包清单没有**，已移出包树避免污染打包
 - `/www/luci-static/gwrt/css/cascade.css.bak.*`、`index_gwrt.ut.bak.*`、`sysauth.ut.bak.*`：路由器上的编辑备份，未纳入
-- `root/usr/share/gwrt/theme-version`：由 Makefile 的 `Build/Prepare` 在编译时生成 `$(PKG_VERSION)-r$(PKG_RELEASE)`，不随包分发
+- `root/usr/share/gwrt/theme-version`：由 Makefile 的 `Build/Prepare` 在编译时生成 `$(PKG_VERSION)-$(PKG_RELEASE)`（`PKG_VERSION=YYYY.MM.DD`，`PKG_RELEASE=0X`，即当天第 X 次修改），随包安装；`scripts/integrate.sh` 在主题内容变化时自动递增
 
 ## 版本对照
 

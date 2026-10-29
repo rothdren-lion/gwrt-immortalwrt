@@ -6,12 +6,13 @@
 
 	Licensed to the public under the Apache License 2.0
 -#}
-{% import { access } from 'fs'; -%}
+{% import { access, readfile } from 'fs'; -%}
+{% let _gwrt_version = readfile('/usr/share/gwrt/theme-version') ?? '1.0'; %}
 </div>
 <footer>
 	<div>
 		<a class="luci-link" href="https://github.com/openwrt/luci" target="_blank">Powered by {{ version.luciname }} ({{ version.luciversion }})</a>
-		<a href="https://github.com/rothdren-lion/gwrt-ota" target="_blank">Theme GWRT {# vPKG_VERSION #}</a>
+		<a href="https://github.com/rothdren-lion/gwrt-ota" target="_blank">Theme GWRT {{ _gwrt_version }}</a>
 		<a class="luci-link" href="{{ version.disturl }}" target="_blank">{{ version.distname }} {{ version.distversion }}-{{ version.distrevision }}</a>
 	</div>
 </footer>

@@ -7,7 +7,7 @@
 	Licensed to the public under the Apache License 2.0
 -#}
 {%
-	import { access } from 'fs';
+	import { access, readfile } from 'fs';
 	import { cursor } from 'uci';
 	import { getuid, getspnam } from 'luci.core';
 
@@ -18,6 +18,7 @@
 	const _clean = match(_qs, /(^|&)gwrt_clean=1(&|$)/) != null;
 
 	let cfg = cursor();
+	let _gwrt_asset_v = readfile('/usr/share/gwrt/theme-version') ?? '1';
 
 	//send as HTML5
 	http.prepare_content('text/html; charset=UTF-8');
@@ -81,6 +82,7 @@
 
 	<!-- Main Stylesheet -->
 	<link rel="stylesheet" href="/luci-static/gwrt/css/cascade.css?v=20260903r88">
+	<link rel="stylesheet" href="/luci-static/gwrt/css/pon.css?v={{ _gwrt_asset_v }}">
 
 	<!-- Stylesheets -->
 	{% if (node?.css): %}

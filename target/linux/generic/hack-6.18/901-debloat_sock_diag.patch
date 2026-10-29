@@ -3,7 +3,13 @@ From: Felix Fietkau <nbd@nbd.name>
 Date: Sat, 8 Jul 2017 08:16:31 +0200
 Subject: debloat: add some debloat patches, strip down procfs and make O_DIRECT support optional, saves ~15K after lzma on MIPS
 
+Make socket diagnostics optional so embedded configurations can omit the
+diagnostic infrastructure and its memory cost.
+
 Signed-off-by: Felix Fietkau <nbd@nbd.name>
+
+[viking.yfy@qq.com: complete imported patch metadata]
+Signed-off-by: ViKing <viking.yfy@qq.com>
 ---
  net/Kconfig         | 3 +++
  net/core/Makefile   | 3 ++-
@@ -40,7 +46,7 @@ Signed-off-by: Felix Fietkau <nbd@nbd.name>
  obj-$(CONFIG_NETDEV_ADDR_LIST_TEST) += dev_addr_lists_test.o
  
 +obj-$(CONFIG_SOCK_DIAG) += sock_diag.o
- obj-y += net-sysfs.o
+ obj-y += net-sysfs.o ppp_channel.o
  obj-y += hotdata.o
  obj-y += netdev_rx_queue.o
 --- a/net/core/sock.c

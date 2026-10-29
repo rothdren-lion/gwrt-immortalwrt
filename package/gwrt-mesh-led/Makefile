@@ -28,17 +28,20 @@ define Package/gwrt-mesh-led/description
     slow blink = waiting for pairing (unconfigured or sub AP without uplink)
     fast blink = main AP sees unpaired APs
     solid    = mesh established (peers online / sub AP linked to main AP)
-  Also provides the WPS/MESH button handler for one-key pairing.
+  Also provides the WPS button handler (one-key pairing) and the MESH
+  button handler (JDCloud joy key): short press = mesh on + pair,
+  long press (>=3s) = mesh off (leave pairing, stop daemon).
 endef
 
 define Build/Compile
 endef
 
 define Package/gwrt-mesh-led/install
-	$(INSTALL_DIR) $(1)/etc/init.d $(1)/etc/rc.wps $(1)/etc/uci-defaults \
-		$(1)/usr/libexec
+	$(INSTALL_DIR) $(1)/etc/init.d $(1)/etc/rc.wps $(1)/etc/rc.button \
+		$(1)/etc/uci-defaults $(1)/usr/libexec
 	$(INSTALL_BIN) ./files/etc/init.d/gwrt-mesh-led $(1)/etc/init.d/gwrt-mesh-led
 	$(INSTALL_BIN) ./files/etc/rc.wps/50-gwrt-mesh $(1)/etc/rc.wps/50-gwrt-mesh
+	$(INSTALL_BIN) ./files/etc/rc.button/BTN_0 $(1)/etc/rc.button/BTN_0
 	$(INSTALL_BIN) ./files/etc/uci-defaults/99_gwrt-mesh-led $(1)/etc/uci-defaults/99_gwrt-mesh-led
 	$(INSTALL_BIN) ./files/usr/libexec/gwrt-mesh-led $(1)/usr/libexec/gwrt-mesh-led
 	$(INSTALL_BIN) ./files/usr/libexec/gwrt-mesh-pair $(1)/usr/libexec/gwrt-mesh-pair

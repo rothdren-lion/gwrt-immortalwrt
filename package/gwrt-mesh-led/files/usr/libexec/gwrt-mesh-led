@@ -72,6 +72,16 @@ blink() { # $1 = delay_on/off (ms)
 	done
 }
 
+# 子AP 的 STA 上联是否真起来（cap_ip 重启后会残留，不能光看它）
+sta_link_up() {
+	local i
+	for i in /sys/class/net/*sta*; do
+		[ -e "$i" ] || continue
+		[ "$(cat "$i/operstate" 2>/dev/null)" = "up" ] && return 0
+	done
+	return 1
+}
+
 mesh_state() {
 	local st role online capip disc
 	st="$(ubus call wifiroam status 2>/dev/null)" || { echo off; return; }
@@ -89,8 +99,9 @@ mesh_state() {
 			echo idle
 			;;
 		sap)
-			if { [ "${online:-0}" -gt 0 ] 2>/dev/null || [ -n "$capip" ]; } \
-				&& [ "$capip" != "null" ]; then
+			# 常亮必须真的连着：peers_online>0，或 STA 链路 up（有线回传时靠 peers_online）
+			if [ -n "$capip" ] && [ "$capip" != "null" ] && \
+			   { [ "${online:-0}" -gt 0 ] 2>/dev/null || sta_link_up; }; then
 				echo ok
 			else
 				echo wait

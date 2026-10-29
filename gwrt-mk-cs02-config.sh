@@ -135,6 +135,14 @@ do
   set_pkg "$p"
 done
 
+# --- 3b. mesh 全家桶（一键 mesh 按键 + 状态灯 + 真 AP 模式 + wifiroam 守护）
+# gwrt-device-defaults 随固件预置 wifiroam 离线 APK，首启安装 + 打补丁；
+# SS-01/CS-02 的「joy」键在 DTS 里已改名为 mesh，短按开、长按关。
+echo "[cs02] adding GWRT mesh stack (wifiroam):"
+for p in gwrt-device-defaults gwrt-mesh-led gwrt-mesh-apmode; do
+  set_pkg "$p"
+done
+
 # --- 4. 版本号 -------------------------------------------------------------
 sed -i "s|^CONFIG_VERSION_NUMBER=\"[0-9-]*\"\$|CONFIG_VERSION_NUMBER=\"$VER\"|" "$OUT"
 

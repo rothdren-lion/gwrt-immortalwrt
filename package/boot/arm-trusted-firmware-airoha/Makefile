@@ -14,6 +14,15 @@ include $(INCLUDE_DIR)/trusted-firmware-a.mk
 include $(INCLUDE_DIR)/host-build.mk
 include $(INCLUDE_DIR)/package.mk
 
+# The atf-airoha overlay is extracted after the main TF-A source. Apply the
+# target patches only after that overlay so plat/ecnt exists for BL2/BL31.
+define Build/Prepare/Default
+	$(PKG_UNPACK)
+	-find $(PKG_BUILD_DIR) -mindepth 1 -type f -not -name '.*' -not -name 'version.date' -printf '%T@\n' 2>/dev/null |\
+		cut -d. -f1 | sort -n | tail -n1 > $(PKG_BUILD_DIR)/version.date
+	[ ! -d ./src/ ] || $(CP) ./src/. $(PKG_BUILD_DIR)
+endef
+
 define Trusted-Firmware-A/Default
   BUILD_TARGET:=airoha
   PLAT:=en7523
@@ -150,6 +159,8 @@ define Build/Prepare
 
 	$(eval $(call Download,atf-airoha))
 	$(TAR) -C $(PKG_BUILD_DIR) --strip-components=1 -xf $(DL_DIR)/$(FILE)
+
+	$(Build/Patch)
 endef
 
 define Build/Compile/bl2

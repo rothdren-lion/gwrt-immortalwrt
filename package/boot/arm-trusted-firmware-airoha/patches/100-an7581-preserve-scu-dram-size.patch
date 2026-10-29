@@ -1,0 +1,34 @@
+--- a/plat/ecnt/en7523/ecnt_system.c
++++ b/plat/ecnt/en7523/ecnt_system.c
+@@ -471,8 +471,29 @@
+ 		panic();
+ 	}
+ 
+-	*p_dram_size = dramc_main();
+-	SET_DRAM_SIZE((*p_dram_size >> 20));
++	/*
++	 * BL22 trains the DRAM and leaves the real size in the NP SCU
++	 * scratch register.  The weak dramc_main() in the BL23 stub only
++	 * returns a compile-time default, so preserve a sane value already
++	 * programmed by BL22 instead of overwriting it.  Keep a conservative
++	 * 512 MiB fallback for the case where the SCU has not been populated.
++	 */
++	{
++		unsigned int scu_dram_mb = GET_DRAM_SIZE();
++
++		(void)dramc_main();
++
++		if (scu_dram_mb >= 256 && scu_dram_mb <= 2048) {
++			*p_dram_size = (unsigned long long)scu_dram_mb << 20;
++			INFO("BL2: DRAM size %u MiB from SCU\n", scu_dram_mb);
++		} else {
++			*p_dram_size = 0x20000000ULL;
++			INFO("BL2: invalid SCU DRAM size %u MiB, using 512 MiB\n",
++			     scu_dram_mb);
++		}
++
++		SET_DRAM_SIZE((*p_dram_size >> 20));
++	}
+ 
+ 	/* DMA block mechanism should be able to block max burst size of all DMAs which is 128 bytes */
+ 	mmio_write_32(DMA_BLOCK_EN, 0x0);

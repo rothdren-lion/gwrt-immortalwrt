@@ -3,6 +3,7 @@
 
 release_file="/etc/openwrt_release"
 theme_file="/usr/share/gwrt/theme-version"
+fw_file="/usr/share/gwrt/firmware-version"
 model_file="/tmp/sysinfo/model"
 board_file="/tmp/sysinfo/board_name"
 site_url="https://gwrt.uk"
@@ -13,6 +14,7 @@ dist="GWRT"
 fwver=""
 revision=""
 themever=""
+gwrt_fwver=""
 model_text=""
 
 [ -r "$release_file" ] && . "$release_file"
@@ -21,6 +23,20 @@ model_text=""
 [ -n "${DISTRIB_RELEASE:-}" ] && fwver="$DISTRIB_RELEASE"
 [ -n "${DISTRIB_REVISION:-}" ] && revision="$DISTRIB_REVISION"
 [ -r "$theme_file" ] && themever="$(sed -n '1p' "$theme_file")"
+[ -r "$fw_file" ] && gwrt_fwver="$(sed -n '1p' "$fw_file")"
+# GWRT 固件镜像里 /etc/openwrt_release 已经是 GWRT YYMMDD-NN，
+# 它比主题包里的 firmware-version 更新，优先采用并回写文件。
+case "${DISTRIB_ID:-}" in
+	GWRT|gwrt)
+		case "${DISTRIB_RELEASE:-}" in
+			[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9])
+				gwrt_fwver="GWRT $DISTRIB_RELEASE"
+				mkdir -p "${fw_file%/*}" 2>/dev/null
+				printf '%s\n' "$gwrt_fwver" > "$fw_file" 2>/dev/null || true
+				;;
+		esac
+		;;
+esac
 [ -r "$model_file" ] && model_text="$(sed -n '1p' "$model_file")"
 [ -n "$model_text" ] || { [ -r "$board_file" ] && model_text="$(sed -n '1p' "$board_file")"; }
 
@@ -29,7 +45,11 @@ dist="$(printf '%s' "$dist" | tr '[:lower:]' '[:upper:]')"
 [ -n "$fwver" ] || fwver="V20260606"
 [ -n "$themever" ] || themever="1.0-r36"
 
-firmware_text="$(printf '%s %s' "$dist" "$fwver" | sed 's/[[:space:]][[:space:]]*/ /g')"
+if [ -n "$gwrt_fwver" ]; then
+	firmware_text="$gwrt_fwver"
+else
+	firmware_text="$(printf '%s %s' "$dist" "$fwver" | sed 's/[[:space:]][[:space:]]*/ /g')"
+fi
 model_text="$(printf '%s' "$model_text" | sed 's/[[:space:]][[:space:]]*/ /g')"
 [ -n "$model_text" ] || model_text="unknown"
 

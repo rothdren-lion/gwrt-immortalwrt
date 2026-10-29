@@ -1,0 +1,82 @@
+#!/bin/sh
+# MESH 键 —— 亚瑟 SS-01（joy=GPIO8）/ 雅典娜 CS-02（joy=GPIO72）
+#
+# 文件名必须是 BTN_0：procd 按「驱动映射后的按键名」派发 /etc/rc.button/%BUTTON%，
+# 而 DTS 里的 label="mesh" 只影响 sysfs 显示。BTN_0 在 gpio-button-hotplug 的
+# button_map 里映射为 "BTN_0"，所以脚本名要叫 BTN_0（不是 mesh、不是 wps）。
+#
+#   短按（按住 <3s）  = 开 mesh：拉起 wifiroam 服务 + 一键配对（gwrt-mesh-pair）
+#   长按（按住 >=3s） = 关 mesh：拆回传 + 退出配对 + 停服务不再自启
+#
+# 按住时长由驱动通过 SEEN 传入（单位秒）。注意：没有 SECONDS 这个变量。
+#
+# LED 由 gwrt-mesh-led 表达：灭=关 / 慢闪=等配对 / 快闪=主AP发现新节点 / 常亮=已组网
+#
+# 注：长按不调用 set_roam(false)，避免把保存的漫游 SSID 组清空；
+#     残留的 k/v/r/FT 标记对单机运行无害，下次组网时守护会重新写入。
+
+log() { logger -t gwrt-mesh-button "$@"; }
+
+HOLD="${SEEN:-0}"
+case "$HOLD" in ''|*[!0-9]*) HOLD=0 ;; esac
+THRESHOLD=3
+
+[ "$ACTION" = "released" ] || exit 0
+[ -x /etc/init.d/wifiroam ] || exit 0
+
+wait_daemon() {
+	i=0
+	while [ "$i" -lt 15 ]; do
+		ubus -S list wifiroam >/dev/null 2>&1 && return 0
+		sleep 1
+		i=$((i + 1))
+	done
+	return 1
+}
+
+if [ "$HOLD" -lt "$THRESHOLD" ]; then
+	# ---------- 短按：开 ----------
+	/etc/init.d/wifiroam enable >/dev/null 2>&1
+	if ! ubus -S list wifiroam >/dev/null 2>&1; then
+		/etc/init.d/wifiroam start >/dev/null 2>&1
+		wait_daemon || { log "short press(${HOLD}s): wifiroamd not ready"; exit 0; }
+	fi
+
+	# 曾被长按关掉的主AP：恢复 cap 角色（其余角色不动，等主AP 配对）
+	role="$(uci -q get wifiroam.core.role)"
+	if [ "$role" = "unconfigured" ] && \
+	   [ "$(uci -q get gwrt.mesh_button.last_role)" = "cap" ]; then
+		ubus call wifiroam set_role '{"role":"cap"}' >/dev/null 2>&1 \
+			&& log "short press(${HOLD}s): restored role cap"
+	fi
+
+	log "short press(${HOLD}s): mesh on"
+	[ -x /usr/libexec/gwrt-mesh-pair ] && /usr/libexec/gwrt-mesh-pair
+else
+	# ---------- 长按：关 ----------
+	if ubus -S list wifiroam >/dev/null 2>&1; then
+		# cap 先拆回传（顺带把 enabled=false 推给已配对的子AP），
+		# 再退出配对角色；非 cap 调 set_backhaul 会被守护拒绝，忽略即可
+		ubus call wifiroam set_backhaul '{"enabled":false}' >/dev/null 2>&1
+		uci -q set gwrt.mesh_button.last_role="$(uci -q get wifiroam.core.role)"
+		uci -q commit gwrt
+		ubus call wifiroam set_role '{"role":"unconfigured"}' >/dev/null 2>&1
+	fi
+
+	# 兜底拆掉 wireless 里残留的回传段（cap 的隐藏 AP / 子AP 的 STA 上联），
+	# 防止已关的设备偷偷通过 WDS 回挂进 mesh
+	changed=""
+	for sec in wifiroam_bh wifiroam_bh2; do
+		if uci -q get wireless."$sec" >/dev/null 2>&1; then
+			uci -q delete wireless."$sec"
+			changed=1
+		fi
+	done
+	[ -n "$changed" ] && { uci -q commit wireless; /sbin/wifi reload >/dev/null 2>&1; }
+
+	/etc/init.d/wifiroam stop >/dev/null 2>&1
+	/etc/init.d/wifiroam disable >/dev/null 2>&1
+	log "long press(${HOLD}s): mesh off"
+fi
+
+exit 0

@@ -27,13 +27,47 @@ endpoint() { cfg endpoint || echo "https://op.gwrt.uk"; }
 
 # api <path> <json-body>   -> prints response body, returns curl rc
 api() {
-	local path="$1" body="$2"
-	curl -4 -s -m 20 \
+	local path="$1" body="$2" rsp rc err
+	# 失败时不能只返回空串：日志里会变成 "report FAILED:" 什么都看不到。
+	# 这里把 curl 退出码 + stderr 一起带回，方便判断是 DNS/超时/TLS/HTTP 码。
+	err=$(mktemp 2>/dev/null)
+	rsp=$(curl -4 -s -m 20 -w '\n__HTTP__%{http_code}' \
 		-H "Content-Type: application/json" \
 		-H "User-Agent: $UA" \
 		-H "Authorization: Bearer $(cfg pair_token)" \
 		-d "$body" \
-		"$(endpoint)${path}" 2>/dev/null
+		"$(endpoint)${path}" 2>"$err")
+	rc=$?
+	local code=""
+	case "$rsp" in
+		*__HTTP__*)
+			code="${rsp##*__HTTP__}"
+			rsp="${rsp%$'\n'__HTTP__*}"
+			;;
+	esac
+	if [ "$rc" -ne 0 ]; then
+		local why
+		case "$rc" in
+			6) why="dns" ;;
+			7) why="connect" ;;
+			28) why="timeout" ;;
+			35|60) why="tls" ;;
+			52) why="empty-reply" ;;
+			56) why="recv" ;;
+			*) why="curl-rc$rc" ;;
+		esac
+		[ -s "$err" ] && why="$why: $(tr -d '\n' < "$err" | cut -c1-120)"
+		rm -f "$err"
+		echo "__API_FAIL__ $why (endpoint=$(endpoint)${path})"
+		return 0
+	fi
+	rm -f "$err"
+	# HTTP 码不是 2xx 也当成失败，把码和响应片段带回去
+	case "$code" in
+		2*) printf '%s' "$rsp" ;;
+		"") printf '%s' "$rsp" ;;
+		*) printf '__API_FAIL__ http %s: %s' "$code" "$(printf '%s' "$rsp" | cut -c1-120)" ;;
+	esac
 }
 
 did() { cfg device_id; }

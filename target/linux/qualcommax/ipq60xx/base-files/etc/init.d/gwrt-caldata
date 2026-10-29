@@ -1,0 +1,152 @@
+#!/bin/sh /etc/rc.common
+# gwrt-caldata — ath11k 校准数据兜底 + 无线配置自举（eMMC IPQ6010/6018 机型）
+#
+# 问题链（2026-10-29 真机 JDCloud RE-SS-01 512M 实测）：
+#   1) 刷机后首次启动，/lib/firmware/ath11k/IPQ6018/hw1.0/cal-ahb-c000000.wifi.bin
+#      不存在（procd 的固件加载 EBADF，hotplug 触发不到）。
+#   2) ath11k 在开机 ~23s 就 probe，需要那时就有校准数据；等 init 脚本
+#      （~110s）才补上已经晚了 → "qmi failed to load CAL data file" / "-110"
+#      → 没有 phy → 没有 WiFi。
+#   3) 而 /etc/config/wireless 是那次"没有 phy"的首启生成的，里面连
+#      radio0/radio1 都没有；再重启也不会自动补，WiFi 永远起不来。
+#
+# 因此这里：
+#   · caldata 缺失 → 从 GPT 的 0:ART 分区抄（幂等）→ 自动重启一次（重启后
+#     ath11k 在 probe 阶段就能拿到校准数据，一次到位）
+#   · caldata 已在 → 后台等 phy 就绪，补齐 /etc/config/wireless 的 radio 段 +
+#     GWRT 默认 SSID/加密，然后 wifi reload
+#   · 全程幂等，正常机器上什么都不做
+
+START=18
+
+LOG_TAG=gwrt-caldata
+CAL=/lib/firmware/ath11k/IPQ6018/hw1.0/cal-ahb-c000000.wifi.bin
+DEF_KEY=12345678
+
+log() { logger -t "$LOG_TAG" "$@"; }
+
+# cal_ensure <目标文件> <分区名> <偏移字节> <长度字节>
+cal_ensure() {
+	local cal="$1" partname="$2" off="$3" len="$4"
+	local bs=4096 skip count p dev=""
+
+	[ -s "$cal" ] && return 0
+
+	for p in /sys/class/block/mmcblk*p*; do
+		[ -e "$p/uevent" ] || continue
+		[ "$(sed -n 's/^PARTNAME=//p' "$p/uevent" 2>/dev/null)" = "$partname" ] || continue
+		dev="/dev/$(basename "$p")"
+		[ -e "$dev" ] || dev=""
+		break
+	done
+	[ -n "$dev" ] || return 1
+
+	skip=$((off / bs))
+	count=$(( (len + bs - 1) / bs ))
+
+	mkdir -p "$(dirname "$cal")"
+	dd if="$dev" of="$cal" bs="$bs" skip="$skip" count="$count" 2>/dev/null || {
+		rm -f "$cal"
+		return 1
+	}
+	[ -s "$cal" ] || { rm -f "$cal"; return 1; }
+	log "extracted $partname($dev) -> $cal ($(wc -c <"$cal") bytes)"
+	return 0
+}
+
+# 无线配置自举：等 phy 起来，补 radio 段 + 默认 SSID/加密
+wifi_bootstrap() {
+	local i sec enc
+
+	i=0
+	while [ "$i" -lt 60 ]; do
+		[ -e /sys/class/ieee80211/phy0 ] && break
+		sleep 2
+		i=$((i + 1))
+	done
+	if [ ! -e /sys/class/ieee80211/phy0 ]; then
+		log "no phy after wait, skip wifi bootstrap"
+		return 0
+	fi
+
+	# 没有 radio 段说明是「没有 phy 的首启」生成的残配置 → 重新生成
+	if [ "$(uci -q show wireless 2>/dev/null | grep -c '=wifi-device')" = "0" ]; then
+		log "wireless config has no radio, regenerating"
+		wifi config >/dev/null 2>&1
+	fi
+
+	# 默认 SSID 命名（GWRT_<band>_<MAC4>）
+	[ -x /usr/libexec/gwrt-ssid-name ] && /usr/libexec/gwrt-ssid-name >/dev/null 2>&1
+
+	# 5GHz 频段/带宽规则（产品定义）：
+	#   · 双频机型（只有 1 个 5G 射频）→ 5G 走 5.8G 高频（ch149+），不支持 160MHz
+	#   · 三频机型（≥2 个 5G 射频）→ 才允许 5.2G 低频 + 160MHz
+	# 原因：CN 法规下 160MHz 必然跨 DFS 信道（ch36-64 / ch100+），要做 60s CAC，
+	#   而 ath11k 的 start_dfs_cac() 返回 -1：
+	#     hostapd: DFS start_dfs_cac() failed, -1 → DFS->DISABLED → AP-DISABLED
+	#   表现为「用一段时间 5G 就没了」（2026-10-30 真机 SS-01 上抓到并复现）。
+	local ndev5=0 dev band ht ch
+	for dev in $(uci -q show wireless 2>/dev/null | sed -n 's/^wireless\.\([^.]*\)=wifi-device$/\1/p'); do
+		[ "$(uci -q get "wireless.$dev.band")" = "5g" ] && ndev5=$((ndev5 + 1))
+	done
+	if [ "$ndev5" -le 1 ]; then
+		for dev in $(uci -q show wireless 2>/dev/null | sed -n 's/^wireless\.\([^.]*\)=wifi-device$/\1/p'); do
+			[ "$(uci -q get "wireless.$dev.band")" = "5g" ] || continue
+			ch="$(uci -q get "wireless.$dev.channel")"
+			ht="$(uci -q get "wireless.$dev.htmode")"
+			# 1) 5.2G 低频 → 5.8G 高频
+			if [ -n "$ch" ] && [ "$ch" -gt 0 ] 2>/dev/null && [ "$ch" -lt 149 ]; then
+				uci -q set "wireless.$dev.channel=149"
+				log "$dev channel $ch -> 149 (dual-band: 5G uses 5.8GHz)"
+			fi
+			# 2) 160MHz → 80MHz
+			case "$ht" in
+				*160*)
+					uci -q set "wireless.$dev.htmode=HE80"
+					log "$dev htmode $ht -> HE80 (dual-band: no 160MHz)"
+					;;
+			esac
+		done
+	fi
+
+	# 默认加密/口令（只补空的/none 的，不动用户设置）
+	for sec in $(uci -q show wireless 2>/dev/null | sed -n 's/^wireless\.\([^.]*\)=wifi-iface$/\1/p'); do
+		[ "$(uci -q get "wireless.$sec.mode")" = "ap" ] || continue
+		enc="$(uci -q get "wireless.$sec.encryption")"
+		if [ -z "$enc" ] || [ "$enc" = "none" ]; then
+			uci -q set "wireless.$sec.encryption=psk2+ccmp"
+			[ -n "$(uci -q get "wireless.$sec.key")" ] || uci -q set "wireless.$sec.key=$DEF_KEY"
+		fi
+	done
+	uci -q commit wireless
+	wifi reload >/dev/null 2>&1
+	log "wifi bootstrap done"
+}
+
+start() {
+	# 已经有了：直接进无线自举（注意：不能把这种“已存在”也当成刚提取，
+	# 否则会无限重启——2026-10-29 在真机上踩过）
+	if [ -s "$CAL" ]; then
+		( wifi_bootstrap ) >/dev/null 2>&1 &
+		return 0
+	fi
+
+	if cal_ensure "$CAL" "0:ART" 4096 65536; then
+		# 本次 ath11k 已经错过校准数据，需要重启一次
+		# 防死循环：补过一次还没生效就不再重启（比如 overlay 写不进去）
+		if [ -e /etc/gwrt-caldata-rebooted ]; then
+			log "caldata still missing after one reboot, not rebooting again"
+			( wifi_bootstrap ) >/dev/null 2>&1 &
+			return 0
+		fi
+		: > /etc/gwrt-caldata-rebooted
+		log "caldata was missing at probe time, rebooting once to activate wifi"
+		( sleep 8; sync; reboot ) >/dev/null 2>&1 &
+		return 0
+	fi
+
+	log "caldata unavailable (no 0:ART partition?), skip"
+	( wifi_bootstrap ) >/dev/null 2>&1 &
+}
+
+boot() { start; }

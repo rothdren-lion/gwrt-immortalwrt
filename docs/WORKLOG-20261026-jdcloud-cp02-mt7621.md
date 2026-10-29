@@ -416,3 +416,26 @@ sh gwrt-build-cp02.sh 6 $VER    # -j6 铁律，禁 -j8
 - 备选：Nwrt shell 下 ubiformat 刷 factory.ubi（卷名 kernel/rootfs 与 SBL 预期一致，
   wifi_fw/bt_fw 遗留卷由我们 platform.sh 清理，ath11k 固件自带 /lib/firmware）。
 - 等用户贴 `cat /proc/mtd; ubinfo -a`（Nwrt 下）再定；顺带定重分区方案。
+
+---
+
+# 追加 2026-10-29 — PZ-L8 ART 备份完成（串口直读+crc校验）+ 首刷方案
+
+## ART 备份 ✅（存 IPQ/PL08/art-backup-261029/）
+
+- TTL（CH340 /dev/ttyACM0，本机直连）进 uboot，用 `nand read + md.b + crc32` 全自动备份。
+- smem 分区：0:ART 在 0x780000/1M；ubi（"rootfs"）在 0x4300000/58M；
+  卷 kernel/wifi_fw/bt_fw/ubi_rootfs/rootfs_data；无 factory 分区；另有 rootfs_1 双槽。
+- 方法：ART 读入内存，分 16×64K 逐块 crc32；后 11 块 crc 恰等于全 FF 块 crc
+  （deab7e4e，本地算出一致，数学证明全空，免倒）；前 5 块串口 md 倒出，
+  逐块 crc 与 uboot 算的一致（31db4da7/514891d7/cba712ec/5b7761fd/10ccf7fc），
+  逐字节精确。MAC@+12 = a4:39:b6:10:96:77（与 caldata 偏移猜测一致，0/+6 系占位）。
+- `nand bad`：全片零坏块 → raw nand write 安全。
+- 教训：md 解析注意行首 \r；大文件走串口务必分块+crc，不能裸倒。
+
+## 首刷方案（待传文件通道）
+
+- 路径：uboot 下 `tftpboot factory.ubi → nand erase 0x4300000 0x3a00000 →
+  nand write → reset`（SBL 读 kernel 卷，rootfs 卷 ID 固定，autoresize 接管剩余）。
+- 卡点：本机开不了 69 端口，板子 DTS 无 USB，33M 走不了串口；
+  需用户 PC 开 tftpd（或 U 盘）。自带 uboot 暂不刷（SBL 完好，无需动）。

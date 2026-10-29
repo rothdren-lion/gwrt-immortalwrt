@@ -97,7 +97,8 @@ define Device/jdcloud_re-cs-08
 	SOC := ipq5322
 	SUPPORTED_DEVICES += jdcloud,re-cs-08
 	DEVICE_PACKAGES := -kmod-ath12k -wpad-openssl kmod-sfp \
-		kmod-phy-marvell kmod-phy-marvell-10g
+		kmod-phy-marvell kmod-phy-marvell-10g \
+		-ath12k-firmware-ipq5332-ddwrt -ath12k-firmware-qcn9274-ddwrt
 	IMAGE/factory.bin := append-kernel | pad-to $$(KERNEL_SIZE) | append-rootfs | append-metadata
 endef
 TARGET_DEVICES += jdcloud_re-cs-08

@@ -115,13 +115,4 @@ fi
 	/etc/init.d/gwrt-wifiroam-autopair enable >/dev/null 2>&1
 }
 
-# 主机名默认 gwrt（仅出厂默认值时改一次，不覆盖用户已改的；
-# mesh 拓扑里的唯一名走 wifiroam.core.name=GWRT-$sfx，不受影响）
-case "$(uci -q get system.@system[0].hostname)" in
-ImmortalWrt|OpenWrt|"")
-	uci -q set system.@system[0].hostname='gwrt'
-	uci -q commit system
-	;;
-esac
-
 exit 0

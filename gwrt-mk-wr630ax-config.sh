@@ -163,7 +163,7 @@ sed -i 's|^# CONFIG_COREMARK_OPTIMIZE_O3 is not set$|CONFIG_COREMARK_OPTIMIZE_O3
 grep -q '^CONFIG_COREMARK_OPTIMIZE_O3=y$' "$TOP/.config" || echo 'CONFIG_COREMARK_OPTIMIZE_O3=y' >>"$TOP/.config"
 sed -i 's|^# CONFIG_COREMARK_ENABLE_MULTITHREADING is not set$|CONFIG_COREMARK_ENABLE_MULTITHREADING=y|' "$TOP/.config"
 grep -q '^CONFIG_COREMARK_ENABLE_MULTITHREADING=y$' "$TOP/.config" || echo 'CONFIG_COREMARK_ENABLE_MULTITHREADING=y' >>"$TOP/.config"
-# TurboACC：软件流量卸载（FW3）+ 全锥 NAT1（xt_FULLCONENAT/nft-fullcone），拥塞控制保持 CUBIC
+# TurboACC：软件流量卸载（FW3）+ 全锥 NAT1（xt_FULLCONENAT/nft-fullcone）+ MTK WED（mt7915e wed_enable=Y），拥塞控制保持 CUBIC
 for opt in luci-app-turboacc_INCLUDE_OFFLOADING luci-app-turboacc_INCLUDE_NFT_FULLCONE; do
 	grep -q "^CONFIG_PACKAGE_$opt=y$" "$TOP/.config" || echo "CONFIG_PACKAGE_$opt=y" >>"$TOP/.config"
 done

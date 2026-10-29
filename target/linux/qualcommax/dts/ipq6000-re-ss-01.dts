@@ -1166,9 +1166,9 @@
 		pinctrl-0 = <0x2b>;
 		pinctrl-names = "default";
 
-		wps {
-			label = "wps";
-			linux,code = <0x211>;
+		mesh {
+			label = "mesh";
+			linux,code = <0x100>;
 			gpios = <0x0c 0x08 0x01>;
 		};
 
