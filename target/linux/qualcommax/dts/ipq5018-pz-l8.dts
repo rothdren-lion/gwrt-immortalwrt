@@ -351,7 +351,10 @@
 
 	ieee80211-freq-limit = <2400000 2483000>;
 
-	status = "okay";
+	/* EXPERIMENT 2026-10-29: 关闭 2.4G 射频，验证 64 位双射频是否
+	 * 真的吃不下 256M DRAM（实测双频开机 slab 113M / 184M）。
+	 * 若关闭后 slab 减半则为 inherent 限制；否则另有 bug。 */
+	status = "disabled";
 };
 
 &wifi1 {
