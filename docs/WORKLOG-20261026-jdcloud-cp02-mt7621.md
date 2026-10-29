@@ -374,3 +374,45 @@ sh gwrt-build-cp02.sh 6 $VER    # -j6 铁律，禁 -j8
   **真上限是 mtd3**，以后加包以此为准。
 - stock uboot 备份（191K，U-Boot 2018.09）在 NAS，流程不碰 bootloader。
 - eMMC：用户明确不折腾，只做 mesh-AP（overlay 够用即止）。
+
+---
+
+# 追加 2026-10-29 — -03 刷机风波 + hostname 链 + 开箱验证全过
+
+## “变砖”乌龙：写入被打断，uboot 重刷即好
+
+- 现象：sysupgrade -n 后失联，uboot 还在。镜像法医鉴定：内核有效、
+  结构与能开机的 -02 一致、体积 fits → 镜像无辜，系 14.5M NOR 写入中被打断。
+- 用户 uboot 下重刷同一镜像，一次点亮。教训：NOR 机 sysupgrade 后
+  10 分钟内勿动电源；“连上过一次又掉线”多半是首次启动中，别慌。
+- 44/97 hostname 链：主题包 44_gwrt-hostname 定 GWRT → 97 加 MAC 后缀
+  得 GWRT-$sfx（多机唯一，DHCP/拓扑可分）。用户要的“gwrt”小写与该设计冲突
+  （多 AP 全叫 gwrt 会撞名，且 agent/配对生态全认 GWRT 前缀），已解释保留
+  GWRT-$sfx；97 里我加的小写块属死代码，已删（下版生效，不值得为此重编）。
+
+## -03 开箱验证（首次启动，全自动，全部通过）
+
+- 261028-03，hostname GWRT-BFE9，zh_cn，wifiroamd 运行中，role unconfigured
+- SSID：GWRT_2.4G_BFE9 + GWRT_5.8G_BFE9（149/HE80 新规则生效）+ mesh-gwrt
+- 漫游组 roam.ssids 已同步新 SSID，k/v/r 开；主题目录 /luci-static/gwrt 在，
+  mediaurlbase 已设；overlay 落 jffs2（mtdblock6，1.6M），agent 降级 OK。
+
+---
+
+# 追加 2026-10-29 — pzl8-01 归档 + Nwrt 升级框架确认
+
+## pzl8 261028-01 ✅（58M 预算内，约 42M）归档 `bin-pzl8-261028-01/`（sha 11/11）
+
+- 内容：全插件（xray+geo+chinadns 进镜像，sing-box/homeproxy 只留 apk），
+  WiFi board 双频 md5 与原厂一致，mesh 三件套，261028-01。
+- 注意：归档时 initramfs.itb 拷坏过一次（NAS 写入问题），重拷后 11/11 全过。
+  以后归档必须 sha256sum -c 全过才算完（本次立规矩）。
+- sideload apk：xray/sing-box/geo 双件/chinadns/homeproxy 界面（aarch64）。
+
+## 首刷方式待定（等真机信息）
+
+- Nwrt v1.6 是 QSDK 升级框架（do_flash_ubi 双槽/failsafe），不是标准 sysupgrade，
+  我们的 sysupgrade.bin 直刷可能不认。已解出 Nwrt rootfs 确认。
+- 备选：Nwrt shell 下 ubiformat 刷 factory.ubi（卷名 kernel/rootfs 与 SBL 预期一致，
+  wifi_fw/bt_fw 遗留卷由我们 platform.sh 清理，ath11k 固件自带 /lib/firmware）。
+- 等用户贴 `cat /proc/mtd; ubinfo -a`（Nwrt 下）再定；顺带定重分区方案。
