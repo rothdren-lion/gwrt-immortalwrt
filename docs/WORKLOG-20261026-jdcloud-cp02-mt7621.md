@@ -439,3 +439,88 @@ sh gwrt-build-cp02.sh 6 $VER    # -j6 铁律，禁 -j8
   nand write → reset`（SBL 读 kernel 卷，rootfs 卷 ID 固定，autoresize 接管剩余）。
 - 卡点：本机开不了 69 端口，板子 DTS 无 USB，33M 走不了串口；
   需用户 PC 开 tftpd（或 U 盘）。自带 uboot 暂不刷（SBL 完好，无需动）。
+
+---
+
+# 追加 2026-10-30 — PZ-L8 实机攻坚：刷机链路打通、内存定性、WiFi 修复、ART 备份
+
+## 一、ART 备份（务必保留）
+
+`/mnt/syNAS/Dowloads/Rout/IPQ/PL08/art-backup-261029/art-pzl8-1M.bin`
+- 来源：uboot 下 `nand read 0x780000 0x100000` → 串口分块 `md.b` 导出
+- 校验：16×64K 逐块 crc32 与 uboot 计算值逐字节一致；后 11 块 crc 恰等于
+  crc32(64K 全 FF)=deab7e4e（数学证明为空）
+- MAC 在 +12：a4:39:b6:10:96:77（0、+6 位是 00:11:22:33:44:5x 占位）
+- 全片 `nand bad` 零坏块；无 factory 分区
+
+## 二、PZ-L8 uboot 关键参数（smem 实测）
+
+| 项 | 值 |
+|---|---|
+| 0:ART | 0x780000 / 1M |
+| rootfs(ubi) | **0x4300000 / 0x3a00000 (58M)** |
+| rootfs_1 双槽 | 0x900000 / 0x3a00000 |
+| UBI | PEB 128K / LEB 126976 / VID offset 2048 / data offset 4096 |
+| 卷 | kernel / wifi_fw / bt_fw / ubi_rootfs / rootfs_data |
+| 串口 | /dev/ttyACM0 115200（本机 dialout 组可直连） |
+| 网络 | uboot 只有 **eth0 = WAN 口**能通（LAN 口 uboot 不通） |
+| DRAM | 256 MiB |
+
+## 三、刷机链路（脚本 `/home/godsun/pz/flash.py`，可复用）
+
+TFTP 走不通的坑与解法：
+1. **TFTP 服务**：本机 systemd 的 `in.tftpd`（socket 激活，根 `/var/lib/tftpboot`）可用；
+   `dnsmasq --enable-tftp` 会撞 69 端口且受 SELinux 限制读不了 NAS 目录 → 用 in.tftpd
+2. **防火墙**：firewalld 会把 eno0 抢回 FedoraWorkstation 区导致 UDP 回包被丢，
+   必须 `firewall-cmd --zone=FedoraWorkstation --remove-interface=eno0` +
+   `--zone=trusted --add-interface=eno0`（NM 重连会重置，每次刷机前复查）
+3. **整包 TFTP 会静默损坏**：32M 一次传，每次坏不同 64K 块（crc 对不上）
+   → **必须分片**：2MB 一片，逐片 tftp + crc32 校验，坏了只重传该片
+4. **最后一片要按实际长度写**（如 p09=0xa0000），写多了会把内存残留写进 flash，
+   造成 UBI 里出现重复/错 seq 的 EC 头 → `UBI init error 22`
+5. 掩写后必须 `nand read` 回读到**独立内存地址**再 crc（用同地址会把源数据覆盖）
+6. 写之前必须 `nand erase`（未擦写报 `NAND write to offset ... failed -5`）
+7. 校验通过后 `run bootcmd`；若停在 uboot，注意之前残留的空格会中断 autoboot
+
+## 四、内存定性（决定性结论）
+
+| 版本 | DTS | used | Slab | available | WiFi |
+|---|---|---|---|---|---|
+| 261029-01 | mode1 双频 | 157M | 113M | **0** | `PHY is undefined`/OOM |
+| 261029-02 | mode2 双频 | 156M | — | **0** | OOM，shell 无法执行 |
+| **261029-03** | mode2 **单频** | **114M** | **70M** | **21M** | ✅ AP 正常 |
+
+- **每路射频 ≈ 43M 内核 Slab**（113→70M），`fw-memory-mode=2` 对内存**无帮助**
+- 用户态全部进程 AnonPages 仅 **0.5~1.4M** → **砍插件无用**（这是本次最大误区，别再试）
+- `q6_region` 固定预留 48M（`ipq5018-qcn6122.dtsi`）→ MemTotal 只有 184M
+- 结论：**64 位 + 双射频 = 256M 装不下**；原厂/集客能用双频是因为它们是
+  **32 位 ARM**（busybox ELF 32-bit ARM EABI5 实测），指针减半
+- 32 位不可行：内核 `arch/arm` 无 IPQ5018（只有 IPQ4019），那套在 QSDK 私有树
+- **最终决定（用户拍板）**：PZ-L8 只做 **5G 单频 mesh AP**，不死磕双频
+
+## 五、WiFi 起来的真 bug：信道超限
+
+- 现象：AP 接口建出来但 `Channel 0 / Tx-Power 0`，日志
+  `hostapd.add_iface failed`，`Frequency 5745 is not allowed (seg0)`
+- 根因：`ipq5018-pz-l8.dts` 的 `&wifi1 { ieee80211-freq-limit = <5150000 5730000>; }`
+  → 149 信道(5745) 超上限，hostapd `Could not select hw_mode and channel (-3)`
+- 修复：`95_gwrt-wifi-defaults` 增加 `gwrt_5g_has_unii3()`，用
+  `iw phy <phy> info | grep "5745 MHz"` 探测；不支持则 5G 默认 36 信道
+- 验证（改 36 后立即正常）：
+  `phy0-ap0 ESSID GWRT_5.8G_4456  Master  Channel 40(5.200GHz) HE160  Tx-Power 22dBm
+   Encryption WPA-PSK(CCMP)  HW Mode 802.11ax/ac/n`
+- 注意：SSID 名由信道推导（>=149 → 5.8G），所以 PZ-L8 上是 `GWRT_5.2G_xxxx`
+
+## 六、最终固件与验证清单
+
+- **261029-04**（`Version 261029-04`）：单频 5G + 信道自适应 + mesh 全套 + 精简主题
+- 已验证通过：系统启动/load 0.13、WiFi AP 22dBm HE160 WPA2、wifiroamd
+  (role=unconfigured, name=GWRT-xxxx)、gwrt-agent、uhttpd 200、br-lan 192.168.3.3
+  DHCP、MemAvailable ~21M 稳定
+- 待验：客户端实际连接/漫游、mesh 与主 AP 配对、长时间稳定性
+
+## 七、其它记录
+
+- **uboot 未刷、也不要刷**：无 9008 无 USB，坏了只能拆 NAND 飞线；只动 rootfs 分区
+- 编好的 web 版 uboot 存 `bin-pzl8-261027-02/`，仅留档不刷
+- 哪吒模式里也有 `phy0/phy1` 双射频；其 DTS 若同样有 freq-limit，需同样处理
