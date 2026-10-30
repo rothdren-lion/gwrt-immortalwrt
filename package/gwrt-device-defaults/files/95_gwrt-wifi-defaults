@@ -8,6 +8,16 @@
 
 DEF_KEY="12345678"
 
+# 本机是否存在允许 5745MHz(149 信道) 的射频？不支持则 5G 默认改 36(5735->36)，
+# 典型：CMCC PZ-L8 的 DTS ieee80211-freq-limit 只到 5730MHz。
+gwrt_5g_has_unii3() {
+	for _p in /sys/class/ieee80211/phy*; do
+		[ -d "$_p" ] || continue
+		iw phy "$(basename "$_p")" info 2>/dev/null | grep -q "5745 MHz" && return 0
+	done
+	return 1
+}
+
 [ -f /etc/config/wireless ] || exit 0
 
 fix_radio() {
@@ -44,18 +54,22 @@ fix_radio() {
 	esac
 	uci -q set "wireless.$sec.disabled=0"
 
-	# 5G：按本机 5G 射频顺序分配 —— 第一个 5G 射频走高频 5.8G（149 信道，
+	# 5G：按本机 5G 射频顺序分配 —— 第一个 5G 射频优先走高频 5.8G（149 信道，
 	# UNII-3 无 DFS，最高 80MHz），第二个（3 频机的第三射频）走低频 5.2G
 	# （36 信道，可开 160MHz）。命名脚本按信道 >=149 判 5.8G，会自动跟上。
+	# 注意：部分机型（如 CMCC PZ-L8）DTS 里 ieee80211-freq-limit 上限 5730MHz，
+	# 149 的 5745MHz 被拒 → hostapd “Frequency 5745 is not allowed”，AP 起不来。
+	# 所以先用 iw 查本机是否真的支持 5745，不支持就退回 36。
 	case "$(uci -q get "wireless.$radio.band")" in
 		5g)
-			if [ "$GWRT_5G_SEEN" != "1" ]; then
+			if [ "$GWRT_5G_SEEN" != "1" ] && gwrt_5g_has_unii3; then
 				uci -q set "wireless.$radio.htmode=HE80"
 				uci -q set "wireless.$radio.channel=149"
 				GWRT_5G_SEEN=1
 			else
 				uci -q set "wireless.$radio.htmode=HE160"
 				uci -q set "wireless.$radio.channel=36"
+				[ "$GWRT_5G_SEEN" = "1" ] || GWRT_5G_SEEN=1
 			fi
 			;;
 	esac
