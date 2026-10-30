@@ -12,6 +12,8 @@ on:
           - cp02
           - pzl8
           - nezha
+          - bdy-g98-direct
+          - bdy-g98-uefi
       version:
         description: 'Version (YYMMDD-NN), empty = today-01'
         required: false
@@ -137,4 +139,3 @@ jobs:
           gh release create "gwrt-${{ inputs.device }}-${{ env.VER }}" out/* \
             --title "GWRT ${{ inputs.device }} ${{ env.VER }}" \
             --notes "自动构建: ${{ inputs.device }} @ ${{ github.sha }}"
-
