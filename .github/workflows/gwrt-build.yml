@@ -85,6 +85,8 @@ jobs:
             cp02) OUT=.config VER="$VER" sh gwrt-mk-cp02-config.sh ;;
             pzl8) OUT=.config VER="$VER" sh gwrt-mk-pzl8-config.sh ;;
             nezha) OUT=.config VER="$VER" sh gwrt-mk-nezha-config.sh ;;
+            bdy-g98-direct) OUT=.config VER="$VER" BOOT=direct sh gwrt-mk-bdy-g98-config.sh ;;
+            bdy-g98-uefi) OUT=.config VER="$VER" BOOT=uefi sh gwrt-mk-bdy-g98-config.sh ;;
             *) echo "unknown device preset: ${{ inputs.device }}"; exit 1 ;;
           esac
           make defconfig
@@ -135,3 +137,6 @@ jobs:
           gh release create "gwrt-${{ inputs.device }}-${{ env.VER }}" out/* \
             --title "GWRT ${{ inputs.device }} ${{ env.VER }}" \
             --notes "自动构建: ${{ inputs.device }} @ ${{ github.sha }}"
+
+          - bdy-g98-direct
+          - bdy-g98-uefi
