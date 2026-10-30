@@ -173,3 +173,18 @@ sh scripts/gwrt-sync-mesh.sh /path/to/openwrt
   generic 按需增量补丁（706/752/753/767/768/769/775/901）
 - `docs/WORKLOG-20261026-jdcloud-cp02-mt7621.md` — cp02 最低 mesh 集成、
   gwrt-agent/device-defaults 跨架构改造、GitHub Actions 云端编译（ipq5018 待确认机型后移植）
+
+> **2026-10-30 PZ-L8 攻坚结论**（详见 WORKLOG 同日条目）：
+> - **内存硬限制**：256M DRAM，每路射频 ath11k 吃 **43M 内核 Slab**，
+>   双射频 = 313M 需求 → **装不下**（mode1/mode2 都一样）。用户态仅占 1~2M，
+>   **砍插件无效**。原厂/集客能用双频是 32 位 ARM（指针减半），
+>   但内核 arch/arm 无 IPQ5018，32 位在 QSDK 私有树 → 不做。
+>   **定稿：PZ-L8 只做 5G 单频 mesh AP**。
+> - **WiFi 起不来的真因是信道**：PZ-L8 DTS `ieee80211-freq-limit` 上限 5730MHz，
+>   默认 149 信道(5745) 被 hostapd 拒绝。95 脚本已加 `iw phy` 探测，
+>   不支持 UNII-3 时自动退回 36 信道（SSID 随之变 GWRT_5.2G_xxxx）。
+> - **ART 备份**：`IPQ/PL08/art-backup-261029/`（crc 逐块对齐校验），别丢。
+> - **uboot 千万别刷**：无 9008/USB，坏了只能拆 NAND；只写 rootfs 分区。
+> - **刷机脚本** `/home/godsun/pz/flash.py`（分片 2M + 逐片 crc + 回读校验），
+>   要点见 WORKLOG：TFTP 服务用系统 in.tftpd、firewalld 需把 eno0 拉到 trusted、
+>   最后一片按实际长度写、回读要用独立内存地址。
