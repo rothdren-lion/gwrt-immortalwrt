@@ -38,6 +38,7 @@ define Package/gwrt-device-defaults/install
 	$(INSTALL_BIN) ./files/96_gwrt-preset-apk $(1)/etc/uci-defaults/96_gwrt-preset-apk
 	$(INSTALL_BIN) ./files/97_gwrt-wifiroam-defaults $(1)/etc/uci-defaults/97_gwrt-wifiroam-defaults
 	$(INSTALL_BIN) ./files/98_gwrt-agent-defaults $(1)/etc/uci-defaults/98_gwrt-agent-defaults
+	$(INSTALL_BIN) ./files/99_gwrt-data-part $(1)/etc/uci-defaults/99_gwrt-data-part
 	$(INSTALL_BIN) ./files/gwrt-ssid-name $(1)/usr/libexec/gwrt-ssid-name
 	$(INSTALL_DATA) ./files/apk/luci-app-wifiroam-*.apk ./files/apk/luci-i18n-wifiroam-*.apk ./files/apk/wifiroam-*.apk $(1)/usr/share/gwrt/apk/
 ifneq ($(findstring aarch64,$(ARCH)),)
