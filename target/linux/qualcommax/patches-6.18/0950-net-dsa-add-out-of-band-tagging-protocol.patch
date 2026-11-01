@@ -95,126 +95,19 @@ Signed-off-by: Maxime Chevallier <maxime.chevallier@bootlin.com>
  
 --- a/include/net/dsa.h
 +++ b/include/net/dsa.h
-@@ -57,6 +57,7 @@ struct tc_action;
- #define DSA_TAG_PROTO_BRCM_LEGACY_FCS_VALUE	29
+@@ -58,6 +58,7 @@
  #define DSA_TAG_PROTO_MXL862_VALUE		30
  #define DSA_TAG_PROTO_MXL862_8021Q_VALUE	31
+ #define DSA_TAG_PROTO_RTL837X_8021AD_VALUE	34
 +#define DSA_TAG_PROTO_OOB_VALUE			32
+ #define DSA_TAG_PROTO_RTL9303_8021AD_VALUE	35
  
  enum dsa_tag_protocol {
- 	DSA_TAG_PROTO_NONE		= DSA_TAG_PROTO_NONE_VALUE,
-@@ -91,6 +92,7 @@ enum dsa_tag_protocol {
- 	DSA_TAG_PROTO_VSC73XX_8021Q	= DSA_TAG_PROTO_VSC73XX_8021Q_VALUE,
+@@ -94,6 +95,7 @@
  	DSA_TAG_PROTO_MXL862		= DSA_TAG_PROTO_MXL862_VALUE,
  	DSA_TAG_PROTO_MXL862_8021Q	= DSA_TAG_PROTO_MXL862_8021Q_VALUE,
+ 	DSA_TAG_PROTO_RTL837X_8021AD	= DSA_TAG_PROTO_RTL837X_8021AD_VALUE,
 +	DSA_TAG_PROTO_OOB		= DSA_TAG_PROTO_OOB_VALUE,
+ 	DSA_TAG_PROTO_RTL9303_8021AD	= DSA_TAG_PROTO_RTL9303_8021AD_VALUE,
  };
  
- struct dsa_switch;
---- a/net/core/skbuff.c
-+++ b/net/core/skbuff.c
-@@ -66,8 +66,12 @@
- #include <linux/iov_iter.h>
- #include <linux/crc32.h>
- #include <linux/if.h>
-+#ifdef CONFIG_NET_DSA_TAG_OOB
-+#include <linux/dsa/oob.h>
-+#endif
- 
- #include <net/protocol.h>
-+#include <net/dsa.h>
- #include <net/dst.h>
- #include <net/sock.h>
- #include <net/checksum.h>
-@@ -5120,6 +5124,9 @@ static const u8 skb_ext_type_len[] = {
- #if IS_ENABLED(CONFIG_INET_PSP)
- 	[SKB_EXT_PSP] = SKB_EXT_CHUNKSIZEOF(struct psp_skb_ext),
- #endif
-+#if IS_ENABLED(CONFIG_NET_DSA_TAG_OOB)
-+	[SKB_EXT_DSA_OOB] = SKB_EXT_CHUNKSIZEOF(struct dsa_oob_tag_info),
-+#endif
- };
- 
- static __always_inline unsigned int skb_ext_total_length(void)
---- a/net/dsa/Kconfig
-+++ b/net/dsa/Kconfig
-@@ -145,6 +145,15 @@ config NET_DSA_TAG_OCELOT_8021Q
- 	  this mode, less TCAM resources (VCAP IS1, IS2, ES0) are available for
- 	  use with tc-flower.
- 
-+config NET_DSA_TAG_OOB
-+	select SKB_EXTENSIONS
-+	tristate "Tag driver for Out-of-band tagging drivers"
-+	help
-+	  Say Y or M if you want to enable support for pairs of embedded
-+	  switches and host MAC drivers which perform demultiplexing and
-+	  packet steering to ports using out of band metadata processed
-+	  by the DSA master, rather than tags present in the packets.
-+
- config NET_DSA_TAG_QCA
- 	tristate "Tag driver for Qualcomm Atheros QCA8K switches"
- 	help
---- a/net/dsa/Makefile
-+++ b/net/dsa/Makefile
-@@ -33,6 +33,7 @@ obj-$(CONFIG_NET_DSA_TAG_MXL_862XX_8021Q
- obj-$(CONFIG_NET_DSA_TAG_NONE) += tag_none.o
- obj-$(CONFIG_NET_DSA_TAG_OCELOT) += tag_ocelot.o
- obj-$(CONFIG_NET_DSA_TAG_OCELOT_8021Q) += tag_ocelot_8021q.o
-+obj-$(CONFIG_NET_DSA_TAG_OOB) += tag_oob.o
- obj-$(CONFIG_NET_DSA_TAG_QCA) += tag_qca.o
- obj-$(CONFIG_NET_DSA_TAG_RTL4_A) += tag_rtl4_a.o
- obj-$(CONFIG_NET_DSA_TAG_RTL8_4) += tag_rtl8_4.o
---- /dev/null
-+++ b/net/dsa/tag_oob.c
-@@ -0,0 +1,51 @@
-+// SPDX-License-Identifier: GPL-2.0-only
-+
-+/* Copyright (c) 2022, Maxime Chevallier <maxime.chevallier@bootlin.com> */
-+
-+#include <linux/bitfield.h>
-+#include <linux/dsa/oob.h>
-+#include <linux/skbuff.h>
-+
-+#include "tag.h"
-+
-+#define OOB_NAME "oob"
-+
-+static struct sk_buff *oob_tag_xmit(struct sk_buff *skb,
-+				    struct net_device *dev)
-+{
-+	struct dsa_oob_tag_info *tag_info = skb_ext_add(skb, SKB_EXT_DSA_OOB);
-+	struct dsa_port *dp = dsa_user_to_port(dev);
-+
-+	tag_info->port = dp->index;
-+
-+	return skb;
-+}
-+
-+static struct sk_buff *oob_tag_rcv(struct sk_buff *skb,
-+				   struct net_device *dev)
-+{
-+	struct dsa_oob_tag_info *tag_info = skb_ext_find(skb, SKB_EXT_DSA_OOB);
-+
-+	if (!tag_info)
-+		return NULL;
-+
-+	skb->dev = dsa_conduit_find_user(dev, 0, tag_info->port);
-+	if (!skb->dev)
-+		return NULL;
-+
-+	return skb;
-+}
-+
-+static const struct dsa_device_ops oob_tag_dsa_ops = {
-+	.name	= OOB_NAME,
-+	.proto	= DSA_TAG_PROTO_OOB,
-+	.xmit	= oob_tag_xmit,
-+	.rcv	= oob_tag_rcv,
-+};
-+
-+MODULE_LICENSE("GPL");
-+MODULE_DESCRIPTION("DSA tag driver for out-of-band tagging");
-+MODULE_AUTHOR("Maxime Chevallier <maxime.chevallier@bootlin.com>");
-+MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_OOB, OOB_NAME);
-+
-+module_dsa_tag_driver(oob_tag_dsa_ops);
