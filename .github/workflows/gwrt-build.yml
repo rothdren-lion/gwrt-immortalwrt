@@ -9,6 +9,9 @@ on:
         default: 'cp02'
         type: choice
         options:
+          - ss01
+          - cs02-gwrt2
+          - cs07
           - cp02
           - pzl8
           - nezha
@@ -84,6 +87,16 @@ jobs:
           [ -n "$VER" ] || VER="$(date -u +%y%m%d)-01"
           echo "VER=$VER" >> "$GITHUB_ENV"
           case "${{ inputs.device }}" in
+            ss01) MN="亚瑟ss-01" ;;
+            cs02-gwrt2) MN="雅典娜cs-02-lan1-is-wan" ;;
+            cs07) MN="太乙er1-cs-07" ;;
+            *) MN="" ;;
+          esac
+          echo "MODEL_NAME=$MN" >> "$GITHUB_ENV"
+          case "${{ inputs.device }}" in
+            ss01) cp config.ci-ss01-261030-01 .config ;;
+            cs02-gwrt2) cp config.ci-cs02-gwrt2-261030-01 .config ;;
+            cs07) cp config.ci-cs07-261030-01 .config ;;
             cp02) OUT=.config VER="$VER" sh gwrt-mk-cp02-config.sh ;;
             pzl8) OUT=.config VER="$VER" sh gwrt-mk-pzl8-config.sh ;;
             nezha) OUT=.config VER="$VER" sh gwrt-mk-nezha-config.sh ;;
