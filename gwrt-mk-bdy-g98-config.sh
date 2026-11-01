@@ -1,7 +1,4 @@
 #!/bin/sh
-# ---------------------------------------------------------------------------
-# gwrt-mk-bdy-g98-config.sh — BDY G98 (RK3588)
-# ---------------------------------------------------------------------------
 set -e
 TOP=$(cd "$(dirname "$0")" && pwd)
 cd "$TOP"
@@ -35,7 +32,6 @@ EOF
 fi
 
 cat >> "$OUT" <<'EOF'
-# GWRT base
 CONFIG_PACKAGE_gwrt-agent=y
 CONFIG_PACKAGE_gwrt-device-defaults=y
 CONFIG_PACKAGE_gwrt-mesh-apmode=y
@@ -49,7 +45,6 @@ CONFIG_PACKAGE_curl=y
 CONFIG_PACKAGE_ca-bundle=y
 CONFIG_PACKAGE_wget-ssl=y
 CONFIG_PACKAGE_ca-certificates=y
-# network
 CONFIG_PACKAGE_kmod-tun=y
 CONFIG_PACKAGE_kmod-inet-diag=y
 CONFIG_PACKAGE_kmod-nft-tproxy=y
@@ -59,7 +54,6 @@ CONFIG_PACKAGE_iptables-nft=y
 CONFIG_PACKAGE_ip6tables-nft=y
 CONFIG_PACKAGE_odhcpd-ipv6only=y
 CONFIG_PACKAGE_dnsmasq-full=y
-# storage
 CONFIG_PACKAGE_kmod-fs-ext4=y
 CONFIG_PACKAGE_kmod-fs-btrfs=y
 CONFIG_PACKAGE_kmod-fs-exfat=y
@@ -84,9 +78,6 @@ CONFIG_PACKAGE_ntfs-3g=y
 CONFIG_PACKAGE_exfat-fsck=y
 CONFIG_PACKAGE_exfat-mkfs=y
 CONFIG_PACKAGE_dosfstools=y
-# podman
-CONFIG_PACKAGE_podman=y
-CONFIG_PACKAGE_podman-remote=y
 CONFIG_PACKAGE_kmod-veth=y
 CONFIG_PACKAGE_kmod-br-netfilter=y
 CONFIG_PACKAGE_kmod-xt-nat=y
@@ -96,18 +87,8 @@ CONFIG_PACKAGE_kmod-ip6tables=y
 CONFIG_PACKAGE_kmod-iptables=y
 CONFIG_PACKAGE_kmod-macvlan=y
 CONFIG_PACKAGE_kmod-dummy=y
-CONFIG_PACKAGE_cgroupfs-mount=y
-CONFIG_PACKAGE_containerd=y
-CONFIG_PACKAGE_runc=y
-CONFIG_PACKAGE_iptables-mod-extra=y
-CONFIG_PACKAGE_iptables-mod-tproxy=y
-CONFIG_PACKAGE_ipset=y
-CONFIG_PACKAGE_luci-app-dockerman=y
-CONFIG_PACKAGE_luci-i18n-dockerman-zh-cn=y
-# ucode
 CONFIG_PACKAGE_ucode-mod-socket=y
 CONFIG_PACKAGE_ucode-mod-digest=y
-# ssr
 CONFIG_PACKAGE_gwrt-ssr-plus-luci=y
 CONFIG_PACKAGE_luci-app-ssr-plus=y
 CONFIG_PACKAGE_luci-i18n-ssr-plus-zh-cn=y
@@ -128,14 +109,11 @@ CONFIG_PACKAGE_microsocks=y
 CONFIG_PACKAGE_chinadns-ng=y
 CONFIG_PACKAGE_v2ray-geoip=y
 CONFIG_PACKAGE_v2ray-geosite=y
-# homeproxy
 CONFIG_PACKAGE_luci-app-homeproxy=y
 CONFIG_PACKAGE_luci-i18n-homeproxy-zh-cn=y
 CONFIG_PACKAGE_sing-box=y
-# adguardhome
 CONFIG_PACKAGE_luci-app-adguardhome=y
 CONFIG_PACKAGE_luci-i18n-adguardhome-zh-cn=y
-# iptv/upnp/ddns
 CONFIG_PACKAGE_igmpproxy=y
 CONFIG_PACKAGE_udpxy=y
 CONFIG_PACKAGE_luci-app-upnp=y
@@ -143,7 +121,6 @@ CONFIG_PACKAGE_luci-i18n-upnp-zh-cn=y
 CONFIG_PACKAGE_miniupnpd-nftables=y
 CONFIG_PACKAGE_luci-app-ddns=y
 CONFIG_PACKAGE_luci-i18n-ddns-zh-cn=y
-# stats/tools
 CONFIG_PACKAGE_nlbwmon=y
 CONFIG_PACKAGE_luci-app-nlbwmon=y
 CONFIG_PACKAGE_luci-i18n-nlbwmon-zh-cn=y
@@ -173,16 +150,13 @@ CONFIG_PACKAGE_unzip=y
 CONFIG_PACKAGE_zip=y
 CONFIG_PACKAGE_tar=y
 CONFIG_PACKAGE_gzip=y
-# tty/file
 CONFIG_PACKAGE_ttyd=y
 CONFIG_PACKAGE_luci-app-ttyd=y
 CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y
 CONFIG_PACKAGE_luci-app-filebrowser=y
 CONFIG_PACKAGE_luci-i18n-filebrowser-zh-cn=y
-# easytier
 CONFIG_PACKAGE_luci-app-easytier=y
 CONFIG_PACKAGE_luci-i18n-easytier-zh-cn=y
-# argon
 CONFIG_PACKAGE_luci-app-argon-config=y
 CONFIG_PACKAGE_odhcp6c=y
 EOF
