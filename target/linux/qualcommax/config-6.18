@@ -676,3 +676,5 @@ CONFIG_DEBUG_INFO_BTF=y
 
 # QCA NSS ECM patch (0600-6) adds this symbol; explicit entry avoids syncconfig prompt
 # CONFIG_NF_CONNTRACK_DSCPREMARK_EXT is not set
+# CONFIG_NET_DSA_TAG_RTL837X_8021AD is not set
+# CONFIG_NET_DSA_TAG_RTL9303_8021AD is not set
