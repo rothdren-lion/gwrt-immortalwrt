@@ -84,7 +84,12 @@ if [ "$(readlink -f "$OUT")" != "$(readlink -f "$TOP/.config")" ]; then
 fi
 
 # --- 2. defconfig 展开 ------------------------------------------------------
-make defconfig >/dev/null
+# GWRT_NO_SELF_DEFCONFIG=1 时跳过：CI 用 OUT=.config 时顶层会自己 make defconfig，
+# 而且生成器内部跑 defconfig 在 CI 上会挂在 scripts/config/conf 上。
+# 跳过时 add_pkg/unset_pkg 走"直接追加行"分支，后面顶层 defconfig 会认。
+if [ -z "$GWRT_NO_SELF_DEFCONFIG" ]; then
+	make defconfig >/dev/null
+fi
 
 add_pkg() {
 	sym=$1
@@ -102,6 +107,11 @@ unset_pkg() {
 	if grep -q "^CONFIG_PACKAGE_${sym}=y$" "$TOP/.config"; then
 		sed -i "s|^CONFIG_PACKAGE_${sym}=y$|# CONFIG_PACKAGE_${sym} is not set|" "$TOP/.config"
 		echo "  - $sym"
+	elif ! grep -q "^# CONFIG_PACKAGE_${sym} is not set$" "$TOP/.config"; then
+		# 行不存在（如跳过内部 defconfig 时）也强制写一条 not set，
+		# 否则 dnsmasq 与 dnsmasq-full 会冲突
+		echo "# CONFIG_PACKAGE_${sym} is not set" >>"$TOP/.config"
+		echo "  - $sym (appended)"
 	fi
 }
 
