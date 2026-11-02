@@ -159,27 +159,6 @@ done
 # 2026-11-02 360T7 校准丢失事故后补入，详见
 # docs/WORKLOG-20261102-360t7-ubi-migration-factory-bdf.md §6.3
 
-echo "[wr630ax] 代理 / 任务管理 / （终端已在上面）:"
-# openclash 依赖 dnsmasq-full（与预装的 dnsmasq 互斥，必须先取消 dnsmasq）
-unset_pkg dnsmasq
-for p in \
-	luci-app-openclash \
-	dnsmasq-full \
-	taskd \
-	luci-lib-taskd \
-	luci-app-harbor-file ; do
-	add_pkg "$p"
-	done
-# - luci-app-openclash (feeds/luci/applications/luci-app-openclash v0.48.002)
-#   DEPENDS 自动拉: bash curl ca-bundle ip-full unzip ruby ruby-yaml
-#   kmod-inet-diag kmod-nft-tproxy kmod-tun luci-compat
-#   dnsmasq-full 必须显式选（要替换掉预装的 dnsmasq）
-# - taskd + luci-lib-taskd = “任务管理”（Simple Task Manager），
-#   luci-lib-taskd 会再拉 luci-lib-xterm
-# - luci-app-harbor-file = “资源管理器”（package/luci-app-harbor-file，DEPENDS 只 +luci-compat）
-# - 终端: ttyd + luci-app-ttyd（已在上面主题配套组）
-# - SSR: gwrt-ssr-plus-luci 已在上面主题配套组
-
 echo "[wr630ax] 主题依赖（CoreMark 选项 / 下载与解压 / 测温）:"
 for p in \
 	autocore \
@@ -265,33 +244,43 @@ for p in \
 	kmod-airoha-pon-frontend \
 	kmod-airoha-en7572 \
 	kmod-airoha-paged-bosa \
-	openclash \
-	luci-app-openclash \
 	gecoosac \
 	luci-app-gecoosac \
 	docker \
 	dockerd \
 	docker-compose \
 	podman \
-	kmod-wireguard \
-	kmod-nft-tproxy \
-	kmod-inet-diag ; do
+	kmod-wireguard ; do
 	unset_pkg "$p"
 done
 
 # --- 3. 复检 ----------------------------------------------------------------
-make defconfig >/dev/null
+if [ -z "$GWRT_NO_SELF_DEFCONFIG" ]; then
+	make defconfig >/dev/null
+fi
 
 echo "[wr630ax] defconfig 后复检（只清 openclash / gecoosac，主题插件全部保留）:"
 for p in \
-	openclash \
-	luci-app-openclash \
 	gecoosac \
 	luci-app-gecoosac ; do
 	unset_pkg "$p"
 done
 
-cp "$TOP/.config" "$OUT"
+# --- 4. 追加插件（放在所有 unset 之后，否则会被清掉） ----------------------
+echo "[wr630ax] 代理 / 任务管理 / 资源管理器:"
+unset_pkg dnsmasq          # openclash 依赖 dnsmasq-full，与预装 dnsmasq 互斥
+for p in \
+	luci-app-openclash \
+	dnsmasq-full \
+	taskd \
+	luci-lib-taskd \
+	luci-app-harbor-file ; do
+	add_pkg "$p"
+done
+
+if [ "$(readlink -f "$TOP/.config")" != "$(readlink -f "$OUT")" ]; then
+	cp "$TOP/.config" "$OUT"
+fi
 
 echo
 echo "==> 完成: $OUT"
