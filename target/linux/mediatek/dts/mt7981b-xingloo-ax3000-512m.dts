@@ -21,7 +21,7 @@
 
 / {
 	model = "XINGLOO AX3000";
-	compatible = "comfast,cf-wr630ax", "mediatek,mt7981";
+	compatible = "xingloo,ax3000", "mediatek,mt7981";
 
 	aliases {
 		serial0 = &uart0;
@@ -37,7 +37,7 @@
 	};
 
 	memory@40000000 {
-		reg = <0 0x40000000 0 0x10000000>; // 256mb
+		reg = <0 0x40000000 0 0x20000000>; // 512mb
 		device_type = "memory";
 	};
 
@@ -273,35 +273,6 @@
 
 &uart0 {
 	status = "okay";
-};
-
-/*
- * CPU idle: PSCI power-down of a single core (cluster retained).
- * Mainline has no cpufreq for MT7981 and no idle-states for any MediaTek
- * ARM64 SoC, so without this the CPU only ever executes WFI and the SoC
- * sits at ~78C while idle. Values are deliberately conservative; the
- * state is only entered for long idle windows.
- */
-&{/cpus} {
-	idle-states {
-		entry-method = "psci";
-
-		CPU_SLEEP_0: cpu-sleep-0 {
-			compatible = "arm,idle-state";
-			arm,psci-suspend-param = <0x0010000>;
-			entry-latency-us = <100>;
-			exit-latency-us = <400>;
-			min-residency-us = <3000>;
-		};
-	};
-
-	cpu@0 {
-		cpu-idle-states = <&CPU_SLEEP_0>;
-	};
-
-	cpu@1 {
-		cpu-idle-states = <&CPU_SLEEP_0>;
-	};
 };
 
 &watchdog {

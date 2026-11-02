@@ -143,6 +143,7 @@ mediatek_setup_interfaces()
 	comfast,cf-wa933-128m)
 		ucidef_set_interfaces_lan_wan "lan1 lan2" eth1
 		;;
+	xingloo,ax3000|\
 	comfast,cf-wr630ax)
 		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3" eth1
 		;;

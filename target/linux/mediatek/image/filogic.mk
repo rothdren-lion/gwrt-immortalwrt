@@ -1185,10 +1185,10 @@ define Device/comfast_cf-wa933-128m
 endef
 TARGET_DEVICES += comfast_cf-wa933-128m
 
-define Device/comfast_cf-wr630ax
+define Device/xingloo_ax3000
   DEVICE_VENDOR := XINGLOO
   DEVICE_MODEL := AX3000
-  DEVICE_DTS := mt7981b-comfast-cf-wr630ax
+  DEVICE_DTS := mt7981b-xingloo-ax3000
   DEVICE_DTS_DIR := ../dts
   DEVICE_DTC_FLAGS := --pad 4096
   DEVICE_DTS_LOADADDR := 0x43f00000
@@ -1203,15 +1203,15 @@ define Device/comfast_cf-wr630ax
   IMAGES := sysupgrade.bin factory.bin
   IMAGE/factory.bin := append-ubi | check-size $$$$(IMAGE_SIZE)
   IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
-  SUPPORTED_DEVICES += comfast,cf-wr630ax cf-wr630ax
+  SUPPORTED_DEVICES += xingloo,ax3000 comfast,cf-wr630ax cf-wr630ax
 endef
-TARGET_DEVICES += comfast_cf-wr630ax
+TARGET_DEVICES += xingloo_ax3000
 
-define Device/comfast_cf-wr630ax-512m
+define Device/xingloo_ax3000-512m
   DEVICE_VENDOR := XINGLOO
   DEVICE_MODEL := AX3000
   DEVICE_VARIANT := 512M
-  DEVICE_DTS := mt7981b-comfast-cf-wr630ax-512m
+  DEVICE_DTS := mt7981b-xingloo-ax3000-512m
   DEVICE_DTS_DIR := ../dts
   DEVICE_DTC_FLAGS := --pad 4096
   DEVICE_DTS_LOADADDR := 0x43f00000
@@ -1226,9 +1226,9 @@ define Device/comfast_cf-wr630ax-512m
   IMAGES := sysupgrade.bin factory.bin
   IMAGE/factory.bin := append-ubi | check-size $$$$(IMAGE_SIZE)
   IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
-  SUPPORTED_DEVICES += comfast,cf-wr630ax cf-wr630ax
+  SUPPORTED_DEVICES += xingloo,ax3000 comfast,cf-wr630ax cf-wr630ax
 endef
-TARGET_DEVICES += comfast_cf-wr630ax-512m
+TARGET_DEVICES += xingloo_ax3000-512m
 
 define Device/comfast_cf-wr632ax-common
   DEVICE_VENDOR := COMFAST

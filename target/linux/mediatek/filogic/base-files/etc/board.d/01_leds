@@ -84,6 +84,7 @@ comfast,cf-wa933-128m)
 	ucidef_set_led_netdev "lan2" "lan2" "blue:lan-2" "lan2" "link tx rx"
 	ucidef_set_led_netdev "wan" "wan" "blue:wan" "eth1" "link tx rx"
 	;;
+xingloo,ax3000|\
 comfast,cf-wr630ax)
 	ucidef_set_led_netdev "wan" "wan" "white:wan" "eth1" "link tx rx"
 	;;
