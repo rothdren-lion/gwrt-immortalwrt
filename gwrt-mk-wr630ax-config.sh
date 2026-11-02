@@ -78,7 +78,10 @@ CONFIG_VERSION_NUMBER="$VER"
 CONFIG_VERSION_FILENAMES=y
 EOF
 
-cp "$OUT" "$TOP/.config"
+# OUT 可能就是 .config（CI 用 OUT=.config 直接生成顶层配置），此时不能 cp 自己
+if [ "$(readlink -f "$OUT")" != "$(readlink -f "$TOP/.config")" ]; then
+	cp "$OUT" "$TOP/.config"
+fi
 
 # --- 2. defconfig 展开 ------------------------------------------------------
 make defconfig >/dev/null
