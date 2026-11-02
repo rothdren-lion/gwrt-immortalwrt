@@ -11,6 +11,8 @@ on:
         options:
           - ss01
           - cs02-gwrt2
+          - cs06
+          - cs08
           - cs07
           - cp02
           - pzl8
@@ -89,6 +91,8 @@ jobs:
           case "${{ inputs.device }}" in
             ss01) MN="亚瑟ss-01" ;;
             cs02-gwrt2) MN="雅典娜cs-02-lan1-is-wan" ;;
+            cs06) MN="赵云cs-06" ;;
+            cs08) MN="太乙2pluscs-08" ;;
             cs07) MN="太乙er1-cs-07" ;;
             *) MN="" ;;
           esac
@@ -96,6 +100,8 @@ jobs:
           case "${{ inputs.device }}" in
             ss01) cp config.ci-ss01-261030-01 .config ;;
             cs02-gwrt2) cp config.ci-cs02-gwrt2-261030-01 .config ;;
+            cs06) OUT=.config VER="$VER" sh gwrt-mk-cs06-config.sh ;;
+            cs08) OUT=.config VER="$VER" sh gwrt-mk-cs08-config.sh ;;
             cs07) cp config.ci-cs07-261030-01 .config ;;
             cp02) OUT=.config VER="$VER" sh gwrt-mk-cp02-config.sh ;;
             pzl8) OUT=.config VER="$VER" sh gwrt-mk-pzl8-config.sh ;;

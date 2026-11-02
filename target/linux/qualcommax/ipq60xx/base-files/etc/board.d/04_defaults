@@ -16,30 +16,20 @@ board_config_update
 #     已改回上游原值（两份副本：files/ 与 wifi-scripts/wifi-scripts/，
 #     构建实际读后者，见 md/BUILD-RULES.md 血泪坑 #10）。
 #
-# 保留的无线相关设置：各射频 MAC 地址数量（结构性，非命名）+ 5G 信道——
+# 保留的唯一无线相关设置：各射频 MAC 地址数量（结构性，非命名）——
 # wifi-scripts 的 mac80211.uc 读 band_defaults.mac_count。
-#
-# 2026-10-03（硬件实测确认）：
-#   - SS-01：只有 2 个射频（IPQ6018 集成 2.4G + 5G），无 PCI、无 QCN9074。
-#     实测 /sys/class/ieee80211 只有 phy0/phy1。
-#   - CS-02（含 GWRT2）：3 个射频（IPQ6018 集成 2.4G + 5G，另加 PCI QCN9074
-#     做 5.2G）。QCN9074 由 hotplug hook 单独固定 ch36。
-#   - IPQ6018 集成 5G 必须走 5.8G 信道（ch149-165），不能用 ch36（5.2G 段）。
-#     phy 自带 default_channel=100（DFS 段），country 为空时 AP 起不来，
-#     故此处显式固定 ch149（5.8G），不用 auto，避免 hostapd 选到 DFS/5.2G。
 case "$board" in
-jdcloud,re-ss-01)
-	# SS-01：2 射频，无 QCN9074，以下无 5.2G 相关设置。
+jdcloud,re-ss-01|jdcloud,re-cs-02|jdcloud,re-cs-02-gwrt2)
 	ucidef_set_wireless_mac_count 2g 7
 	ucidef_set_wireless_mac_count 5g 7
-	ucidef_set_wireless_channel 5g 149
-	;;
-jdcloud,re-cs-02|jdcloud,re-cs-02-gwrt2)
-	# CS-02：3 射频。集成 5G 走 5.8G（ch149）；
-	# PCI QCN9074（5.2G）由 hotplug hook 单独固定 ch36，覆盖 band 默认。
-	ucidef_set_wireless_mac_count 2g 7
-	ucidef_set_wireless_mac_count 5g 7
-	ucidef_set_wireless_channel 5g 149
+	# 2026-09-21：5G 频段信道交给 hostapd 自动选择。
+	#   不能不管：phy 自带的 default_channel 是 **100（DFS 段）**，而 country 为空
+	#   （world/00）时 ch36-64 是 disabled、ch100-144 是 radar/DFS，AP 模式直接失败：
+	#     hostapd: Frequency 5500 is not allowed (seg0)
+	#     hostapd: Could not select hw_mode and channel. (-3) → 首启 5G 起不来
+	#   world 域下唯一可用区间是 ch149-169（无 radar），所以用 auto 让 hostapd 自选。
+	#   注：5.2G（QCN9074）由 hotplug hook 单独固定为 ch36，会覆盖此 band 级默认值。
+	ucidef_set_wireless_channel 5g auto
 	;;
 esac
 
