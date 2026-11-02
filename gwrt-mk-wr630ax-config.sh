@@ -34,7 +34,7 @@ TOP=$(cd "$(dirname "$0")" && pwd)
 cd "$TOP"
 
 VER=${VER:-$(date +%y%m%d)-01}
-OUT=${OUT:-$TOP/configs/config.mt7981-wr630ax-$VER}
+OUT=${OUT:-$TOP/config.mt7981-wr630ax-$VER}
 BAK="$TOP/.config.bak-$(date +%Y%m%d-%H%M%S)"
 
 echo "==> 输出: $OUT"
@@ -61,6 +61,10 @@ CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_h3c_magic-nx30-pro=y
 CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_xiaomi_mi-router-ax3000t=y
 CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_xiaomi_mi-router-ax3000t-ubootmod=y
 CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_rax3000m=y
+# --- 2026-11-02 新增：同为 MT7981B 的 Cudy TR3000 / GL.iNet GL-MT3000 ---
+CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cudy_tr3000-v1=y
+CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cudy_tr3000-256mb-v1=y
+CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-mt3000=y
 CONFIG_TARGET_ROOTFS_PARTSIZE=48
 CONFIG_TARGET_ROOTFS_SQUASHFS=y
 CONFIG_TARGET_ROOTFS_INITRAMFS=y
@@ -130,10 +134,38 @@ for p in \
 	gwrt-mesh-led \
 	gwrt-mesh-apmode \
 	kmod-tun \
+	kmod-mtd-rw \
 	easytier \
 	luci-app-easytier ; do
 	add_pkg "$p"
 done
+
+# kmod-mtd-rw（package/kernel/mtd-rw）: 解锁 DTS 里 `read-only` 的 MTD 分区
+# （filogic 机型的 Factory 分区就是 read-only）。开机自动
+# `insmod mtd-rw i_want_a_brick=1`，之后 `mtd write Factory ...` 才可用。
+# 2026-11-02 360T7 校准丢失事故后补入，详见
+# docs/WORKLOG-20261102-360t7-ubi-migration-factory-bdf.md §6.3
+
+echo "[wr630ax] 代理 / 任务管理 / （终端已在上面）:"
+# openclash 依赖 dnsmasq-full（与预装的 dnsmasq 互斥，必须先取消 dnsmasq）
+unset_pkg dnsmasq
+for p in \
+	luci-app-openclash \
+	dnsmasq-full \
+	taskd \
+	luci-lib-taskd \
+	luci-app-harbor-file ; do
+	add_pkg "$p"
+	done
+# - luci-app-openclash (feeds/luci/applications/luci-app-openclash v0.48.002)
+#   DEPENDS 自动拉: bash curl ca-bundle ip-full unzip ruby ruby-yaml
+#   kmod-inet-diag kmod-nft-tproxy kmod-tun luci-compat
+#   dnsmasq-full 必须显式选（要替换掉预装的 dnsmasq）
+# - taskd + luci-lib-taskd = “任务管理”（Simple Task Manager），
+#   luci-lib-taskd 会再拉 luci-lib-xterm
+# - luci-app-harbor-file = “资源管理器”（package/luci-app-harbor-file，DEPENDS 只 +luci-compat）
+# - 终端: ttyd + luci-app-ttyd（已在上面主题配套组）
+# - SSR: gwrt-ssr-plus-luci 已在上面主题配套组
 
 echo "[wr630ax] 主题依赖（CoreMark 选项 / 下载与解压 / 测温）:"
 for p in \
@@ -166,6 +198,15 @@ grep -q '^CONFIG_COREMARK_ENABLE_MULTITHREADING=y$' "$TOP/.config" || echo 'CONF
 # TurboACC：软件流量卸载（FW3）+ 全锥 NAT1（xt_FULLCONENAT/nft-fullcone）+ MTK WED（mt7915e wed_enable=Y），拥塞控制保持 CUBIC
 for opt in luci-app-turboacc_INCLUDE_OFFLOADING luci-app-turboacc_INCLUDE_NFT_FULLCONE; do
 	grep -q "^CONFIG_PACKAGE_$opt=y$" "$TOP/.config" || echo "CONFIG_PACKAGE_$opt=y" >>"$TOP/.config"
+done
+# mac80211 特性与已知好版本（261025-45）对齐：defconfig 曾把这两项丢掉，
+# 会造成 mac80211.ko 与 mt76 驱动 ABI 不一致 → mt798x-wmac probe -12、无 WiFi
+for opt in PACKAGE_MAC80211_DEBUGFS PACKAGE_MAC80211_MESH; do
+	if grep -q "^# CONFIG_${opt} is not set$" "$TOP/.config"; then
+		sed -i "s|^# CONFIG_${opt} is not set$|CONFIG_${opt}=y|" "$TOP/.config"
+	elif ! grep -q "^CONFIG_${opt}=y$" "$TOP/.config"; then
+		echo "CONFIG_${opt}=y" >>"$TOP/.config"
+	fi
 done
 
 echo "[wr630ax] zram / NAND 工具链:"
@@ -242,6 +283,6 @@ cp "$TOP/.config" "$OUT"
 echo
 echo "==> 完成: $OUT"
 echo "==> 目标设备:"
-grep -E '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_(comfast_cf-wr630ax|qihoo_360t7|h3c_magic|xiaomi_mi-router-ax3000t|cmcc_rax3000m)' "$OUT" || true
+grep -E '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_(comfast_cf-wr630ax|qihoo_360t7|h3c_magic|xiaomi_mi-router-ax3000t|cmcc_rax3000m|cudy_tr3000|glinet_gl-mt3000)' "$OUT" || true
 echo "==> 体积/布局:"
 grep -E '^CONFIG_TARGET_(ROOTFS_PARTSIZE|MULTI_PROFILE|PER_DEVICE_ROOTFS|ROOTFS_INITRAMFS)=' "$OUT" || true

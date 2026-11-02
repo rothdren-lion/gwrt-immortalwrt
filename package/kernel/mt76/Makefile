@@ -629,6 +629,14 @@ endef
 
 define KernelPackage/mt7981-firmware/install
 	$(INSTALL_DIR) $(1)/lib/firmware/mediatek
+# TODO-B (2026-11-02) 见 docs/WORKLOG-20261102-360t7-ubi-migration-factory-bdf.md
+#   下面 cp 列表缺 firmware/mt7981_eeprom_mt7976_dbdc.bin。
+#   Factory 分区一旦为空，mt7981+mt7976 机型（360T7 / cf-wr630ax / TR3000 / GL-MT3000）会：
+#     eeprom load fail, use default bin
+#     Direct firmware load for mediatek/mt7981_eeprom_mt7976_dbdc.bin failed with error -2
+#     probe with driver mt798x-wmac failed with error -12   ->  完全没有 radio
+#   下次编译时把该文件加进下面两句之间即可（当前故意未启用）：
+#		$(PKG_BUILD_DIR)/firmware/mt7981_eeprom_mt7976_dbdc.bin \
 	cp \
 		$(PKG_BUILD_DIR)/firmware/mt7981_wa.bin \
 		$(PKG_BUILD_DIR)/firmware/mt7981_wm.bin \
