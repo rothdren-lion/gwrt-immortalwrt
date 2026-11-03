@@ -83,6 +83,11 @@ jobs:
         run: |
           ./scripts/feeds update -a
           ./scripts/feeds install -a
+          # python3 compiles Modules/_ctypes against libffi headers, but only
+          # python3-ctypes carries the libffi dependency, so a fresh build can
+          # compile the interpreter before libffi is staged -> "ffi.h not found".
+          sed -i 's|^  DEPENDS:=+libpython3$|  DEPENDS:=+libpython3 +libffi|' \
+              feeds/packages/lang/python/python3/Makefile
 
       - name: Generate config
         run: |
