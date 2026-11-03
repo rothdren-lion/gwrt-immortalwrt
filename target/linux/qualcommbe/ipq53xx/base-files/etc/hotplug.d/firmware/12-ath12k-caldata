@@ -10,6 +10,10 @@ case "$FIRMWARE" in
 	jdcloud,re-cs-06)
 		caldata_extract_mmc "0:ART" 0x1000 0xf800
 		;;
+	gl.inet,gl-be6500|\
+	xiaomi,be6500)
+		caldata_extract "0:art" 0x1000 0x20000
+		;;
 	gl.inet,gl-be9300)
 		caldata_extract_mmc "0:ART" 0x1000 0x20000
 		;;
@@ -19,6 +23,12 @@ case "$FIRMWARE" in
 	case "$board" in
 	jdcloud,re-cs-06)
 		caldata_extract_mmc "0:ART" 0x58800 0x2d000
+		;;
+	gl.inet,gl-be6500)
+		caldata_extract "0:art" 0x58800 0x18800
+		;;
+	xiaomi,be6500)
+		caldata_extract "0:art" 0x26800 0x2d000
 		;;
 	gl.inet,gl-be9300)
 		# dualmac QCN9274: cal block is 0x27800 long (verified

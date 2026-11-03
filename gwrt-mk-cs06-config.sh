@@ -28,7 +28,7 @@ SRC=${SRC:-$TOP/config.cs02-gwrt2-261021-04}
 VER=${VER:-261026-01}
 ARG1=${1:-}
 case "$ARG1" in
-	"") OUT=$TOP/config.cs06-$VER ;;
+	"") OUT=${OUT:-$TOP/config.cs06-$VER} ;;
 	*/)  OUT=$ARG1/config.cs06-$VER ;;
 	*)   if [ -d "$ARG1" ]; then OUT=$ARG1/config.cs06-$VER; else OUT=$ARG1; fi ;;
 esac

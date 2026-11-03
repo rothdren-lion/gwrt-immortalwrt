@@ -80,6 +80,7 @@ rsync + commit + push）。本地备份编译步骤见 `docs/WORKLOG-20261026-jd
 | `gwrt-mk-cp02-config.sh` / `gwrt-build-cp02.sh` | MT7621 鲁班 RE-CP-02 最低 mesh 配置生成器 + 本地编译脚本（主走 GitHub CI） |
 | `gwrt-mk-pzl8-config.sh` | CMCC PZ-L8（PL08）IPQ5018 预设，mesh 子AP + easytier 全家桶 |
 | `gwrt-mk-nezha-config.sh` | 京东云 AX3000（羿哪吒 RE-CS-03）IPQ5018 eMMC 预设，全插件，mesh 子AP |
+| `gwrt-check-target.sh` | 预设/`.config` 的 SoC 归属校验（一个预设只允许一个 board）；`--list` 打印对照表 |
 | `target/linux/mediatek/dts/mt7981b-comfast-cf-wr630ax*.dts` | XINGLOO 设备树（含 512M 变体） |
 | `target/linux/mediatek/image/filogic.mk` | 设备定义（`comfast_cf-wr630ax*`、`qihoo_360t7*`） |
 | `package/gwrt-device-defaults/` | 首启默认值（LAN IP、SSID、wifiroam、防火墙、APK 预置） |
@@ -89,6 +90,7 @@ rsync + commit + push）。本地备份编译步骤见 `docs/WORKLOG-20261026-jd
 | `package/gwrt-theme/luci-theme-gwrt/` | gwrt 主题（首页/温度/拓扑/mesh 行） |
 | `gwrt-theme-V3/` | 主题源码（同步到 `package/gwrt-theme/`） |
 | `docs/GWRT-MESH.md` | mesh 设计、协议、APP 命令契约、验证清单 |
+| `docs/GWRT-CI-PRESETS.md` | 预设 ↔ SoC 序列（board/subtarget/device）对照表，CI 防串台规则 |
 | `bin-wr630ax-<ver>/`、`bin-360t7-<ver>/` | 每版归档镜像（只保留最新） |
 
 ---

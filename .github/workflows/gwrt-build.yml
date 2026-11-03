@@ -61,7 +61,13 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib gettext git libncurses-dev libssl-dev python3-setuptools rsync unzip zlib1g-dev file wget swig xz-utils
+          sudo apt-get install -y build-essential clang llvm flex bison g++ gawk gcc-multilib g++-multilib gettext git libncurses-dev libssl-dev python3-setuptools rsync unzip zlib1g-dev file wget swig xz-utils
+          # bpf.mk (daed) needs unversioned llvm tools in PATH
+          LLVM_BIN="$(dirname "$(readlink -f "$(command -v clang)")")"
+          for t in llvm-strip llc opt llvm-dis; do
+            [ -x "$LLVM_BIN/$t" ] && sudo ln -sf "$LLVM_BIN/$t" "/usr/local/bin/$t"
+          done
+          command -v llvm-strip && llvm-strip --version | head -1
 
       - name: Cache downloads
         uses: actions/cache@v4
@@ -83,9 +89,7 @@ jobs:
         run: |
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          # python3 compiles Modules/_ctypes against libffi headers, but only
-          # python3-ctypes carries the libffi dependency, so a fresh build can
-          # compile the interpreter before libffi is staged -> "ffi.h not found".
+          # python3-base 要先编 libffi 才有 ffi.h
           sed -i 's|^  DEPENDS:=+libpython3$|  DEPENDS:=+libpython3 +libffi|' \
               feeds/packages/lang/python/python3/Makefile
 
@@ -114,14 +118,12 @@ jobs:
             nezha) OUT=.config VER="$VER" sh gwrt-mk-nezha-config.sh ;;
             bdy-g98-direct) OUT=.config VER="$VER" BOOT=direct sh gwrt-mk-bdy-g98-config.sh ;;
             bdy-g98-uefi) OUT=.config VER="$VER" BOOT=uefi sh gwrt-mk-bdy-g98-config.sh ;;
-            # MT7981 全家桶：XINGLOO AX3000(+512m) / qihoo 360T7(+ubi) / H3C NX30 Pro /
-            #   Xiaomi AX3000T(+ubootmod) / CMCC RAX3000M / Cudy TR3000 256mb / GL.iNet GL-MT3000
-            # 插件：openclash + ssr + taskd(任务管理) + harbor-file(资源管理器) + ttyd(终端)
-            #   + kmod-mtd-rw + gwrt-agent/mesh/theme
             mt7981) OUT=.config GWRT_NO_SELF_DEFCONFIG=1 VER="$VER" sh gwrt-mk-xingloo-ax3000-config.sh ;;
             *) echo "unknown device preset: ${{ inputs.device }}"; exit 1 ;;
           esac
           make defconfig
+          # 一个预设只允许一个 SoC 序列（多 board = make world 串台）
+          sh gwrt-check-target.sh .config "${{ inputs.device }}"
           grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)|^CONFIG_VERSION_NUMBER|^CONFIG_PACKAGE_(gwrt-agent|gwrt-mesh-apmode|gwrt-device-defaults|ucode-mod-socket)' .config
 
       - name: Build firmware
