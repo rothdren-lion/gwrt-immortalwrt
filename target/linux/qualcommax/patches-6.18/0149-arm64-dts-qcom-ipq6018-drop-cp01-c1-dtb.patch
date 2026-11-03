@@ -1,0 +1,21 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: GWRT <gwrt@local>
+Date: Tue, 4 Nov 2026 10:00:00 +0800
+Subject: [PATCH] arm64: dts: qcom: drop IPQ6018 CP01-C1 reference board DTB
+
+ipq6018-cp01-c1 is Qualcomm's IPQ6018 reference/EVK board, not a product
+we ship, and "make dtbs" builds it unconditionally. It does not include
+the UNIPHY PCS nodes that the ipq6018 GCC clock inputs reference, so it
+fails phandle resolution and takes the whole qualcommax dtbs build with
+it. Drop its DTB.
+
+--- a/arch/arm64/boot/dts/qcom/Makefile
++++ b/arch/arm64/boot/dts/qcom/Makefile
+@@ -20,7 +20,6 @@ dtb-$(CONFIG_ARCH_QCOM)	+= ipq5332-rdp474.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= ipq5332-rdp474.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= ipq5424-rdp466.dtb
+-dtb-$(CONFIG_ARCH_QCOM)	+= ipq6018-cp01-c1.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= ipq8074-hk01.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= ipq8074-hk10-c1.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= ipq8074-hk10-c2.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= ipq9574-rdp418.dtb
