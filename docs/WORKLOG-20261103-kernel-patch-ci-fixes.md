@@ -186,3 +186,50 @@ bin-be9300-261103-01/
 4. 同步上游目录时用 `--delete` 前先备份；`rsync -a` 会保留旧 mtime，
    导致 `tmp/.targetinfo` 等缓存不刷新（需要 `touch`）。
 5. 构建树无 `.git` 时永远记得传 `REVISION`，否则 `~unknown` 会在 `package/base-files` 炸。
+
+---
+
+## 7. 追加：mac80211 补丁互相打架（第二轮 CI 失败）
+
+内核补丁问题解决后，cp02 构建推进到用户态包阶段，卡在：
+
+```
+patching file net/mac80211/debugfs.c
+9 out of 9 hunks FAILED
+Patch failed! .../package/kernel/mac80211/patches/build/410-mac80211-retain-native-debugfs-on-new-kernels.patch
+ERROR: package/kernel/mac80211 failed to build (build variant: regular).
+```
+
+### 原因
+
+CI 仓的 `package/kernel/mac80211/patches/` 里同时存在**同一编号、互斥**的两支补丁：
+
+| 补丁 | 做法 |
+|---|---|
+| `build/410-mac80211-convert-short-fops-to-debugfs-files.patch` | 把 `debugfs_short_fops` 改写成 `struct file_operations` |
+| `build/410-mac80211-retain-native-debugfs-on-new-kernels.patch` | 保留原生 `debugfs_short_fops`（6.14+ 新方案） |
+
+同前缀排序时 `convert-short-fops` 先执行，已经把代码改走，`retain-native-debugfs`
+的上下文全部消失 → 9/9 hunk 失败。
+
+另外还有 4 支旧变体与主树新版重复（同样“先老后新”导致后者失败）：
+
+- `ath11k/949-wifi-ath11k-fix-monitor-rx-pktlen.patch`（新版：`949-...-scope-IPQ-monitor-tail-quirk`）
+- `ath11k/950-wifi-ath11k-implement-CE-interrupt-enable-disable-for-AHB.patch`（新版 `950-01-...`）
+- `ath11k/984-ath11k-workaround-for-memory-leak.patch`（新版：`984-...-use-atomic-RX-buffer-allocations`）
+- `ath12k/100-ath12k-prevent-ltssm-startup-crash.patch`（新版 `100-01-...`）
+- `subsys/311-cfg80211-allow-concurrent-AP-operation-on-DFS-channe.patch`（新版 `314-...`）
+
+### 修复（提交 `908feff`、`b990abe`）
+
+删除上述 6 个被取代的旧补丁，保留主树里的新版本。
+验证方式：把 `package/kernel/mac80211/patches/` 按
+`build→subsys→ath→ath5k→ath9k→ath10k→ath11k→ath12k→rt2x00→mt7601u→mwl→brcm→rtl`
+顺序整体打到 `backports-7.2` 上，**0 rejects**。
+
+顺带对 `nftables-1.1.6`、`iproute2-6.18.0` 也做了同样的全量 patch 验证（均为 0 rejects）。
+
+### 教训
+
+同一目录下的补丁编号必须唯一；编号重复时按字典序执行，
+“老变体 + 新变体”共存必然导致后者全 hunk 失败。
