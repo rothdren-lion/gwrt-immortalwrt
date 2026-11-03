@@ -2,6 +2,7 @@
 # gwrt-check-target.sh — 一个预设只允许一个 SoC 序列（board/subtarget/device）
 # 用法: sh gwrt-check-target.sh [--pre] [.config] [preset] | --list
 set -u
+set -f	# 表格里有 "any"/通配字符，禁止路径名展开
 
 PRESETS='
 # preset          series         board        subtarget  profile
@@ -13,7 +14,7 @@ cs08              ipq53xx        qualcommbe   ipq53xx    DEVICE_jdcloud_re-cs-08
 pzl8              ipq5018        qualcommax   ipq50xx    DEVICE_cmcc_pz-l8
 nezha             ipq5018        qualcommax   ipq50xx    DEVICE_jdcloud_ax3000
 cp02              mt7621         ramips       mt7621    DEVICE_jdcloud_re-cp-02
-mt7981            mt7981         mediatek     filogic    *
+mt7981            mt7981         mediatek     filogic    any
 bdy-g98-direct    rk3588         rockchip     armv8      DEVICE_bdy_g98
 bdy-g98-uefi      arm64-efi      armsr        armv8      DEVICE_generic
 '
@@ -111,7 +112,7 @@ if [ -n "$PRESET" ]; then
 		die "预设 $PRESET 属 $series 序列，应编 $2，实际编 $board（配置串台）"
 	[ "$sub" = "$3" ] ||
 		die "预设 $PRESET 应编 $2/$3，实际 $board/$sub"
-	if [ "$4" != "*" ] && [ "$PRE" -eq 0 ]; then
+	if [ "$4" != "any" ] && [ "$PRE" -eq 0 ]; then
 		[ "$prof" = "$4" ] ||
 			die "预设 $PRESET 应编 profile $4，实际 '${prof:-<空>}'"
 	fi
