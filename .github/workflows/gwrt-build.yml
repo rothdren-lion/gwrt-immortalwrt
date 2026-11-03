@@ -24,6 +24,10 @@ on:
         description: 'Version (YYMMDD-NN), empty = today-01'
         required: false
         default: ''
+      model:
+        description: 'Single model (e.g. xingloo_ax3000), empty = all devices of the preset'
+        required: false
+        default: ''
       release:
         description: 'Publish images to GitHub Releases'
         required: false
@@ -121,6 +125,17 @@ jobs:
             mt7981) OUT=.config GWRT_NO_SELF_DEFCONFIG=1 VER="$VER" sh gwrt-mk-xingloo-ax3000-config.sh ;;
             *) echo "unknown device preset: ${{ inputs.device }}"; exit 1 ;;
           esac
+          # 只编一个型号：保留匹配的 DEVICE，其余删掉
+          if [ -n "${{ inputs.model }}" ]; then
+            M="${{ inputs.model }}"
+            grep -qE "^CONFIG_TARGET_DEVICE_.*_DEVICE_${M}=y$" .config || {
+              echo "ERROR: model '$M' not in preset '${{ inputs.device }}'"
+              grep -E '^CONFIG_TARGET_DEVICE_' .config | head -20
+              exit 1
+            }
+            sed -i "/^CONFIG_TARGET_DEVICE_.*_DEVICE_/ { /_DEVICE_${M}=y$/!d }" .config
+            echo "model filter: $M"
+          fi
           make defconfig
           # 一个预设只允许一个 SoC 序列（多 board = make world 串台）
           sh gwrt-check-target.sh .config "${{ inputs.device }}"
@@ -150,7 +165,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: gwrt-${{ inputs.device }}-${{ env.VER }}
+          name: gwrt-${{ inputs.device }}-${{ inputs.model || 'all' }}-${{ env.VER }}
           path: out/
           retention-days: 30
 
@@ -158,7 +173,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: gwrt-${{ inputs.device }}-${{ env.VER }}-logs
+          name: gwrt-${{ inputs.device }}-${{ inputs.model || 'all' }}-${{ env.VER }}-logs
           path: logs/
           if-no-files-found: ignore
           retention-days: 7
@@ -168,6 +183,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "gwrt-${{ inputs.device }}-${{ env.VER }}" out/* \
-            --title "GWRT ${{ inputs.device }} ${{ env.VER }}" \
+          gh release create "gwrt-${{ inputs.device }}-${{ inputs.model || 'all' }}-${{ env.VER }}" out/* \
+            --title "GWRT ${{ inputs.device }} ${{ inputs.model }} ${{ env.VER }}" \
             --notes "自动构建: ${{ inputs.device }} @ ${{ github.sha }}"

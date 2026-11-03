@@ -26,3 +26,5 @@ sh gwrt-check-target.sh .config cs06                      # defconfig 后（CI �
 ```
 
 新增预设：生成器支持 `OUT=` → `PRESETS` 加一行 → workflow 的 `options` 和 `case` 各加一条。
+
+单型号编译：`-f device=mt7981 -f model=xingloo_ax3000`（只保留该型号的 DEVICE，产物只含它）。
