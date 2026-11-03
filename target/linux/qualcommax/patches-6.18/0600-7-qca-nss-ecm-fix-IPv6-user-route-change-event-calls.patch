@@ -15,8 +15,8 @@ Signed-off-by: Murat Sezgin <msezgin@codeaurora.org>
 
 --- a/net/ipv6/route.c
 +++ b/net/ipv6/route.c
-@@ -3930,10 +3930,6 @@ int ip6_route_add(struct fib6_config *cf
- 		return PTR_ERR(rt);
+@@ -3981,10 +3981,6 @@ int ip6_route_add(struct fib6_config *cf
+ 		return err;
  
  	err = __ip6_ins_rt(rt, &cfg->fc_nlinfo, extack);
 -	if (!err)
@@ -26,7 +26,7 @@ Signed-off-by: Murat Sezgin <msezgin@codeaurora.org>
  	fib6_info_release(rt);
  
  	return err;
-@@ -3955,9 +3951,6 @@ static int __ip6_del_rt(struct fib6_info
+@@ -4006,9 +4002,6 @@ static int __ip6_del_rt(struct fib6_info
  	err = fib6_del(rt, info);
  	spin_unlock_bh(&table->tb6_lock);
  
@@ -36,24 +36,24 @@ Signed-off-by: Murat Sezgin <msezgin@codeaurora.org>
  out:
  	fib6_info_release(rt);
  	return err;
-@@ -4569,6 +4562,10 @@ int ipv6_route_ioctl(struct net *net, un
+@@ -4619,6 +4612,10 @@ int ipv6_route_ioctl(struct net *net, un
  		break;
  	}
- 	rtnl_unlock();
+ 
 +	if (!err)
 +		atomic_notifier_call_chain(&ip6route_chain,
-+					   (cmd == SIOCADDRT) ? RTM_NEWROUTE : RTM_DELROUTE, &cfg);
++						(cmd == SIOCADDRT) ? RTM_NEWROUTE : RTM_DELROUTE, &cfg);
 +
  	return err;
  }
  
-@@ -5593,11 +5590,17 @@ static int inet6_rtm_delroute(struct sk_
+@@ -5682,11 +5679,17 @@ static int inet6_rtm_delroute(struct sk_
  	}
  
- 	if (cfg.fc_mp)
+ 	if (cfg.fc_mp) {
 -		return ip6_route_multipath_del(&cfg, extack);
 +		err = ip6_route_multipath_del(&cfg, extack);
- 	else {
+ 	} else {
  		cfg.fc_delete_all_nh = 1;
 -		return ip6_route_del(&cfg, extack);
 +		err = ip6_route_del(&cfg, extack);
@@ -61,13 +61,13 @@ Signed-off-by: Murat Sezgin <msezgin@codeaurora.org>
 +
 +	if (!err)
 +		atomic_notifier_call_chain(&ip6route_chain,
-+					   RTM_DELROUTE, &cfg);
++						RTM_DELROUTE, &cfg);
 +
 +	return err;
  }
  
  static int inet6_rtm_newroute(struct sk_buff *skb, struct nlmsghdr *nlh,
-@@ -5614,9 +5617,15 @@ static int inet6_rtm_newroute(struct sk_
+@@ -5703,9 +5706,15 @@ static int inet6_rtm_newroute(struct sk_
  		cfg.fc_metric = IP6_RT_PRIO_USER;
  
  	if (cfg.fc_mp)

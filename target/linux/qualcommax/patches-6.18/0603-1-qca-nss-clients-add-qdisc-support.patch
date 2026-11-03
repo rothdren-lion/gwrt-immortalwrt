@@ -1,38 +1,41 @@
 --- a/drivers/net/ifb.c
 +++ b/drivers/net/ifb.c
-@@ -151,6 +151,31 @@ resched:
+@@ -151,6 +151,34 @@ resched:
  
  }
  
 +void ifb_update_offload_stats(struct net_device *dev, struct pcpu_sw_netstats *offload_stats)
 +{
 +	struct ifb_dev_private *dp;
-+   struct ifb_q_private *txp;
++	struct ifb_q_private *txp;
 +
-+   if (!dev || !offload_stats) {
-+   	return;
-+   }
++	if (!dev || !offload_stats) {
++		return;
++	}
 +
-+   if (!(dev->priv_flags_ext & IFF_EXT_IFB)) {
-+       return;
-+   }
++	if (!(dev->priv_flags_ext & IFF_EXT_IFB)) {
++		return;
++	}
 +
-+   dp = netdev_priv(dev);
-+   txp = dp->tx_private;
++	dp = netdev_priv(dev);
++	txp = dp->tx_private;
 +
-+   u64_stats_update_begin(&txp->rx_stats.sync);
-+   txp->rx_stats.packets += u64_stats_read(&offload_stats->rx_packets);
-+   txp->rx_stats.bytes += u64_stats_read(&offload_stats->rx_bytes);
-+   txp->tx_stats.packets += u64_stats_read(&offload_stats->tx_packets);
-+   txp->tx_stats.bytes += u64_stats_read(&offload_stats->tx_bytes);
-+   u64_stats_update_end(&txp->rx_stats.sync);
++	u64_stats_update_begin(&txp->rx_stats.sync);
++	txp->rx_stats.packets += u64_stats_read(&offload_stats->rx_packets);
++	txp->rx_stats.bytes += u64_stats_read(&offload_stats->rx_bytes);
++	u64_stats_update_end(&txp->rx_stats.sync);
++
++	u64_stats_update_begin(&txp->tx_stats.sync);
++	txp->tx_stats.packets += u64_stats_read(&offload_stats->tx_packets);
++	txp->tx_stats.bytes += u64_stats_read(&offload_stats->tx_bytes);
++	u64_stats_update_end(&txp->tx_stats.sync);
 +}
 +EXPORT_SYMBOL(ifb_update_offload_stats);
 +
  static void ifb_stats64(struct net_device *dev,
  			struct rtnl_link_stats64 *stats)
  {
-@@ -325,6 +350,7 @@ static void ifb_setup(struct net_device
+@@ -325,6 +353,7 @@ static void ifb_setup(struct net_device
  	dev->flags |= IFF_NOARP;
  	dev->flags &= ~IFF_MULTICAST;
  	dev->priv_flags &= ~IFF_TX_SKB_SHARING;
@@ -42,7 +45,7 @@
  	dev->needs_free_netdev = true;
 --- a/include/linux/netdevice.h
 +++ b/include/linux/netdevice.h
-@@ -4713,6 +4713,15 @@ void dev_uc_flush(struct net_device *dev
+@@ -5051,6 +5051,15 @@ void dev_uc_flush(struct net_device *dev
  void dev_uc_init(struct net_device *dev);
  
  /**
@@ -58,7 +61,7 @@
   *  __dev_uc_sync - Synchronize device's unicast list
   *  @dev:  device to sync
   *  @sync: function to call if address should be added
-@@ -5271,6 +5280,11 @@ static inline bool netif_is_failover_sla
+@@ -5618,6 +5627,11 @@ static inline bool netif_is_failover_sla
  	return dev->priv_flags & IFF_FAILOVER_SLAVE;
  }
  
@@ -72,9 +75,9 @@
  {
 --- a/include/uapi/linux/pkt_sched.h
 +++ b/include/uapi/linux/pkt_sched.h
-@@ -1209,4 +1209,248 @@ enum {
- 
- #define TCA_ETS_MAX (__TCA_ETS_MAX - 1)
+@@ -1280,4 +1280,248 @@ struct tc_dualpi2_xstats {
+ 	__u32 memory_limit;	/* Memory limit of both queues */
+ };
  
 +/* QCA NSS Clients Support - Start */
 +enum {
@@ -323,7 +326,7 @@
  #endif
 --- a/net/sched/sch_api.c
 +++ b/net/sched/sch_api.c
-@@ -314,6 +314,7 @@ struct Qdisc *qdisc_lookup(struct net_de
+@@ -316,6 +316,7 @@ struct Qdisc *qdisc_lookup(struct net_de
  out:
  	return q;
  }
@@ -331,7 +334,7 @@
  
  struct Qdisc *qdisc_lookup_rcu(struct net_device *dev, u32 handle)
  {
-@@ -2452,4 +2453,26 @@ static int __init pktsched_init(void)
+@@ -2544,4 +2545,26 @@ static int __init pktsched_init(void)
  	return 0;
  }
  
@@ -360,7 +363,7 @@
  subsys_initcall(pktsched_init);
 --- a/net/sched/sch_generic.c
 +++ b/net/sched/sch_generic.c
-@@ -1093,6 +1093,7 @@ static void __qdisc_destroy(struct Qdisc
+@@ -1110,6 +1110,7 @@ static void __qdisc_destroy(struct Qdisc
  
  	call_rcu(&qdisc->rcu, qdisc_free_cb);
  }
@@ -378,7 +381,7 @@
  	u32			limit;
  	const struct Qdisc_ops	*ops;
  	struct qdisc_size_table	__rcu *stab;
-@@ -782,6 +783,42 @@ static inline bool skb_skip_tc_classify(
+@@ -783,6 +784,42 @@ static inline bool skb_skip_tc_classify(
  	return false;
  }
  
@@ -421,7 +424,7 @@
  /* Reset all TX qdiscs greater than index of a device.  */
  static inline void qdisc_reset_all_tx_gt(struct net_device *dev, unsigned int i)
  {
-@@ -1422,4 +1459,9 @@ static inline void qdisc_synchronize(con
+@@ -1433,4 +1470,9 @@ static inline void qdisc_synchronize(con
  		msleep(1);
  }
  
@@ -433,7 +436,7 @@
  #endif
 --- a/include/linux/skbuff.h
 +++ b/include/linux/skbuff.h
-@@ -789,6 +789,7 @@ enum skb_tstamp_type {
+@@ -808,6 +808,7 @@ enum skb_tstamp_type {
   *	@offload_fwd_mark: Packet was L2-forwarded in hardware
   *	@offload_l3_fwd_mark: Packet was L3-forwarded in hardware
   *	@tc_skip_classify: do not classify packet. set by IFB device
@@ -441,7 +444,7 @@
   *	@tc_at_ingress: used within tc_classify to distinguish in/egress
   *	@redirected: packet was redirected by packet classifier
   *	@from_ingress: packet was redirected from the ingress path
-@@ -966,6 +967,9 @@ struct sk_buff {
+@@ -985,6 +986,9 @@ struct sk_buff {
  	__u8			tc_at_ingress:1;	/* See TC_AT_INGRESS_MASK */
  	__u8			tc_skip_classify:1;
  #endif
@@ -451,13 +454,3 @@
  	__u8			remcsum_offload:1;
  	__u8			csum_complete_sw:1;
  	__u8			csum_level:2;
---- a/include/linux/timer_types.h
-+++ b/include/linux/timer_types.h
-@@ -14,6 +14,7 @@ struct timer_list {
- 	unsigned long		expires;
- 	void			(*function)(struct timer_list *);
- 	u32			flags;
-+	unsigned long		cust_data;
- 
- #ifdef CONFIG_LOCKDEP
- 	struct lockdep_map	lockdep_map;

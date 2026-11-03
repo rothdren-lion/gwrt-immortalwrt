@@ -1,6 +1,6 @@
 --- a/drivers/net/vxlan/vxlan_core.c
 +++ b/drivers/net/vxlan/vxlan_core.c
-@@ -29,6 +29,20 @@
+@@ -31,6 +31,20 @@
  #include <net/vxlan.h>
  #include <net/nexthop.h>
  
@@ -21,7 +21,7 @@
  #if IS_ENABLED(CONFIG_IPV6)
  #include <net/ip6_tunnel.h>
  #include <net/ip6_checksum.h>
-@@ -260,6 +274,7 @@ static void __vxlan_fdb_notify(struct vx
+@@ -266,6 +280,7 @@ static void __vxlan_fdb_notify(struct vx
  {
  	struct net *net = dev_net(vxlan->dev);
  	struct sk_buff *skb;
@@ -29,61 +29,58 @@
  	int err = -ENOBUFS;
  
  	skb = nlmsg_new(vxlan_nlmsg_size(), GFP_ATOMIC);
-@@ -275,6 +290,10 @@ static void __vxlan_fdb_notify(struct vx
+@@ -281,6 +296,10 @@ static void __vxlan_fdb_notify(struct vx
  	}
  
  	rtnl_notify(skb, net, 0, RTNLGRP_NEIGH, NULL, GFP_ATOMIC);
 +	vfe.dev = vxlan->dev;
 +	vfe.rdst = rd;
-+	ether_addr_copy(vfe.eth_addr, fdb->eth_addr);
++	ether_addr_copy(vfe.eth_addr, fdb->key.eth_addr);
 +	atomic_notifier_call_chain(&vxlan_fdb_notifier_list, type, (void *)&vfe);
  	return;
  errout:
  	rtnl_set_sk_err(net, RTNLGRP_NEIGH, err);
-@@ -440,6 +459,18 @@ static struct vxlan_fdb *vxlan_find_mac_
+@@ -423,6 +442,15 @@ static struct vxlan_fdb *vxlan_find_mac(
  	return f;
  }
  
 +/* Find and update age of fdb entry corresponding to MAC. */
 +void vxlan_fdb_update_mac(struct vxlan_dev *vxlan, const u8 *mac, uint32_t vni)
 +{
-+	u32 hash_index;
-+
-+	hash_index = fdb_head_index(vxlan, mac, vni);
-+	spin_lock_bh(&vxlan->hash_lock[hash_index]);
++	spin_lock_bh(&vxlan->hash_lock);
 +	vxlan_find_mac_tx(vxlan, mac, vni);
-+	spin_unlock_bh(&vxlan->hash_lock[hash_index]);
++	spin_unlock_bh(&vxlan->hash_lock);
 +}
 +EXPORT_SYMBOL(vxlan_fdb_update_mac);
 +
  /* caller should hold vxlan->hash_lock */
  static struct vxlan_rdst *vxlan_fdb_find_rdst(struct vxlan_fdb *f,
  					      union vxlan_addr *ip, __be16 port,
-@@ -2541,6 +2572,9 @@ void vxlan_xmit_one(struct sk_buff *skb,
+@@ -2542,6 +2570,9 @@ void vxlan_xmit_one(struct sk_buff *skb,
  			goto out_unlock;
  		}
  
 +		/* Reset the skb_iif to Tunnels interface index */
 +		skb->skb_iif = dev->ifindex;
 +
- 		tos = ip_tunnel_ecn_encap(tos, old_iph, skb);
+ 		tos = ip_tunnel_ecn_encap(tos, ip_hdr(skb), skb);
  		ttl = ttl ? : ip4_dst_hoplimit(&rt->dst);
  		err = vxlan_build_skb(skb, ndst, sizeof(struct iphdr),
-@@ -2609,6 +2643,9 @@ void vxlan_xmit_one(struct sk_buff *skb,
- 		if (err < 0)
+@@ -2626,6 +2657,9 @@ void vxlan_xmit_one(struct sk_buff *skb,
  			goto tx_error;
+ 		}
  
 +		/* Reset the skb_iif to Tunnels interface index */
 +		skb->skb_iif = dev->ifindex;
 +
  		udp_tunnel6_xmit_skb(ndst, sock6->sock->sk, skb, dev,
  				     &saddr, &pkey->u.ipv6.dst, tos, ttl,
- 				     pkey->label, src_port, dst_port, !udp_sum);
+ 				     pkey->label, src_port, dst_port, !udp_sum,
 --- a/include/net/vxlan.h
 +++ b/include/net/vxlan.h
-@@ -353,6 +353,19 @@ struct vxlan_dev {
- 					 VXLAN_F_VNIFILTER         |    \
- 					 VXLAN_F_LOCALBYPASS)
+@@ -358,6 +358,19 @@ struct vxlan_dev {
+ 					 VXLAN_F_MC_ROUTE          |	\
+ 					 0)
  
 +/*
 + * Application data for fdb notifier event
