@@ -28,6 +28,14 @@ on:
         description: 'Single model (e.g. xingloo_ax3000), empty = all devices of the preset'
         required: false
         default: ''
+      images:
+        description: 'Artifact contents: all = firmware+manifest+buildinfo+apks, sysupgrade = only *sysupgrade* (one file)'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - sysupgrade
       release:
         description: 'Publish images to GitHub Releases'
         required: false
@@ -156,10 +164,15 @@ jobs:
         if: success()
         run: |
           mkdir -p out
-          find bin/targets -type f \( -name '*sysupgrade*' -o -name '*factory*' -o -name '*initramfs*' -o -name '*.manifest' -o -name 'sha256sums' \) -exec cp -v {} out/ \;
-          find bin/targets -maxdepth 3 -type f \( -name 'profiles.json' -o -name 'version.buildinfo' -o -name 'config.buildinfo' -o -name 'feeds.buildinfo' \) -exec cp -v {} out/ \;
-          find bin/packages -type f \( -name 'easytier*.apk' -o -name 'xray-core*.apk' -o -name 'sing-box*.apk' -o -name 'v2ray-geo*.apk' -o -name 'chinadns-ng*.apk' -o -name 'fdisk*.apk' -o -name 'kmod-inet-diag*.apk' -o -name 'luci-app-homeproxy*.apk' -o -name 'luci-i18n-homeproxy*.apk' \) -exec cp -v {} out/ \;
-          cp .config "out/config-${{ inputs.device }}-${{ env.VER }}"
+          if [ "${{ inputs.images }}" = "sysupgrade" ]; then
+            # 只要一个固件文件，省流量
+            find bin/targets -type f -name '*sysupgrade*' -exec cp -v {} out/ \;
+          else
+            find bin/targets -type f \( -name '*sysupgrade*' -o -name '*factory*' -o -name '*initramfs*' -o -name '*.manifest' -o -name 'sha256sums' \) -exec cp -v {} out/ \;
+            find bin/targets -maxdepth 3 -type f \( -name 'profiles.json' -o -name 'version.buildinfo' -o -name 'config.buildinfo' -o -name 'feeds.buildinfo' \) -exec cp -v {} out/ \;
+            find bin/packages -type f \( -name 'easytier*.apk' -o -name 'xray-core*.apk' -o -name 'sing-box*.apk' -o -name 'v2ray-geo*.apk' -o -name 'chinadns-ng*.apk' -o -name 'fdisk*.apk' -o -name 'kmod-inet-diag*.apk' -o -name 'luci-app-homeproxy*.apk' -o -name 'luci-i18n-homeproxy*.apk' \) -exec cp -v {} out/ \;
+            cp .config "out/config-${{ inputs.device }}-${{ env.VER }}"
+          fi
 
       - name: Upload artifact
         if: success()
