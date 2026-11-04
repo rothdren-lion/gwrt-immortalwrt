@@ -7,7 +7,6 @@ PKG_RELEASE:=1
 PKG_UNPACK:=true
 
 PKG_LICENSE:=LicenseRef-Qualcomm-Proprietary
-PKG_LICENSE_FILES:=ath12k/QCN9274/hw1.0/Notice.txt
 
 include $(INCLUDE_DIR)/package.mk
 
