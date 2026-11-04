@@ -1,0 +1,12 @@
+--- a/backport-include/linux/socket.h
++++ b/backport-include/linux/socket.h
+@@ -11,7 +11,8 @@
+ #define SOL_NFC		280
+ #endif
+ 
+-#if LINUX_VERSION_IS_LESS(6,19,0)
++/* 6.18.60 backported struct sockaddr_unsized into include/linux/socket.h */
++#if LINUX_VERSION_IS_LESS(6,19,0) && !LINUX_VERSION_IS_GEQ(6,18,60)
+ /**
+  * struct sockaddr_unsized - Unspecified size sockaddr for callbacks
+  * @sa_family: Address family (AF_UNIX, AF_INET, AF_INET6, etc.)
