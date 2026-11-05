@@ -42,8 +42,11 @@ OUT=${OUT:-$TOP/configs/config.an7581-$VER}
 BAK="$TOP/.config.bak-$(date +%Y%m%d-%H%M%S)"
 
 DEVICE=${DEVICE:-nokia_xg-040g-md-ubi}
+SUB=${SUB:-an7581}                 # an7581 / an7583
+WITH_OPENCLASH=${WITH_OPENCLASH:-0} # 1 = 带 OpenClash 面板
+WITH_SMB=${WITH_SMB:-0}             # 1 = 带 Samba4
 
-echo "==> 目标: $DEVICE"
+echo "==> 目标: $SUB / $DEVICE"
 echo "==> 输出: $OUT"
 
 # --- 0. 备份现有 .config（避免影响同树其它 profile）-------------------------
@@ -58,10 +61,10 @@ CONFIG_MODULES=y
 CONFIG_HAVE_DOT_CONFIG=y
 CONFIG_HOST_OS_LINUX=y
 CONFIG_TARGET_airoha=y
-CONFIG_TARGET_airoha_an7581=y
+CONFIG_TARGET_airoha_${SUB}=y
 CONFIG_TARGET_MULTI_PROFILE=y
 CONFIG_TARGET_PER_DEVICE_ROOTFS=y
-CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_${DEVICE}=y
+$( [ "$DEVICE" = all ] || echo "CONFIG_TARGET_DEVICE_airoha_${SUB}_DEVICE_${DEVICE}=y" )
 CONFIG_LINUX_6_18=y
 CONFIG_PACKAGE_luci=y
 CONFIG_LUCI_LANG_zh_Hans=y
@@ -71,6 +74,11 @@ cp "$OUT" "$TOP/.config"
 
 # --- 2. defconfig 展开出完整选项 -------------------------------------------
 make defconfig >/dev/null
+
+if [ "$DEVICE" = "all" ]; then
+	sed -i -E "s|^# (CONFIG_TARGET_DEVICE_airoha_${SUB}_DEVICE_[A-Za-z0-9_.-]+) is not set$|\\1=y|" "$TOP/.config"
+	echo "==> 全设备模式: $(grep -c "^CONFIG_TARGET_DEVICE_airoha_${SUB}_DEVICE_.*=y$" "$TOP/.config") 个设备"
+fi
 
 # --- 3. 追加选包 ------------------------------------------------------------
 add_pkg() {
@@ -177,6 +185,25 @@ for p in \
 	unset_pkg "$p"
 done
 
+if [ "${WITH_SMB}" = "1" ]; then
+	echo "[$SUB] Samba4:"
+	for p in \
+		samba4-server luci-app-samba4 \
+		kmod-fs-ext4 kmod-fs-exfat kmod-fs-vfat kmod-fs-ntfs3 kmod-fs-f2fs \
+		e2fsprogs f2fs-tools automount block-mount ; do
+		add_pkg "$p"
+	done
+fi
+
+if [ "${WITH_OPENCLASH}" = "1" ]; then
+	echo "[$SUB] OpenClash（面板+脚本，clash 内核运行期下载）:"
+	for p in \
+		luci-app-openclash dnsmasq-full bash curl ca-bundle unzip ruby ruby-yaml \
+		kmod-inet-diag kmod-nft-tproxy kmod-tun luci-compat ; do
+		add_pkg "$p"
+	done
+fi
+
 # --- 4. 再次 defconfig 并强制复检 --------------------------------------------
 make defconfig >/dev/null
 
@@ -184,10 +211,11 @@ make defconfig >/dev/null
 # 并进 .config，里面带 openclash / bandix-plus / coremark / ttyd / oaf。
 # 本固件要控体积，这些一律不留，defconfig 之后再清一遍并复检。
 echo "[an7581] defconfig 后复检（主题 fragment 带入的重包）:"
+OC_KEEP=""
+[ "${WITH_OPENCLASH}" = "1" ] && OC_KEEP="1"
 for p in \
 	openclash \
 	luci-app-openclash \
-	luci-app-bandix-plus \
 	bandix-plus \
 	coremark \
 	luci-app-ttyd \
@@ -197,6 +225,10 @@ for p in \
 	luci-app-oaf \
 	gecoosac \
 	luci-app-gecoosac ; do
+	case "$p" in
+		openclash|luci-app-openclash|kmod-tun|kmod-nft-tproxy|kmod-inet-diag)
+			[ -n "$OC_KEEP" ] && continue ;;
+	esac
 	unset_pkg "$p"
 done
 make defconfig >/dev/null
@@ -205,7 +237,7 @@ cp "$TOP/.config" "$OUT"
 
 echo
 echo "==> 完成: $OUT"
-echo "==> 设备: $(grep -c '^CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_.*=y$' "$OUT") 个"
+echo "==> 设备: $(grep -c "^CONFIG_TARGET_DEVICE_airoha_${SUB}_DEVICE_.*=y$" "$OUT") 个"
 echo "==> PON:  $(grep -E '^CONFIG_PACKAGE_(kmod-airoha|airoha-pon|luci-app-pon)' "$OUT" | tr '\n' ' ')"
 echo "==> 体积预算检查（下面是 .config 里仍为 y 的重包，实际体积以构建为准）:"
 grep -E '^CONFIG_PACKAGE_(gecoosac|openclash|docker|podman|kmod-wireguard)=y$' "$OUT" || echo "  重包均已排除"

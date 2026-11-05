@@ -21,6 +21,7 @@ on:
           - bdy-g98-uefi
           - mt7981
           - mt7986
+          - an758x
       version:
         description: 'Version (YYMMDD-NN), empty = today-01'
         required: false
@@ -133,6 +134,7 @@ jobs:
             bdy-g98-uefi) OUT=.config VER="$VER" BOOT=uefi sh gwrt-mk-bdy-g98-config.sh ;;
             mt7981) OUT=.config GWRT_NO_SELF_DEFCONFIG=1 VER="$VER" sh gwrt-mk-xingloo-ax3000-config.sh ;;
             mt7986) OUT=.config GWRT_NO_SELF_DEFCONFIG=1 VER="$VER" sh gwrt-mk-mt7986-config.sh ;;
+            an758x) OUT=.config VER="$VER" DEVICE=all WITH_OPENCLASH=1 WITH_SMB=1 sh gwrt-mk-an7581-config.sh ;;
             *) echo "unknown device preset: ${{ inputs.device }}"; exit 1 ;;
           esac
           # 只编一个型号：保留匹配的 DEVICE，其余删掉
