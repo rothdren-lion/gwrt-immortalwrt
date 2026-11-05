@@ -1,16 +1,6 @@
 include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/image.mk
 
-AIROHA_USB_STORAGE_PACKAGES := \
-  block-mount kmod-usb-storage kmod-usb-storage-uas \
-  kmod-fs-ext4 kmod-fs-vfat kmod-fs-exfat
-
-# eMMC boards keep the full MMC stack and get the storage tooling that makes
-# the eMMC volume usable as a data disk (partitioning, formatting, mounting).
-AIROHA_EMMC_STORAGE_PACKAGES := \
-  mmc-utils parted dosfstools f2fs-tools \
-  kmod-fs-ext4 kmod-fs-vfat kmod-fs-exfat
-
 loadaddr-$(CONFIG_TARGET_airoha_an7581) := 0x80200000
 loadaddr-$(CONFIG_TARGET_airoha_an7583) := 0x80200000
 loadaddr-$(CONFIG_TARGET_airoha_en7523) := 0x80200000

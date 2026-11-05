@@ -27,6 +27,7 @@ define Device/airoha_an7583-evb
   DEVICE_PACKAGES := aeonsemi-as21xxx-firmware kmod-leds-pwm \
 	kmod-pwm-airoha kmod-input-gpio-keys-polled
   DEVICE_DTS := an7583-evb
+  DEVICE_DTS_CONFIG := config@1
   IMAGE/sysupgrade.bin := append-kernel | pad-to 128k | append-rootfs | \
 	pad-rootfs | append-metadata
   ARTIFACT/preloader.bin := an7583-preloader rfb
@@ -54,18 +55,18 @@ define Device/nokia_xg-040g-mf-common
   PAGESIZE := 2048
   UBINIZE_OPTS := -E 5
   DEVICE_PACKAGES := kmod-phy-airoha-en8811h \
-	kmod-regulator-userspace-consumer kmod-usb-ledtrig-usbport kmod-usb3 \
-	kmod-airoha-en7572 kmod-airoha-xpon airoha-ponctl airoha-pond \
-	$(AIROHA_USB_STORAGE_PACKAGES)
+	kmod-regulator-userspace-consumer kmod-usb-ledtrig-usbport
 endef
 
 define Device/nokia_xg-040g-mf
   $(call Device/nokia_xg-040g-mf-common)
   DEVICE_DTS := an7583-nokia_xg-040g-mf
+  DEVICE_DTS_CONFIG := config@1
+  IMAGE_SIZE := 131968k
   KERNEL_SIZE := 8192k
   IMAGES += factory-kernel.bin factory-rootfs.bin
   IMAGE/factory-kernel.bin := append-kernel
-  IMAGE/factory-rootfs.bin := append-ubi
+  IMAGE/factory-rootfs.bin := append-ubi | check-size
   IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
 endef
 TARGET_DEVICES += nokia_xg-040g-mf
