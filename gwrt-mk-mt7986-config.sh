@@ -50,6 +50,8 @@ CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_netcore_n60=y
 CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_netcore_n60-pro=y
 CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_jdcloud_re-cp-03=y
 CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_clx_s20p=y
+CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_clx_s20l=y
+CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_clx_s20m=y
 CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-mt6000=y
 CONFIG_TARGET_ROOTFS_PARTSIZE=48
 CONFIG_TARGET_ROOTFS_SQUASHFS=y
@@ -307,6 +309,6 @@ fi
 echo
 echo "==> 完成: $OUT"
 echo "==> 目标设备 (MT7986):"
-grep -E '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_(netcore_n60|netcore_n60-pro|jdcloud_re-cp-03|clx_s20p|glinet_gl-mt6000)' "$OUT" || true
+grep -E '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_(netcore_n60|netcore_n60-pro|jdcloud_re-cp-03|clx_s20[pml]|glinet_gl-mt6000)' "$OUT" || true
 echo "==> 体积/布局:"
 grep -E '^CONFIG_TARGET_(ROOTFS_PARTSIZE|MULTI_PROFILE|PER_DEVICE_ROOTFS|ROOTFS_INITRAMFS)=' "$OUT" || true

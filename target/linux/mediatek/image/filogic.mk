@@ -2444,6 +2444,62 @@ define Device/clx_s20p
   ARTIFACT/gpt.bin := mt798x-gpt emmc
 endef
 TARGET_DEVICES += clx_s20p
+define Device/clx_s20l
+  DEVICE_VENDOR := CLX
+  DEVICE_MODEL := S20L
+  DEVICE_DTS := mt7986a-clx-s20l
+  DEVICE_DTS_DIR := ../dts
+  DEVICE_DTC_FLAGS := --pad 4096
+  DEVICE_DTS_LOADADDR := 0x43f00000
+  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7986-firmware mt7986-wo-firmware kmod-usb3 \
+	kmod-nvme kmod-nvme-fabrics nvme-cli \
+	automount e2fsprogs f2fsck mkf2fs
+  KERNEL_LOADADDR := 0x44000000
+  KERNEL := kernel-bin | gzip
+  KERNEL_INITRAMFS := kernel-bin | lzma | \
+	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | pad-to 64k
+  KERNEL_INITRAMFS_SUFFIX := -recovery.itb
+  IMAGES := sysupgrade.itb
+  IMAGE_SIZE := $$(shell expr 64 + $$(CONFIG_TARGET_ROOTFS_PARTSIZE))m
+  IMAGE/sysupgrade.itb := append-kernel | \
+	fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-static-with-rootfs | \
+	pad-rootfs | append-metadata
+  # GWRT 2026-10-09: 只出 gpt.bin + sysupgrade.itb；
+  # preloader.bin / bl31-uboot.fip 需要本树不存在的
+  # trusted-firmware-a-mt7986-emmc-ddr4 与 u-boot-mt7986_clx_s20p 变体，
+  # 且实测非必需（仅首次刷 uboot/救砖才用），故不再生成。
+  ARTIFACTS := gpt.bin
+  ARTIFACT/gpt.bin := mt798x-gpt emmc
+endef
+TARGET_DEVICES += clx_s20l
+define Device/clx_s20m
+  DEVICE_VENDOR := CLX
+  DEVICE_MODEL := S20M
+  DEVICE_DTS := mt7986a-clx-s20m
+  DEVICE_DTS_DIR := ../dts
+  DEVICE_DTC_FLAGS := --pad 4096
+  DEVICE_DTS_LOADADDR := 0x43f00000
+  DEVICE_PACKAGES := kmod-usb3 \
+	kmod-nvme kmod-nvme-fabrics nvme-cli \
+	automount e2fsprogs f2fsck mkf2fs
+  KERNEL_LOADADDR := 0x44000000
+  KERNEL := kernel-bin | gzip
+  KERNEL_INITRAMFS := kernel-bin | lzma | \
+	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | pad-to 64k
+  KERNEL_INITRAMFS_SUFFIX := -recovery.itb
+  IMAGES := sysupgrade.itb
+  IMAGE_SIZE := $$(shell expr 64 + $$(CONFIG_TARGET_ROOTFS_PARTSIZE))m
+  IMAGE/sysupgrade.itb := append-kernel | \
+	fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-static-with-rootfs | \
+	pad-rootfs | append-metadata
+  # GWRT 2026-10-09: 只出 gpt.bin + sysupgrade.itb；
+  # preloader.bin / bl31-uboot.fip 需要本树不存在的
+  # trusted-firmware-a-mt7986-emmc-ddr4 与 u-boot-mt7986_clx_s20p 变体，
+  # 且实测非必需（仅首次刷 uboot/救砖才用），故不再生成。
+  ARTIFACTS := gpt.bin
+  ARTIFACT/gpt.bin := mt798x-gpt emmc
+endef
+TARGET_DEVICES += clx_s20m
 
 define Device/jdcloud_re-cp-03
   DEVICE_VENDOR := JDCloud
