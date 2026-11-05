@@ -287,8 +287,6 @@ for p in \
 	nfs-kernel-server-v4 \
 	libuuid \
 	libblkid \
-	luci-app-nfs \
-	luci-i18n-nfs-zh-cn \
 	aria2 \
 	luci-app-aria2 \
 	luci-i18n-aria2-zh-cn \

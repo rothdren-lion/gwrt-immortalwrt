@@ -70,7 +70,9 @@ CONFIG_PACKAGE_luci=y
 CONFIG_LUCI_LANG_zh_Hans=y
 EOF
 
-cp "$OUT" "$TOP/.config"
+if [ "$OUT" != ".config" ] && [ "$OUT" != "$TOP/.config" ]; then
+	cp "$OUT" "$TOP/.config"
+fi
 
 # --- 2. defconfig 展开出完整选项 -------------------------------------------
 make defconfig >/dev/null
