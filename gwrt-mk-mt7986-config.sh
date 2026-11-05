@@ -267,7 +267,6 @@ done
 echo "[mt7986] NVMe / USB / 共享（eMMC 机型）:"
 for p in \
 	kmod-nvme \
-	kmod-nvme-fabrics \
 	nvme-cli \
 	kmod-usb3 \
 	kmod-usb-storage \
