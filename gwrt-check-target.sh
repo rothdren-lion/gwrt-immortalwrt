@@ -15,6 +15,7 @@ pzl8              ipq5018        qualcommax   ipq50xx    DEVICE_cmcc_pz-l8
 nezha             ipq5018        qualcommax   ipq50xx    DEVICE_jdcloud_ax3000
 cp02              mt7621         ramips       mt7621    DEVICE_jdcloud_re-cp-02
 mt7981            mt7981         mediatek     filogic    any
+mt7986            mt7986         mediatek     filogic    any
 bdy-g98-direct    rk3588         rockchip     armv8      DEVICE_bdy_g98
 bdy-g98-uefi      arm64-efi      armsr        armv8      DEVICE_generic
 '
