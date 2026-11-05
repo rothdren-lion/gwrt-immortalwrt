@@ -285,6 +285,8 @@ for p in \
 	kmod-fs-nfs-common \
 	kmod-fs-nfsd \
 	nfs-kernel-server-v4 \
+	libuuid \
+	libblkid \
 	luci-app-nfs \
 	luci-i18n-nfs-zh-cn \
 	aria2 \

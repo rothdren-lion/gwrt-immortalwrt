@@ -233,7 +233,9 @@ for p in \
 done
 make defconfig >/dev/null
 
-cp "$TOP/.config" "$OUT"
+if [ "$OUT" != ".config" ] && [ "$OUT" != "$TOP/.config" ]; then
+	cp "$TOP/.config" "$OUT"
+fi
 
 echo
 echo "==> 完成: $OUT"
