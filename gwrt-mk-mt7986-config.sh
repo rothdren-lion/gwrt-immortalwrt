@@ -49,6 +49,8 @@ CONFIG_TARGET_PER_DEVICE_ROOTFS=y
 CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_netcore_n60=y
 CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_netcore_n60-pro=y
 CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_jdcloud_re-cp-03=y
+CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_clx_s20p=y
+CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-mt6000=y
 CONFIG_TARGET_ROOTFS_PARTSIZE=48
 CONFIG_TARGET_ROOTFS_SQUASHFS=y
 CONFIG_TARGET_ROOTFS_INITRAMFS=y
@@ -262,6 +264,42 @@ for p in \
 	add_pkg "$p"
 done
 
+echo "[mt7986] NVMe / USB / 共享（eMMC 机型）:"
+for p in \
+	kmod-nvme \
+	kmod-nvme-fabrics \
+	nvme-cli \
+	kmod-usb3 \
+	kmod-usb-storage \
+	kmod-usb-storage-uas \
+	kmod-usb-storage-extras \
+	kmod-fs-ext4 \
+	kmod-fs-exfat \
+	kmod-fs-vfat \
+	kmod-fs-f2fs \
+	kmod-fs-ntfs3 \
+	samba4-server \
+	luci-app-samba4 \
+	luci-i18n-samba4-zh-cn \
+	kmod-fs-nfs \
+	kmod-fs-nfs-common \
+	kmod-fs-nfsd \
+	nfs-kernel-server-v4 \
+	luci-app-nfs \
+	luci-i18n-nfs-zh-cn \
+	aria2 \
+	luci-app-aria2 \
+	luci-i18n-aria2-zh-cn \
+	miniupnpd-nftables \
+	luci-app-upnp \
+	automount \
+	block-mount \
+	f2fs-tools \
+	f2fsck \
+	e2fsprogs ; do
+	add_pkg "$p"
+done
+
 if [ "$(readlink -f "$TOP/.config")" != "$(readlink -f "$OUT")" ]; then
 	cp "$TOP/.config" "$OUT"
 fi
@@ -269,6 +307,6 @@ fi
 echo
 echo "==> 完成: $OUT"
 echo "==> 目标设备 (MT7986):"
-grep -E '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_(netcore_n60|netcore_n60-pro|jdcloud_re-cp-03)' "$OUT" || true
+grep -E '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_(netcore_n60|netcore_n60-pro|jdcloud_re-cp-03|clx_s20p|glinet_gl-mt6000)' "$OUT" || true
 echo "==> 体积/布局:"
 grep -E '^CONFIG_TARGET_(ROOTFS_PARTSIZE|MULTI_PROFILE|PER_DEVICE_ROOTFS|ROOTFS_INITRAMFS)=' "$OUT" || true
