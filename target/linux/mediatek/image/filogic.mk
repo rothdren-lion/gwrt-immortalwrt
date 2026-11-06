@@ -2424,7 +2424,7 @@ define Device/clx_s20p
   DEVICE_DTC_FLAGS := --pad 4096
   DEVICE_DTS_LOADADDR := 0x43f00000
   DEVICE_PACKAGES := kmod-mt7915e kmod-mt7986-firmware mt7986-wo-firmware kmod-usb3 \
-	kmod-nvme kmod-nvme-fabrics nvme-cli \
+	kmod-nvme nvme-cli \
 	automount e2fsprogs f2fsck mkf2fs
   KERNEL_LOADADDR := 0x44000000
   KERNEL := kernel-bin | gzip
@@ -2452,7 +2452,7 @@ define Device/clx_s20l
   DEVICE_DTC_FLAGS := --pad 4096
   DEVICE_DTS_LOADADDR := 0x43f00000
   DEVICE_PACKAGES := kmod-mt7915e kmod-mt7986-firmware mt7986-wo-firmware kmod-usb3 \
-	kmod-nvme kmod-nvme-fabrics nvme-cli \
+	kmod-nvme nvme-cli \
 	automount e2fsprogs f2fsck mkf2fs
   KERNEL_LOADADDR := 0x44000000
   KERNEL := kernel-bin | gzip
@@ -2480,7 +2480,7 @@ define Device/clx_s20m
   DEVICE_DTC_FLAGS := --pad 4096
   DEVICE_DTS_LOADADDR := 0x43f00000
   DEVICE_PACKAGES := kmod-usb3 \
-	kmod-nvme kmod-nvme-fabrics nvme-cli \
+	kmod-nvme nvme-cli \
 	automount e2fsprogs f2fsck mkf2fs
   KERNEL_LOADADDR := 0x44000000
   KERNEL := kernel-bin | gzip
