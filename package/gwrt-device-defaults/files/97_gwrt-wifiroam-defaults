@@ -8,6 +8,10 @@
 SRC=/usr/share/gwrt/wifiroam
 VIEW=/www/luci-static/resources/view/wifiroam
 
+json_escape() {
+	printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
 # 0) 打过补丁的守护进程：支持主AP 下发 SSID/密码（同一 ESS 才能无缝漫游）
 if [ -f "$SRC/wifiroamd.uc" ] && [ -d /usr/share/wifiroam ]; then
 	cmp -s "$SRC/wifiroamd.uc" /usr/share/wifiroam/wifiroamd.uc || \
@@ -103,7 +107,7 @@ if [ -f /etc/config/wifiroam ]; then
 		done
 		json_ssids=""
 		for s in $(uci -q get wifiroam.roam.ssids); do
-			json_ssids="$json_ssids\"$s\","
+			json_ssids="$json_ssids\"$(json_escape "$s")\","
 		done
 		json_ssids="[${json_ssids%,}]"
 		ubus call wifiroam set_roam "{\"enabled\":true,\"ssids\":$json_ssids,\"r_fast\":true,\"ft_mode\":\"simple\",\"ft_over_ds\":true,\"k_neighbor\":true,\"k_beacon\":true,\"v_bss_transition\":true,\"rssi_profile\":\"balanced\",\"rssi_threshold\":-70}" >/dev/null 2>&1 || true

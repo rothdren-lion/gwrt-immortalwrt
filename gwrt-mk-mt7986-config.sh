@@ -130,6 +130,7 @@ for p in \
 	luci-app-ttyd \
 	ttyd \
 	gwrt-ssr-plus-luci \
+	gwrt-device-defaults \
 	gwrt-mesh-led \
 	gwrt-mesh-apmode \
 	kmod-tun \

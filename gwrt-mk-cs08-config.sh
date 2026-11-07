@@ -72,6 +72,13 @@ for p in kmod-sfp kmod-phy-marvell kmod-phy-marvell-10g \
 	sed -i "/^# CONFIG_PACKAGE_${p} is not set\$/d" "$OUT"
 done
 
+# --- GWRT mesh 组网（所有机型必备）---
+for p in gwrt-device-defaults gwrt-mesh-led gwrt-mesh-apmode gwrt-agent; do
+	grep -q "^CONFIG_PACKAGE_${p}=y$" "$OUT" && continue
+	sed -i "/^# CONFIG_PACKAGE_${p} is not set$/d" "$OUT"
+	echo "CONFIG_PACKAGE_${p}=y" >> "$OUT"
+done
+
 echo "==> generated: $OUT"
 echo "    base: $(basename "$SRC")  VER: $VER"
 echo "    期望: CONFIG_TARGET_PROFILE=\"DEVICE_jdcloud_re-cs-08\""

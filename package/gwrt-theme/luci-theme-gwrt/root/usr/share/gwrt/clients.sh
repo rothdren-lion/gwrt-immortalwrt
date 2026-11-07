@@ -4,7 +4,7 @@
 # 用法:
 #   clients.sh scan        # 扫一次 ARP+assoclist, 更新内存状态 + 必要时 flush JSON
 #   clients.sh daemon      # 后台循环扫描 (init.d 用)
-#   clients.sh cleanup-daily  # 凌晨 0:00 cron 调用, 清离线条目
+#   clients.sh cleanup-daily  # 兼容午夜 cron, 仅保存快照（离线每轮自动回收）
 #   clients.sh dump        # 输出当前 JSON (供前端 ubus 调用 / 调试)
 #
 # 数据存档: /etc/gwrt/clients.json
@@ -26,7 +26,9 @@ RUNTIME=/tmp/gwrt-clients.json
 WWWLINK=/www/gwrt-clients.json   # uhttpd 暴露给前端 fetch
 PERSIST_DIR=/etc/gwrt
 FLUSH_INTERVAL=300   # 5min flush to flash
-SCAN_INTERVAL=30     # 30s scan tick
+OFFLINE_RETENTION=86400 # 24h since last actual observation
+MERGER=/usr/share/gwrt/clients-merge.awk
+SCAN_INTERVAL=10     # 10s scan tick for current client status
 
 mkdir -p "$PERSIST_DIR"
 
@@ -41,7 +43,22 @@ ensure_runtime() {
 	fi
 }
 
-# 当前活跃 MAC 集合 = ARP REACHABLE/DELAY/STALE + WiFi assoclist
+# 先探测 LAN 桥上的 STALE 邻居，再用邻居状态与 WiFi assoclist 判断在线。
+# STALE 只表示近期未确认，不能直接当作在线；探测让仍在线的设备回到活跃状态。
+probe_stale_neighbors() {
+	local addr pid pids=""
+	for addr in $(ip -4 neigh show dev br-lan nud stale 2>/dev/null | awk '{print $1}' | head -n 32); do
+		ping -4 -q -c 1 -W 1 "$addr" >/dev/null 2>&1 &
+		pids="$pids $!"
+	done
+	for addr in $(ip -6 neigh show dev br-lan nud stale 2>/dev/null | awk '{print $1}' | head -n 32); do
+		ping -6 -q -c 1 -W 1 "$addr" >/dev/null 2>&1 &
+		pids="$pids $!"
+	done
+	for pid in $pids; do wait "$pid" 2>/dev/null; done
+}
+
+# 当前活跃 MAC 集合 = LAN 邻居 REACHABLE/DELAY/PROBE + WiFi assoclist
 #
 # ⚠️ 本固件没有 iwinfo CLI（只装了 libiwinfo + rpcd-mod-iwinfo），
 # 所以 WiFi 必须走 ubus：
@@ -50,9 +67,10 @@ ensure_runtime() {
 # 旧实现用 `iwinfo "$phy" info|assoclist`，命令不存在导致 WiFi 段静默全失败，
 # 无线客户端只能被 ARP 分支兜底标成 wired —— 这就是 via 列看不到 WiFi 的根因。
 collect_active() {
-	# ARP-based: REACHABLE/DELAY/STALE 都算 (PROBE/FAILED 排除)
-	ip neigh show 2>/dev/null | awk '
-		/lladdr/ && /(REACHABLE|DELAY|STALE)/ && !/FAILED/ {
+	probe_stale_neighbors
+	# 只检查 LAN 桥；STALE 已主动探测，等设备回应或进入 FAILED。
+	ip neigh show dev br-lan 2>/dev/null | awk '
+		/lladdr/ && /(REACHABLE|DELAY|PROBE)/ && !/FAILED/ {
 			ip=$1; mac=""; for(i=1;i<=NF;i++) if($i=="lladdr") mac=$(i+1)
 			if (mac && ip !~ /^(fe80|ff)/) print tolower(mac)"|"ip"|wired"
 		}'
@@ -96,8 +114,22 @@ collect_wan_info() {
 	local def_route gateway iface wan_ip wan_type is_private gw_reachable
 	local isp="未知" is_combo="false"
 	def_route=$(ip route show default 2>/dev/null)
-	gateway=$(echo "$def_route" | awk '/default via/{print $3}')
-	iface=$(echo "$def_route" | awk '/dev/{print $5}')
+	# `ip route` emits both "default via GW dev IF" and
+	# "default dev IF" (common for PPPoE).  Fixed field positions make the
+	# latter report `scope` as the interface and lose WAN type/IP metadata.
+	local route_parts
+	route_parts=$(printf '%s\n' "$def_route" | awk '
+		$1 == "default" {
+			gw=""; dev=""
+			for (i = 1; i <= NF; i++) {
+				if ($i == "via" && i < NF) gw=$(i + 1)
+				if ($i == "dev" && i < NF) dev=$(i + 1)
+			}
+			print gw "|" dev
+			exit
+		}')
+	gateway=${route_parts%%|*}
+	iface=${route_parts#*|}
 	wan_ip=""; wan_type="none"; is_private="false"; gw_reachable="false"
 
 	if [ -n "$iface" ]; then
@@ -176,8 +208,17 @@ probe_ports_async() {
 	local active="$1"
 	local cache=/tmp/gwrt-portfp.list out=/tmp/gwrt-portfp.lock
 	[ -f "$cache" ] || : > "$cache"
-	[ -f "$out" ] && return 0   # 上一轮模拟探完再说
-	: > "$out"
+	if [ -f "$out" ]; then
+		# A killed probe must not disable fingerprinting forever.  Normal
+		# probes finish in under a minute; reclaim an orphaned lock after 90s.
+		local started now age
+		started=$(cat "$out" 2>/dev/null)
+		now=$(date +%s)
+		case "$started" in *[!0-9]*|"") age=999999 ;; *) age=$((now - started)) ;; esac
+		[ "$age" -lt 90 ] && return 0
+		rm -f "$out"
+	fi
+	printf '%s\n' "$(date +%s)" > "$out"
 	(
 		n=0
 		printf '%s\n' "$active" | while IFS='|' read -r mac ip via sig; do
@@ -208,19 +249,13 @@ do_scan() {
 	ensure_runtime
 
 	local now=$(date +%s)
-	local active_list active_macs wan_info
+	local active_list wan_info
 	active_list=$(collect_active)
 	wan_info=$(collect_wan_info)
-	active_macs=$(echo "$active_list" | awk -F'|' '{print $1}' | sort -u)
 
-	# 读当前已知 clients
-	local existing_json
-	existing_json=$(cat "$RUNTIME" 2>/dev/null)
-	[ -z "$existing_json" ] && existing_json='{"updated":0,"clients":[]}'
-
-	# 加载 DHCP leases (从 /tmp/dhcp.leases)
+	# DHCP is metadata only; an unexpired lease does not prove presence.
 	local dhcp_data=""
-	[ -r /tmp/dhcp.leases ] && dhcp_data=$(awk '{print tolower($2)"|"$3"|"$4}' /tmp/dhcp.leases)
+	[ -r /tmp/dhcp.leases ] && dhcp_data=$(awk -v now="$now" '$1 == 0 || $1 > now {print tolower($2)"|"$3"|"$4}' /tmp/dhcp.leases)
 
 	# DHCP 指纹 (option 60/55, dnsmasq dhcp-script 写入): mac|os|vendor|options
 	local fp_data=""
@@ -259,105 +294,18 @@ do_scan() {
 			}')
 	fi
 
-	# 用 awk 做合并 (省得调 jsonfilter 上百次)
+	# MAC identity, IP ownership and the 24h offline deadline are resolved
+	# together. The same policy also migrates old caches on the first scan.
 	local merged
-	merged=$(awk -v now="$now" -v existing="$existing_json" -v active="$active_list" -v dhcp="$dhcp_data" -v fp="$fp_combined" -v wan_json="$wan_info" -v port_data="$bridge_port_data" '
-	BEGIN {
-		# 解析 existing JSON (粗暴 regex, 适配我们已知格式)
-		n = split(existing, eline, /\{"mac":"/)
-		for (i = 2; i <= n; i++) {
-			s = eline[i]
-			mac = ""; host = ""; first = 0; last = 0; off_at = 0
-			if (match(s, /^[^"]+/))                 { mac = substr(s, RSTART, RLENGTH) }
-			if (match(s, /"host":"[^"]*"/))         { host = substr(s, RSTART+8, RLENGTH-9) }
-			if (match(s, /"first_seen":[0-9]+/))    { first = substr(s, RSTART+13, RLENGTH-13)+0 }
-			if (match(s, /"last_seen":[0-9]+/))     { last = substr(s, RSTART+12, RLENGTH-12)+0 }
-			if (match(s, /"offline_at":[0-9]+/))    { off_at = substr(s, RSTART+13, RLENGTH-13)+0 }
-			if (mac) {
-				e_first[mac] = first
-				e_last[mac]  = last
-				e_off[mac]   = off_at
-				e_host[mac]  = host
-			}
-		}
-
-		# DHCP leases (ip + hostname 补全)
-		n = split(dhcp, dline, "\n")
-		for (i = 1; i <= n; i++) {
-			split(dline[i], a, "|")
-			if (a[1]) {
-				d_ip[a[1]]   = a[2]
-				d_host[a[1]] = a[3]
-			}
-		}
-
-		# 解析 active
-		n = split(active, aline, "\n")
-		for (i = 1; i <= n; i++) {
-			split(aline[i], a, "|")
-			if (a[1]) {
-				active_mac[a[1]] = 1
-				if (a[2] != "-" && a[2] != "") a_ip[a[1]]  = a[2]
-				a_via[a[1]] = a[3]
-				a_sig[a[1]] = a[4]
-				all_macs[a[1]] = 1
-			}
-		}
-		# 解析桥端口数据 (mac → 物理端口名)
-		n = split(port_data, pdline, "\n")
-		for (i = 1; i <= n; i++) {
-			split(pdline[i], a, "|")
-			if (a[1]) port_of[a[1]] = a[2]
-		}
-		# 解析 DHCP 指纹 (mac → 系统特性)
-		n = split(fp, fline, "\n")
-		for (i = 1; i <= n; i++) {
-			split(fline[i], fa, "|")
-			if (fa[1]) f_os[fa[1]] = fa[2]
-		}
-		# 把 existing 里的 MAC 也加进 all_macs (保留离线设备)
-		for (m in e_first) all_macs[m] = 1
-		for (m in d_ip)    all_macs[m] = 1
-
-		# 输出 JSON
-		printf("{\"updated\":%d,\"wan\":%s,\"clients\":[", now, wan_json)
-		first_entry = 1
-		for (m in all_macs) {
-			online = (m in active_mac) ? 1 : 0
-			ip   = (m in a_ip)   ? a_ip[m]   : (m in d_ip ? d_ip[m] : "")
-			via  = (m in a_via)  ? a_via[m]  : ""
-			sig  = (m in a_sig)  ? a_sig[m]  : ""
-			host = (m in d_host) ? d_host[m] : e_host[m]
-			# 重连时重置 first_seen = now, 显示本次连接时长
-			was_offline = (m in e_off) && e_off[m] > 0
-			if (online && was_offline) {
-				f = now
-			} else {
-				f = (m in e_first && e_first[m] > 0) ? e_first[m] : now
-			}
-			# online 模式: 持续更新 last_seen, 清空 offline_at
-			# offline 模式: 保留 e_last, 首次掉线记录 offline_at
-			if (online) {
-				l = now
-				off = 0
-			} else {
-				l = (m in e_last && e_last[m] > 0) ? e_last[m] : now
-				off = (m in e_off && e_off[m] > 0) ? e_off[m] : now
-			}
-			if (!first_entry) printf(",")
-			first_entry = 0
-			# JSON 转义 host 里的特殊字符 (简化, 通常只有字母数字)
-			gsub(/[\\"]/, "", host)
-			port = (m in port_of) ? port_of[m] : ""
-			printf("{\"mac\":\"%s\",\"ip\":\"%s\",\"host\":\"%s\",\"via\":\"%s\",\"port\":\"%s\",\"online\":%s,\"first_seen\":%d,\"last_seen\":%d,\"offline_at\":%d,\"signal\":\"%s\",\"os\":\"%s\"}",
-				m, ip, host, via, port, (online ? "true" : "false"), f, l, off, sig, f_os[m])
-		}
-		printf("]}\n")
-	}')
+	merged=$(awk -v now="$now" -v retention="$OFFLINE_RETENTION" \
+		-v state_file="$RUNTIME" -v active="$active_list" -v dhcp="$dhcp_data" \
+		-v fp="$fp_combined" -v wan_json="$wan_info" -v port_data="$bridge_port_data" \
+		-f "$MERGER") || return 1
+	[ -n "$merged" ] || return 1
 
 	# 写 RUNTIME
-	echo "$merged" > "$RUNTIME.new"
-	mv "$RUNTIME.new" "$RUNTIME"
+	echo "$merged" > "$RUNTIME.$$"
+	mv "$RUNTIME.$$" "$RUNTIME"
 
 	# 暴露给 uhttpd 让前端 fetch (/gwrt-clients.json)
 	[ -L "$WWWLINK" ] || ln -sf "$RUNTIME" "$WWWLINK" 2>/dev/null
@@ -373,47 +321,22 @@ do_flush() {
 	local gap=$((now - last_flush))
 	[ "$gap" -lt "$FLUSH_INTERVAL" ] && return
 
-	# diff 检测: 用 sha256 比较 clients 段
+	# diff 检测: updated 每 10 秒变化，不能把它纳入 hash；否则即使
+	# 客户端和 WAN 数据没有变化，也会每 5 分钟写一次 flash。
 	local rsum psum
-	rsum=$(sha256sum "$RUNTIME"  2>/dev/null | awk '{print $1}')
-	psum=$(sha256sum "$PERSIST"  2>/dev/null | awk '{print $1}')
+	rsum=$(sed 's/"updated":[0-9]*,//' "$RUNTIME" 2>/dev/null | sha256sum | awk '{print $1}')
+	psum=$(sed 's/"updated":[0-9]*,//' "$PERSIST" 2>/dev/null | sha256sum | awk '{print $1}')
 	if [ "$rsum" != "$psum" ]; then
 		cp "$RUNTIME" "$PERSIST"
 		echo "$now" > /tmp/gwrt-clients.flushed
 	fi
 }
 
-# === cleanup-daily: 每天 0:00 cron 调用,清离线条目 ===
+# === cleanup-daily: legacy cron entry; scans already expire offline clients ===
 do_cleanup_daily() {
-	ensure_runtime
-	local now=$(date +%s)
-	# 只保留 online=true 的条目, 全部 reset first_seen=now
-	local cleaned
-	cleaned=$(cat "$RUNTIME" | awk -v now="$now" '
-		BEGIN { kept = 0 }
-		{
-			n = split($0, eline, /\{"mac":"/)
-			printf("{\"updated\":%d,\"clients\":[", now)
-			for (i = 2; i <= n; i++) {
-				s = eline[i]
-				if (s ~ /"online":true/) {
-					# 重置 first_seen = now
-					gsub(/"first_seen":[0-9]+/, "\"first_seen\":" now, s)
-					gsub(/}.*/, "}", s)
-					if (kept > 0) printf(",")
-					printf("{\"mac\":\"%s", s)
-					kept++
-				}
-			}
-			printf("]}\n")
-		}')
-	echo "$cleaned" > "$RUNTIME.new"
-	mv "$RUNTIME.new" "$RUNTIME"
-	cp "$RUNTIME" "$PERSIST"
-	echo $(date +%s) > /tmp/gwrt-clients.flushed
-
-	# 顺手清内存缓存
-	sync && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null
+	# Preserve connection start times and WAN metadata. The daemon performs
+	# expiry every scan; cron only persists its latest complete snapshot.
+	do_flush
 }
 
 # === dump: 输出当前 JSON ===

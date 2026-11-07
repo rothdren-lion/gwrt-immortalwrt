@@ -8,7 +8,6 @@
     "firewall",
     "gwrt",
     "network",
-    "pon_wan",
     "system",
     "wireless"
    ],
@@ -20,6 +19,9 @@
      "exec"
     ],
     "/usr/libexec/gwrt-lan-alias": [
+     "exec"
+    ],
+    "/usr/libexec/gwrt-conntrack": [
      "exec"
     ],
     "/bin/cat": [
@@ -36,15 +38,6 @@
     ],
     "/usr/libexec/gwrt-coremark": [
      "exec"
-    ],
-    "/usr/libexec/gwrt-ppe-stats": [
-     "exec"
-    ],
-    "/proc/device-tree/compatible": [
-     "read"
-    ],
-    "/sys/devices/system/cpu/cpufreq/*/*": [
-     "read"
     ],
     "/proc/cpuinfo": [
      "read"
@@ -88,7 +81,22 @@
     "/usr/libexec/gwrt-wan6-address": [
      "exec"
     ],
-    "/usr/sbin/ponctl --device * status --json": [
+    "/proc/device-tree/compatible": [
+     "read"
+    ],
+    "/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq": [
+     "read"
+    ],
+    "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq": [
+     "read"
+    ],
+    "/sys/class/ieee80211/*/hwmon*/temp1_input": [
+     "read"
+    ],
+    "/sys/class/hwmon/*/temp1_input": [
+     "read"
+    ],
+    "/usr/libexec/gwrt-socinfo": [
      "exec"
     ]
    },
@@ -180,7 +188,6 @@
     "firewall",
     "gwrt",
     "network",
-    "pon_wan",
     "wireless"
    ],
    "file": {
@@ -191,9 +198,6 @@
      "exec"
     ],
     "/usr/sbin/conntrack": [
-     "exec"
-    ],
-    "/usr/libexec/pon-wan-apply": [
      "exec"
     ]
    },

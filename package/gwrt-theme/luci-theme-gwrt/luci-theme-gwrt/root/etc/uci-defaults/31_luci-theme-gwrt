@@ -20,4 +20,8 @@ if [ "$(uci -q get gwrt.ota.manifest_url 2>/dev/null)" = "$OTA_LEGACY_MANIFEST_U
 fi
 uci -q commit gwrt
 
+# Keep a boot-time drift checker enabled because these one-shot defaults do
+# not rerun after a luci package upgrade replaces the dispatcher or theme.
+[ -x /etc/init.d/gwrt-theme ] && /etc/init.d/gwrt-theme enable >/dev/null 2>&1 || true
+
 exit 0

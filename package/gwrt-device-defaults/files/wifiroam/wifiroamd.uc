@@ -828,6 +828,14 @@ function client_node(mn, c, parent) {
 	};
 }
 
+function refresh_client_identity(c, mn, wired_peer, leases, neigh, names) {
+	// 有线子AP 与 CAP 同属一个 DHCP 广播域，CAP 租约比子AP缓存更近实时。
+	if (wired_peer || c.ip == null)
+		c.ip = leases[mn]?.ip ?? neigh[mn]?.ip ?? c.ip ?? names[mn]?.ip ?? null;
+	if (wired_peer || c.hostname == null)
+		c.hostname = leases[mn]?.hostname ?? c.hostname ?? names[mn]?.hostname ?? null;
+}
+
 function build_topology() {
 	let nodes = [];
 	let self_mn = macnorm(state.self.mac);
@@ -880,10 +888,9 @@ function build_topology() {
 	let neigh = parse_neigh();
 	for (let mn, ap in owner) {
 		let c = (ap == self_mn ? myclients : peer_clients[ap])[mn];
-		if (c.ip == null)
-			c.ip = leases[mn]?.ip ?? neigh[mn]?.ip ?? state.net_names?.[mn]?.ip ?? null;
-		if (c.hostname == null)
-			c.hostname = leases[mn]?.hostname ?? state.net_names?.[mn]?.hostname ?? null;
+		refresh_client_identity(c, mn,
+			ap != self_mn && ap_nodes[ap]?.uplink?.type == "wired",
+			leases, neigh, state.net_names ?? {});
 		push(nodes, client_node(mn, c, ap));
 		push(ap_nodes[ap].clients, mn);
 	}
@@ -895,6 +902,13 @@ function roam_md(ssid) { return substr(sha256("md:" + ssid), 0, 4); }
 function roam_key0(mac) { return substr(sha256(state.cfg.token + ":r0:" + macnorm(mac)), 0, 32); }
 function roam_key1(mac) { return substr(sha256(state.cfg.token + ":r1:" + macnorm(mac)), 0, 32); }
 
+function local_wireless_nat() {
+	if (state.cfg.role != "sap") return false;
+	let cur = uci.cursor(); cur.load("wireless");
+	return cur.get("wireless", BACKHAUL_SECTION, "network") == "wwan" &&
+	       cur.get("wireless", BACKHAUL_SECTION, "disabled") != "1";
+}
+
 function member_list() {
 	let members = [ { mac: state.self.mac, name: state.self.name } ];
 	for (let mn, p in state.peers)
@@ -904,16 +918,19 @@ function member_list() {
 	return members;
 }
 
-function apply_roam_local(roam, members) {
+function apply_roam_local(roam, members, wifi_changed) {
+	let wireless_before = fs.readfile("/etc/config/wireless");
 	let cur = uci.cursor();
 	cur.load("wireless");
 	let touched = [];
 	let self_nasid = uc(macnorm(state.self.mac));
+	let local_nat = local_wireless_nat();
 
 	cur.foreach("wireless", "wifi-iface", function(s) {
 		if (s.mode && s.mode != "ap") return;
 		let sid = s[".name"];
-		let in_group = roam.enabled && index(roam.ssids ?? [], s.ssid) >= 0;
+		// 3-addr NAT 子AP 不在同一二层，不能启用跨网段 FT/K/V 漫游。
+		let in_group = !local_nat && roam.enabled && index(roam.ssids ?? [], s.ssid) >= 0;
 
 		if (in_group) {
 			// R（802.11r）可单独关闭：关闭时移除全部 FT 相关键，只保留 K/V
@@ -996,8 +1013,10 @@ function apply_roam_local(roam, members) {
 		}
 	}
 	if (dirty) wc.commit("wifiroam");
-	uloop.process("/sbin/wifi", [ "reload" ], null,
-		function(res) { log("wifi reload rc=" + res); });
+	// 重连/重复推送只更新回执；实际无线配置改变时才重载，避免打断已有流量。
+	if (wifi_changed || wireless_before != fs.readfile("/etc/config/wireless"))
+		uloop.process("/sbin/wifi", [ "reload" ], null,
+			function(res) { log("wifi reload rc=" + res); });
 	push_event("roam_apply", "",
 		sprintf("ver=%d ssids=%d", roam.config_ver ?? 0, length(touched)));
 	return { ok: true, touched, ver: state.roam_ver_applied };
@@ -1144,6 +1163,7 @@ function ethernet_uplink_port() {
 }
 
 function apply_backhaul_local(bh, role) {
+	let wireless_before = fs.readfile("/etc/config/wireless");
 	let cur = uci.cursor();
 	cur.load("wireless");
 	let exists = cur.get("wireless", BACKHAUL_SECTION) != null;
@@ -1194,6 +1214,7 @@ function apply_backhaul_local(bh, role) {
 			let dev = (band == "2g") ? pick_radio_by_band("2g") : pick_radio_by_band("5g");
 			if (!dev) dev = pick_radio_by_band("2g");
 			if (!dev) return { ok: false, error: "no_radio" };
+			let wired = ethernet_uplink_port();
 			if (band != "2g" && (bh.channel ?? 0) > 0) {
 				let curch = int(cur.get("wireless", dev, "channel") ?? "0");
 				if (curch != bh.channel) {
@@ -1218,13 +1239,13 @@ function apply_backhaul_local(bh, role) {
 			cur.set("wireless", BACKHAUL_SECTION, "ssid", bh.ssid);
 			cur.set("wireless", BACKHAUL_SECTION, "encryption", "psk2+ccmp");
 			cur.set("wireless", BACKHAUL_SECTION, "key", bh.key);
-			cur.set("wireless", BACKHAUL_SECTION, "network", "lan");
+			cur.set("wireless", BACKHAUL_SECTION, "network", wired ? "lan" : "wwan");
 			// 3-addr（wds=0）：4-addr 在 JDCloud 主AP 上四步握手容易超时
 			// （子AP 侧还会被 apmode 写成 wds=0，两边不一致时 4WAY_HANDSHAKE_TIMEOUT）
 			cur.set("wireless", BACKHAUL_SECTION, "wds", "0");
 			cur.delete("wireless", BACKHAUL_SECTION, "hidden");
 			cur.set("wireless", BACKHAUL_SECTION, "disabled",
-				ethernet_uplink_port() ? "1" : "0");
+				wired ? "1" : "0");
 			if (cur.get("wireless", BACKHAUL_SECTION + "2") != null)
 				cur.delete("wireless", BACKHAUL_SECTION + "2");
 		}
@@ -1250,8 +1271,9 @@ function apply_backhaul_local(bh, role) {
 	wc.commit("wifiroam");
 	state.backhaul_ver_applied = ver;
 
-	uloop.process("/sbin/wifi", [ "reload" ], null,
-		function(res) { log("backhaul wifi reload rc=" + res); });
+	if (wireless_before != fs.readfile("/etc/config/wireless"))
+		uloop.process("/sbin/wifi", [ "reload" ], null,
+			function(res) { log("backhaul wifi reload rc=" + res); });
 	push_event("backhaul_apply", "",
 		sprintf("ver=%d %s band=%s", ver, bh.enabled ? "wireless" : "off", band));
 	return { ok: true, ver };
@@ -1352,6 +1374,7 @@ function ap_overview() {
 	let aps = [ {
 		id: self_mn, name: state.self.name, role: state.cfg.role,
 		ip: state.self.ip, online: true, self: true,
+		uplink: detect_uplink(),
 		ssids: map(wifi_ifaces(), function(w) { return w.ssid; }),
 		// 本机实际落盘的 K/V/R，便于主 AP 与子 AP 看到一致的生效状态
 		kvr: applied_kvr(current_roam_cfg().ssids),
@@ -1364,6 +1387,7 @@ function ap_overview() {
 			id: mn, name: p.info?.name ?? p.name ?? maccolon(mn),
 			role: p.info?.role ?? p.role ?? "sap",
 			ip: p.info?.ip ?? p.ip, online: !!p.authed, self: false,
+			uplink: p.info?.uplink ?? null,
 			ssids: list,
 			kvr: p.kvr ?? null,
 		});
@@ -1468,7 +1492,7 @@ function sap_rx(req) {
 	switch (req.type) {
 	case "push_roam_config": {
 		let w = apply_wifi_from_cap(req.args.wifi ?? []);
-		let r = apply_roam_local(req.args.roam, req.args.members ?? []);
+		let r = apply_roam_local(req.args.roam, req.args.members ?? [], w.changed);
 		req.reply({ ok: r.ok, ver: r.ver, wifi: w.changed,
 		            kvr: applied_kvr(req.args.roam?.ssids ?? []) });
 		break;
@@ -2240,24 +2264,40 @@ let api_obj = {
 // ------------------------------------------------------- RSSI steering (11v)
 // 信号低于阈值时，通过 hostapd 的 BSS Transition Management 主动引导终端
 // 切换到更合适的 AP。CAP/SAP 各自对自己下挂的终端执行，避免跨节点转发。
+function steer_has_target(ssid, now) {
+	for (let mn, p in state.peers) {
+		if (!p.authed || now - (p.last_seen ?? 0) > PEER_TTL) continue;
+		if (p.info?.uplink?.type != "wired") continue;
+		for (let w in p.info?.wifi ?? [])
+			if (w.ssid == ssid) return true;
+	}
+	// SAP 从已认证且仍有心跳的 CAP 获取全网 SSID 概览。
+	if (state.cfg.role == "sap" && state.link?.authed &&
+	    now - (state.link.last_pong ?? 0) <= PEER_TTL) {
+		let self_mn = macnorm(state.self.mac);
+		for (let a in state.roster?.aps ?? [])
+			if (a.id != self_mn && a.online && a.uplink?.type == "wired" &&
+			    index(a.ssids ?? [], ssid) >= 0)
+				return true;
+	}
+	return false;
+}
+
 function steer_tick() {
 	if (state.cfg.role == "unconfigured") return;
+	if (local_wireless_nat()) return;
 	let roam = current_roam_cfg();
 	if (!roam.enabled || !roam.v_bss_transition) return;
 	let threshold = roam.rssi_threshold;
 	if (threshold == null || threshold >= 0) return;
 	if (!length(roam.ssids)) return;
 
-	let has_peer = false;
-	for (let mn, p in state.peers)
-		if (p.authed) { has_peer = true; break; }
-	if (!has_peer) return;   // 单 AP 无处分流，引导只会让终端掉线
-
 	let now = time();
 	let clients = local_clients();
 	for (let mn, c in clients) {
 		if (c.type != "wifi" || !c.ifname) continue;
 		if (c.ssid == null || index(roam.ssids, c.ssid) < 0) continue;
+		if (!steer_has_target(c.ssid, now)) continue;
 		let rssi = c.rssi;
 		if (rssi == null) continue;
 		rssi = int(rssi);
@@ -2267,8 +2307,9 @@ function steer_tick() {
 		try {
 			ubusc.call("hostapd." + c.ifname, "bss_transition_request", {
 				addr: maccolon(mn),
-				disassociation_imminent: true,
-				disassociation_timer: 5,
+				// 建议终端自行选择，不在尚未找到可用目标时强制断开。
+				disassociation_imminent: false,
+				disassociation_timer: 0,
 				validity_period: 10,
 			});
 			state.steer_last[mn] = now;
