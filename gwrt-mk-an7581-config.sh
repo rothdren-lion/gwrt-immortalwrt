@@ -154,6 +154,15 @@ for p in \
 	add_pkg "$p"
 done
 
+echo "[$SUB] GWRT mesh 组网（所有机型必备）:"
+for p in \
+	gwrt-device-defaults \
+	gwrt-mesh-led \
+	gwrt-mesh-apmode \
+	gwrt-agent ; do
+	add_pkg "$p"
+done
+
 echo "[an7581] 主题:"
 for p in \
 	luci-theme-gwrt ; do

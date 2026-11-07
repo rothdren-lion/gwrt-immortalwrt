@@ -90,6 +90,13 @@ sed -i "s|^# CONFIG_PACKAGE_MAC80211_DEBUGFS is not set\$|CONFIG_PACKAGE_MAC8021
 grep -q "^CONFIG_PACKAGE_MAC80211_DEBUGFS=y\$" "$OUT" || \
 	echo "CONFIG_PACKAGE_MAC80211_DEBUGFS=y" >> "$OUT"
 
+# --- GWRT mesh 组网（所有机型必备）---
+for p in gwrt-device-defaults gwrt-mesh-led gwrt-mesh-apmode gwrt-agent; do
+	grep -q "^CONFIG_PACKAGE_${p}=y$" "$OUT" && continue
+	sed -i "/^# CONFIG_PACKAGE_${p} is not set$/d" "$OUT"
+	echo "CONFIG_PACKAGE_${p}=y" >> "$OUT"
+done
+
 echo "==> generated: $OUT"
 echo "    base: $(basename "$SRC")  VER: $VER"
 echo "    下一步: cp $OUT .config && make defconfig 后复核"

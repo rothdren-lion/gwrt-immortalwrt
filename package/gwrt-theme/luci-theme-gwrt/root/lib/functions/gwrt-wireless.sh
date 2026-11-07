@@ -17,6 +17,10 @@ gwrt_wifi_role() {
 		*18000000.wifi+1:2g|*18000000.wifi:2g) echo 2.4G ;;
 		*18000000.wifi+1:5g|*18000000.wifi:5g)
 			if [ -n "$3" ] && [ "$3" -ge 149 ] 2>/dev/null; then echo 5.8G; else echo 5.2G; fi ;;
+		# 其它平台（airoha an7581/an7583、qualcommbe ipq53xx 等）按 band 兜底
+		*:2g|*:2.4g) echo 2.4G ;;
+		*:5g) if [ -n "$3" ] && [ "$3" -ge 149 ] 2>/dev/null; then echo 5.8G; else echo 5.2G; fi ;;
+		*:6g) echo 6G ;;
 		*) return 1 ;;
 	esac
 }

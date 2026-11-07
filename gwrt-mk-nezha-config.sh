@@ -41,6 +41,7 @@ CONFIG_PACKAGE_jdcloud-ax3000-wifi-board=y
 CONFIG_PACKAGE_gwrt-agent=y
 CONFIG_PACKAGE_gwrt-device-defaults=y
 CONFIG_PACKAGE_gwrt-mesh-apmode=y
+CONFIG_PACKAGE_gwrt-mesh-led=y
 CONFIG_PACKAGE_ucode-mod-socket=y
 CONFIG_PACKAGE_uhttpd=y
 CONFIG_PACKAGE_luci=y
