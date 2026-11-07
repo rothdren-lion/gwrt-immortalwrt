@@ -11,9 +11,7 @@
 #   netcore_n60-pro  磊科 N60 Pro    NAND，mt7986a（别名 NX62），带 USB3
 #   jdcloud_re-cp-03 京东云 RE-CP-03 eMMC，sysupgrade.itb
 #
-# 未包含：京东云 RE-CS-05（百里 AX6000，MT7986A eMMC）——
-#   本树/上游 immortalwrt 都无该设备，只有 LEDE 有，且其 DTS 无分区定义、
-#   依赖 PARTLABEL + eMMC 升级逻辑，需移植 + 实机分区信息，暂不编。
+# RE-CS-05 是 RE-CP-03 的新名称；两者使用现有 jdcloud_re-cp-03 profile。
 #   京东云 RE-CS-03（哪吒 AX3000）不是 MT7986，是 IPQ5018 → 用 nezha 预设。
 #
 # 插件集：与 MT7981 预设同一套 GWRT 插件
