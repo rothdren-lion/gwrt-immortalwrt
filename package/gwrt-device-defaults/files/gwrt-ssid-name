@@ -9,6 +9,8 @@
 mac="$(cat /sys/class/net/eth0/address 2>/dev/null)"
 [ -n "$mac" ] || mac="$(cat /sys/class/net/br-lan/address 2>/dev/null)"
 [ -n "$mac" ] || mac="$(cat /sys/class/net/eth1/address 2>/dev/null)"
+[ -n "$mac" ] || mac="$(uci -q get network.lan.macaddr 2>/dev/null)"
+[ -n "$mac" ] || mac="$(cat /sys/class/ieee80211/phy0/macaddress 2>/dev/null)"
 mac4="$(printf '%s' "$mac" | tr -d ':' | tr 'a-f' 'A-F' | tail -c 4)"
 [ ${#mac4} -eq 4 ] || mac4="0000"
 
@@ -30,9 +32,17 @@ for iface in $(uci -q show wireless | sed -n 's/^wireless\.\([^.]*\)=wifi-iface$
 	[ -n "$dev" ] || continue
 	band="$(uci -q get "wireless.$dev.band")"
 	ch="$(uci -q get "wireless.$dev.channel")"
+	# 老配置只有 hwmode，没有 band
+	if [ -z "$band" ]; then
+		case "$(uci -q get "wireless.$dev.hwmode")" in
+			11g|11ng|11b|11bg|11gst) band=2g ;;
+			11a|11na|11ac|11ax|11be) band=5g ;;
+		esac
+	fi
 	case "$band" in
-		2g) label="2.4G" ;;
+		2g|2.4g) label="2.4G" ;;
 		5g) if [ "${ch:-0}" -ge 149 ] 2>/dev/null; then label="5.8G"; else label="5.2G"; fi ;;
+		6g) label="6G" ;;
 		*) label="5G" ;;
 	esac
 	cur="$(uci -q get "wireless.$iface.ssid")"
