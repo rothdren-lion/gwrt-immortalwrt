@@ -291,7 +291,7 @@ define Device/znxt_zn515xg-d
   DEVICE_PACKAGES := kmod-gpio-button-hotplug kmod-leds-gpio \
     kmod-usb3 kmod-usb-ledtrig-usbport kmod-phy-airoha-en8811h \
     kmod-airoha-en7572 kmod-airoha-xpon airoha-ponctl airoha-pond \
-    kmod-mt7915e kmod-mt7916-firmware znxt-zn515-mt7916-eeprom \
+    kmod-mt7915e kmod-mt7916-firmware \
     wpad-openssl \
     nand-utils ubi-utils $(AIROHA_USB_STORAGE_PACKAGES)
   DEVICE_PACKAGES += fitblk
