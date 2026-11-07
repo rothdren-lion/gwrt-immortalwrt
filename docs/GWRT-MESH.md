@@ -162,23 +162,54 @@
   "apmode": 1,
   "ssids": ["AX6600_Gaming-jdc", "Rodren"],
   "discover": ["40:A5:EF:69:25:69"],
+  "discovered_devices": [{
+    "mac": "40:A5:EF:69:25:69", "ip": "192.168.9.200",
+    "name": "GWRT AP", "model": "Qihoo 360T7",
+    "role": "unconfigured", "pairable": true, "last_seen": 1794024000
+  }],
+  "members": [],
+  "refresh_interval": 5,
   "firmware": "GWRT 261025-33 cb793d3"
 }
 ```
+
+`discover` 保留 MAC 数组以兼容旧 APP；`discovered_devices` 提供可直接显示的名称、
+地址、型号和添加状态，`members` 只包含已认证成员及其客户端数量，不暴露配对 nonce、
+网络 token 或回传密码。`gwrt-agent mesh` 可单独读取上述状态。
+
+发现对象为同一局域网内启用 GWRT/wifiroam 发现、角色为 `unconfigured` 的 AP；
+已加入其它网络的 AP、禁用 Mesh 发现的设备和普通第三方 AP 不会被强行接管。
+设备 HELLO 每 5 秒发送，180 秒未再出现即由守护进程清理发现记录。
+
+主题首页显示待添加 AP 并通过已登录 LuCI 的 ubus 会话执行添加；也可进入
+“无线漫游 → Mesh 配对”。首页、Mesh 页面及活跃 App 按 5 秒周期刷新，隐藏页面暂停，
+请求未完成时不叠加刷新。`/mesh.html` 优先显示 wifiroam 数据，添加链接进入需要登录的
+LuCI 配对页面；只在没有 wifiroam 时兼容旧 mesh11sd 数据。
 
 ### 命令（云端 pull → commands[]）
 
 | action | 参数 | 作用 |
 |---|---|---|
 | `mesh.pair` | `mac`（可选；不填=全部发现的未配置 AP） | 配对 |
+| `mesh.unpair` | `mac`（必填） | 移除指定成员 AP |
 | `mesh.role` | `role` = `cap` / `sap` / `unconfigured` | 设角色（sap 只能由配对产生） |
 | `mesh.apmode` | `enabled` = 0/1 | 0=强制退出 AP+解绑；1=允许自动切换 |
 | `mesh.ssid_sync` | 无 | 主AP 立即重推 SSID/密码+k/v/r；子AP 重启 wifiroam 接收 |
 | `system.reboot` | 无 | 重启（需 `remote_exec=1`） |
 | `system.hostname.set` | `hostname` | 改主机名（需 `remote_exec=1`） |
 
-`mesh.*` 默认允许（`gwrt-agent.main.mesh_control=1`），不碰系统配置；
-危险命令仍需 `gwrt-agent.main.remote_exec=1`。
+`mesh.*` 默认允许（`gwrt-agent.main.mesh_control=1`）；角色及 AP 模式切换会按照状态机
+修改网络配置。非 Mesh 的重启、主机名及原二进制配置命令仍需
+`gwrt-agent.main.remote_exec=1`。设备绑定 token 命令保留原二进制的校验和结果回传。
+
+命令兼容顶层 `action` / `kind` 及 `params` / `data` / `payload` 参数对象。
+添加先检查是否已经入网；新请求只有在拓扑观察到已认证成员后才 ACK success，
+无候选、拒绝、连接失败或未入网均 ACK failed。重复下发已完成的添加保持幂等。
+SSID 同步沿用完整的当前 roam 配置，不覆盖用户的 FT、RSSI profile 和阈值。
+
+`refresh_interval: 5` 描述本地界面周期；云端上报仍尊重服务端 `report_interval`，
+无有效值时使用本机设置（默认 30 秒），限制在 5–3600 秒。网络超时保留错误日志，
+不会自动更换已有 device_id / pair_token / local_token 或丢弃用户绑定。
 
 本机调试：`gwrt-agent cmd '{"action":"mesh.pair","command_id":"t1"}'`
 
@@ -277,3 +308,14 @@ logread | grep -E "wifi sync|state .*-> ok|AP mode ok"
 - 未组网 + 无有线：自动建 **2.4G STA（wds=0，network=wwan）** 连主AP 的 `mesh-gwrt`（主AP 2.4G 隐藏 AP，ch1），拿地址后被 discover。
 - 配对后：`wifiroam_bh` 保持 wds=0/wwan（NAT 用），LAN 回 192.168.3.3 + DHCP。
 - 5G 回传（可选）：`uci set wifiroam.backhaul.band=5g`，主AP 下发 channel，子AP 5G 热点自动对齐（AP+STA 同频）；默认 `auto`→2.4G（最稳）。
+
+### 2026-11-07 稳定性约束
+
+- `wifiroamd` 和 AP 模式辅助进程必须使用同一回传归属：有线在位时停用 STA、归 `lan`；无线 NAT 回传启用 STA、归 `wwan`。比较实际受管 UCI 字段，不能只用上次写入的签名判断已经生效。
+- 重复下发相同 SSID、K/V/R 或回传配置不能重复 reload 无线；版本号变化本身不代表无线配置变化。
+- BTM 仅对存在同 SSID、新鲜且已认证的在线有线回传邻居的终端发送建议，不设置强制离站计时。无线 NAT 子 AP 停止主动引导，不启用跨网段 FT/K/V；无线 NAT 回传仍不是同一二层网络，不支持无缝漫游。
+- 已运行的有线 AP 在控制面短暂失联时，仅当保留 `sap` 角色、有效管理地址、有线 carrier 和到 CAP 的数据面探测均正常，才继续保留桥接；显式解绑仍应恢复路由模式。
+- 切换 AP 模式可能重建 `br-lan`。若 hostapd 的 RRB (`0x890d`) 或共享 OUI (`0x88b7`) raw socket 因此绑定到已删除接口（`/proc/net/packet` 中 Iface=-1），需释放相关 FT BSS 后一起重新启动，不能只 reload 相同配置或逐频段 down/up。对相同 bridge/socket 签名最多自动尝试一次，避免周期性踢客。
+- AP 模式快照应保存原 LAN/WAN 地址、掩码、网关、DNS list、选项原始存在性和 WAN 原桥成员关系，回退时完整恢复；旧版快照未保存的值不能用空值覆盖现有合法配置。
+
+现场证据与验证记录见 `docs/WORKLOG-20261107-dashboard-mesh-stability.md`。

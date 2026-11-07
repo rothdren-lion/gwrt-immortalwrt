@@ -6,7 +6,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=gwrt-device-defaults
 PKG_VERSION:=1.0
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_LICENSE:=GPL-2.0
 
 include $(INCLUDE_DIR)/package.mk
@@ -31,6 +31,7 @@ define Package/gwrt-device-defaults/install
 		$(1)/usr/libexec $(1)/usr/share/gwrt/apk $(1)/usr/share/gwrt/wifiroam
 	$(INSTALL_BIN) ./files/92_gwrt-wifiroam-fw $(1)/etc/uci-defaults/92_gwrt-wifiroam-fw
 	$(INSTALL_BIN) ./files/93_gwrt-lang $(1)/etc/uci-defaults/93_gwrt-lang
+	$(INSTALL_BIN) ./files/94_gwrt-invalid-mac $(1)/etc/uci-defaults/94_gwrt-invalid-mac
 	$(INSTALL_BIN) ./files/94_gwrt-lan-ip $(1)/etc/uci-defaults/94_gwrt-lan-ip
 	$(INSTALL_BIN) ./files/95_gwrt-wifi-defaults $(1)/etc/uci-defaults/95_gwrt-wifi-defaults
 # 预置离线 apk：wifiroam 三件是纯脚本，全架构通用，常装；

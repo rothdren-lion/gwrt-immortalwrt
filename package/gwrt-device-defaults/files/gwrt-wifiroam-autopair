@@ -10,6 +10,10 @@
 
 log() { logger -t wifiroam-autopair "$@"; }
 
+json_escape() {
+	printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
 wait_ubus() {
 	i=0
 	while [ "$i" -lt 30 ]; do
@@ -36,7 +40,7 @@ apply_roam() {
 
 	json=""
 	for s in $ssids; do
-		json="$json\"$s\","
+		json="$json\"$(json_escape "$s")\","
 	done
 	json="[${json%,}]"
 	ubus call wifiroam set_roam "{\"enabled\":true,\"ssids\":$json,\"r_fast\":true,\"ft_mode\":\"simple\",\"ft_over_ds\":true,\"k_neighbor\":true,\"k_beacon\":true,\"v_bss_transition\":true,\"rssi_profile\":\"balanced\",\"rssi_threshold\":-70}" >/dev/null 2>&1 \

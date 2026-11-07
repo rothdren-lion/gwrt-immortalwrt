@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=gwrt-agent
 PKG_VERSION:=1712
-PKG_RELEASE:=6
+PKG_RELEASE:=7
 PKG_MAINTAINER:=GWRT
 PKG_LICENSE:=Apache-2.0
 # shell 部分跨架构通用；预编译 aarch64(musl) 二进制仅随 aarch64 目标安装。
@@ -16,14 +16,14 @@ define Package/gwrt-agent
   SECTION:=utils
   CATEGORY:=Utilities
   TITLE:=GWRT device agent (prebuilt aarch64 binary + scripts)
-  DEPENDS:=+jsonfilter +libubox +curl
+  DEPENDS:=+jsonfilter +libgcc +curl +ucode +ucode-mod-fs
 endef
 
 define Package/gwrt-agent/description
- GWRT agent: telemetry/OTA/report daemon. v1712-r2 replaces the reporting
- loop with a shell shim matching the current op.gwrt.uk contract
- (Bearer pair_token, no hardware_id field); gwrt-agent.bin keeps the
- original prebuilt aarch64 binary (dump/status/cgi fallbacks).
+ GWRT agent: telemetry and Mesh control daemon. v1712-r7 adds structured
+ Mesh discovery/member reports and verified pairing acknowledgements.
+ JSON is serialized with ucode; the original aarch64 binary is retained
+ for telemetry collection, local CGI commands and gwrt-pair-v2 binding.
 endef
 
 define Package/gwrt-agent/conffiles
@@ -52,6 +52,8 @@ ifneq ($(findstring aarch64,$(ARCH)),)
 endif
 	$(INSTALL_BIN) ./files/usr/sbin/gwrt-ipv6-auto.sh $(1)/usr/sbin/gwrt-ipv6-auto.sh
 	$(INSTALL_BIN) ./files/usr/sbin/gwrt-mesh-window $(1)/usr/sbin/gwrt-mesh-window
+	$(INSTALL_DIR) $(1)/usr/share/gwrt-agent
+	$(INSTALL_DATA) ./files/usr/share/gwrt-agent/json.uc $(1)/usr/share/gwrt-agent/json.uc
 	$(INSTALL_DIR) $(1)/www/cgi-bin
 	$(INSTALL_BIN) ./files/www/cgi-bin/gwrt-agent $(1)/www/cgi-bin/gwrt-agent
 	$(INSTALL_BIN) ./files/www/cgi-bin/mesh_status.sh $(1)/www/cgi-bin/mesh_status.sh

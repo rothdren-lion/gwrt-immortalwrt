@@ -1,0 +1,63 @@
+#!/bin/sh /etc/rc.common
+
+# Keep the GWRT theme selected after luci-base/luci-mod-status upgrades.
+# The uci-defaults scripts run only once, while package upgrades may replace
+# the dispatcher or reset mediaurlbase.  Repair only when a file/config value
+# actually drifted, so ordinary boots do not invalidate LuCI caches.
+START=98
+STOP=01
+
+SRC="/usr/share/gwrt/admin_status-index.ut"
+DST="/usr/share/ucode/luci/template/admin_status/index.ut"
+THEME="/luci-static/gwrt"
+DHCPSCRIPT="/usr/libexec/gwrt-dhcp-fp"
+
+repair_theme() {
+	local changed=0 tmp
+
+	if [ -r "$SRC" ]; then
+		mkdir -p "${DST%/*}"
+		# LuCI may store a compiled ucode template at DST.  Comparing the
+		# source dispatcher with that bytecode always reports a difference and
+		# would rewrite/flush the template on every boot.  The dispatcher keeps
+		# this stable marker in both source and compiled forms; only replace a
+		# missing/stock template.
+		if [ ! -f "$DST" ] || ! grep -q "admin_status/index_gwrt" "$DST" 2>/dev/null; then
+			tmp="${DST}.gwrt.$$"
+			if cp -p "$SRC" "$tmp" 2>/dev/null && mv -f "$tmp" "$DST"; then
+				changed=1
+			else
+				rm -f "$tmp"
+			fi
+		fi
+	fi
+
+	# Keep the distribution default on the main LuCI port.  Port-specific
+	# native LuCI mappings are stored in gwrt.theme and remain untouched.
+	if [ -d "/www/luci-static/gwrt" ] &&
+		[ "$(uci -q get luci.main.mediaurlbase 2>/dev/null)" != "$THEME" ]; then
+		uci -q set luci.main.mediaurlbase="$THEME" || true
+		uci -q commit luci || true
+		changed=1
+	fi
+
+	if [ "$changed" -eq 1 ]; then
+		rm -f /tmp/luci-indexcache /tmp/luci-modulecache/* 2>/dev/null || true
+		logger -t gwrt-theme "repaired GWRT theme registration/dispatcher"
+	fi
+}
+
+repair_dhcp_fingerprint() {
+	# The fingerprint hook runs from /etc/hotplug.d/dhcp outside dnsmasq's
+	# ujail.  Older images also configured the same script as USER_DHCPSCRIPT;
+	# that path is sourced inside the jail where tr/sed are unavailable and
+	# floods logread on every lease event.  Remove only our own stale value.
+	[ "$(uci -q get dhcp.@dnsmasq[0].dhcpscript 2>/dev/null)" = "$DHCPSCRIPT" ] || return 0
+	uci -q delete dhcp.@dnsmasq[0].dhcpscript || return 0
+	uci -q commit dhcp || return 0
+	/etc/init.d/dnsmasq reload >/dev/null 2>&1 || true
+	logger -t gwrt-theme "removed stale dnsmasq DHCP fingerprint hook; hotplug path remains active"
+}
+
+start() { repair_theme; repair_dhcp_fingerprint; }
+reload() { repair_theme; repair_dhcp_fingerprint; }

@@ -1,0 +1,64 @@
+import * as mfs from "fs";
+import * as muc from "uci";
+import { sha256 } from "digest";
+let test_dir = "/tmp/gwrt-mesh-verify-" + time();
+mfs.mkdir(test_dir); mfs.mkdir(test_dir + "/state");
+function mapped(path) {
+ if (path == "/etc/config/wireless") return test_dir + "/wireless";
+ if (path == "/etc/gwrt-wireless-orig") return test_dir + "/wireless-orig";
+ return path;
+}
+let fs = { readfile: function(p) { return mfs.readfile(mapped(p)); },
+ access: function(p) { return mfs.access(mapped(p)); },
+ writefile: function(p, d) { return mfs.writefile(mapped(p), d); } };
+let uci = { cursor: function() { return muc.cursor(test_dir, test_dir + "/state"); } };
+let reloads = 0, requests = [], test_clients = {};
+let uloop = { process: function(path, args) { reloads++; } };
+let ubusc = { call: function(obj, method, args) { push(requests, args); } };
+let state = { self: { mac: "02:00:00:00:00:01" }, cfg: { role: "cap", token: "test" },
+ peers: {}, steer_last: {}, link: null, roster: null };
+const PEER_TTL = 30, STEER_COOLDOWN = 60, MIN_STEER_ASSOC = 20;
+function log(msg) {}
+function push_event(a, b, c, d) {}
+function client_name_of(mn, clients) { return "test-client"; }
+function local_clients() { return test_clients; }
+function macnorm(m) { return lc(replace(m ?? "", /[^0-9a-fA-F]/g, "")); }
+function maccolon(mn) { return join(match(mn, /../g), ":"); }
+function is_backhaul_sec(name) { return name == "wifiroam_bh" || name == "wifiroam_bh2"; }
+function rssi_preset(profile) { return -70; }
+let roam = { enabled: true, ssids: ["test-ssid"], r_fast: true, ft_mode: "simple", ft_over_ds: true,
+ k_neighbor: true, k_beacon: true, v_bss_transition: true, rssi_profile: "balanced", rssi_threshold: -70, config_ver: 1 };
+function current_roam_cfg() { return roam; }
+function check(ok, message) { if (!ok) { printf("FAIL: %s\n", message); exit(1); } }
+const BACKHAUL_SECTION = "wifiroam_bh", BACKHAUL_DEFAULT_SSID = "test-backhaul";
+let fixture_wired = false;
+function pick_radio_by_band(band) { return band == "5g" ? "radio0" : "radio1"; }
+function ethernet_uplink_port() { return fixture_wired ? "eth1" : null; }
+function radio_running_channel(dev) { return dev == "radio0" ? 36 : 1; }
+/* PRODUCTION:apply_backhaul_local */
+
+// SAP 侧：有线/无线回程互斥。网线在位时 STA 保持 disabled，拔线后自动启用；
+// 重新插回网线则暂停 STA，避免二层环路。
+
+mfs.writefile(test_dir + "/wireless", "config wifi-device 'radio0'\n option band '5g'\n option channel '36'\nconfig wifi-device 'radio1'\n option band '2g'\n option channel '1'\n");
+mfs.writefile(test_dir + "/wifiroam", "config backhaul 'backhaul'\n option config_ver '0'\n");
+let bh = { enabled: true, ssid: "test-backhaul", key: "test-password", band: "2g", channel: 36, channel2g: 1, config_ver: 1 };
+function get_bh(name) { let c = uci.cursor(); c.load("wireless"); return c.get("wireless", "wifiroam_bh", name); }
+apply_backhaul_local(bh, "sap");
+check(get_bh("network") == "wwan" && get_bh("wds") == "0" && get_bh("disabled") == "0", "wireless 3addr STA must use wwan");
+check(reloads == 1, "first backhaul config must reload");
+apply_backhaul_local(bh, "sap"); check(reloads == 1, "same backhaul must not reload");
+bh.config_ver = 2; apply_backhaul_local(bh, "sap"); check(reloads == 1, "backhaul version-only change must not reload");
+fixture_wired = true;
+apply_backhaul_local(bh, "sap"); check(get_bh("network") == "lan" && get_bh("disabled") == "1", "wired mode must disable STA");
+check(reloads == 2, "wired mode change must reload once");
+apply_backhaul_local(bh, "sap"); check(reloads == 2, "same wired backhaul must not reload");
+fixture_wired = false;
+let c = uci.cursor(); c.load("wireless"); c.set("wireless", "wifiroam_bh", "network", "lan"); c.commit("wireless");
+apply_backhaul_local(bh, "sap"); check(get_bh("network") == "wwan" && reloads == 3, "wireless push must repair wrong lan attachment");
+apply_backhaul_local(bh, "cap"); check(get_bh("network") == "lan" && get_bh("mode") == "ap", "CAP must keep LAN backhaul AP");
+let count = reloads; apply_backhaul_local(bh, "cap"); check(reloads == count, "same CAP backhaul must not reload");
+printf("PASS: 10 backhaul routing/idempotence cases\n");
+for (let p in mfs.glob(test_dir + "/*")) { if (p != test_dir + "/state") mfs.unlink(p); }
+for (let p in mfs.glob(test_dir + "/state/*")) mfs.unlink(p);
+mfs.rmdir(test_dir + "/state"); mfs.rmdir(test_dir);

@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Mesh 状态 - mesh-godsun</title>
+<title>Mesh 状态 - GWRT</title>
 <style>
 body{font-family:system-ui;margin:0;background:#fafafa;color:#333}
 header{background:#1a1a2e;color:#fff;padding:1rem;text-align:center;position:sticky;top:0;z-index:10}
@@ -42,35 +42,50 @@ header{background:#1a1a2e;color:#fff;padding:1rem;text-align:center;position:sti
 <h3>🔗 Mesh 邻居节点</h3>
 <div id="peers"><div class="row small" style="justify-content:center;padding:2rem">加载中…</div></div>
 </div>
+<div class="card">
+<h3>局域网待添加 AP <a class="refresh" href="/cgi-bin/luci/admin/services/wifiroam/pairing">管理 / 添加</a></h3>
+<div id="discovered"><div class="row small">正在发现…</div></div>
+</div>
 
 <script>
 const CLS = r => r===null?'':r>-60?'good':r>-75?'mid':'bad';
 const FMT = ts=>ts?new Date(ts*1000).toLocaleString():'-';
+const ESC = v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let loading=false,timer=null;
+function schedule(delay){clearTimeout(timer);if(!document.hidden)timer=setTimeout(load,delay);}
 async function load(){
+  if(loading)return;
+  loading=true;clearTimeout(timer);const started=Date.now();
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),12000);
   try{
-    const r=await fetch('/cgi-bin/mesh_status.sh');
+    const r=await fetch('/cgi-bin/mesh_status.sh',{cache:'no-store',signal:controller.signal});
+    if(!r.ok)throw new Error('HTTP '+r.status);
     const d=await r.json();
     document.getElementById('ver').textContent=`v${d.version||''}`;
     document.getElementById('self_host').textContent=d.hostname||'-';
-    document.getElementById('self_role').innerHTML=`<span class="badge ${d.portal?'badge-portal':'badge-online'}">${d.portal?'Portal(主)':'Peer(从)'}</span>`;
-    document.getElementById('self_ip').innerHTML=`${d.host_ipv4||'-'} / ${d.host_ipv6||'-'}`;
+    document.getElementById('self_role').innerHTML=`<span class="badge ${d.portal?'badge-portal':'badge-online'}">${d.backend==='wifiroam'?(d.role==='cap'?'主 AP':d.role==='sap'?'子 AP':'未组网'):(d.portal?'Portal(主)':'Peer(从)')}</span>`;
+    document.getElementById('self_ip').textContent=`${d.host_ipv4||'-'} / ${d.host_ipv6||'-'}`;
     document.getElementById('self_count').textContent=d.active_node_count||0;
     document.getElementById('self_time').textContent=d.system_time||'-';
 
-    const peers=d.peers||[];
+    const devices=Array.isArray(d.discovered_devices)?d.discovered_devices:[];
+    document.getElementById('discovered').innerHTML=devices.length?devices.map(p=>`<div class="row"><div>${ESC(p.name||p.model||'GWRT AP')}<div class="small">${ESC(p.ip||p.mac)}</div></div><a href="/cgi-bin/luci/admin/services/wifiroam/pairing">添加</a></div>`).join(''):'<div class="row small">暂无待添加的 GWRT AP；请将启用 Mesh 发现的未组网 AP 接入同一局域网。</div>';
+    const peers=Array.isArray(d.peers)?d.peers:[];
     const box=document.getElementById('peers');
     if(!peers.length){box.innerHTML='<div class="row small" style="justify-content:center;padding:2rem">暂无邻居节点</div>';return}
     box.innerHTML=peers.map(p=>`
-      <div class="row ${p.rssi===null?'offline':''}">
-        <div><div class="mac">${p.mac||'-'}</div><div class="small">最后见到: ${FMT(p.last_seen)}</div></div>
+      <div class="row ${p.online===false||(p.online==null&&p.rssi==null)?'offline':''}">
+        <div><div>${ESC(p.name||'')}</div><div class="mac">${ESC(p.mac||'-')}</div><div class="small">${p.ip?ESC(p.ip):'最后见到: '+FMT(p.last_seen)}</div></div>
         <div style="text-align:right">
-          <div class="signal ${CLS(p.rssi)}">${p.rssi!==null?p.rssi+' dBm':'离线'}</div>
-          <div class="small">${p.plink_state||'-'}</div>
+          <div class="signal ${CLS(p.rssi??null)}">${typeof p.rssi==='number'?p.rssi+' dBm':p.online?'在线':'离线'}</div>
+          <div class="small">${ESC(p.uplink?(p.uplink.type==='wired'?'有线':p.uplink.type==='wireless'?'无线':'回传待确认'):(p.plink_state||'-'))}</div>
         </div>
       </div>`).join('');
-  }catch(e){console.error(e);document.getElementById('peers').innerHTML='<div class="row" style="justify-content:center;color:red">加载失败: '+e.message+'</div>'}
+  }catch(e){console.error(e);document.getElementById('peers').innerHTML='<div class="row" style="justify-content:center;color:red">加载失败: '+ESC(e.message)+'</div>'}
+  finally{clearTimeout(timeout);loading=false;schedule(Math.max(250,5000-(Date.now()-started)));}
 }
-load();setInterval(load,10000);
+document.addEventListener('visibilitychange',()=>{clearTimeout(timer);if(!document.hidden)load();});
+load();
 </script>
 </body>
 </html>

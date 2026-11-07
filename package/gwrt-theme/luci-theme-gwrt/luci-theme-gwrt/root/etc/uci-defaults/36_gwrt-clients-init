@@ -8,7 +8,7 @@ if [ -x /etc/init.d/gwrt-clients ]; then
 	/etc/init.d/gwrt-clients start  2>/dev/null
 fi
 
-# 凌晨 0:00 cron: 清离线条目 + drop_caches
+# 兼容每日快照任务；离线设备由 daemon 每轮按 24 小时自动回收
 CRON_FILE=/etc/crontabs/root
 mkdir -p /etc/crontabs
 touch "$CRON_FILE"

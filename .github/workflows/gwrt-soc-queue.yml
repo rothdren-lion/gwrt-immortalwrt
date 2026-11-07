@@ -1,0 +1,94 @@
+name: GWRT SoC build queue
+run-name: GWRT selected models ${{ inputs.version }}
+'on':
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Firmware version (YYMMDD-NN)
+        type: string
+        required: true
+        default: 261107-02
+      release:
+        description: Also publish each successful preset to Releases
+        type: boolean
+        default: false
+permissions:
+  contents: write
+concurrency:
+  group: gwrt-soc-queue
+  cancel-in-progress: false
+jobs:
+  an7581:
+    uses: ./.github/workflows/gwrt-build.yml
+    with:
+      device: an758x
+      version: ${{ inputs.version }}
+      images: all
+      release: ${{ inputs.release }}
+      models: fiberhome_hg5585f-ct fiberhome_hg5585f-cu fiberhome_hg5585f-ct-usb-sfp fiberhome_hg5585f-cu-usb-sfp nokia_xg-040g-md nokia_xg-040g-md-ubi
+        nokia_xg-040g-md-ubi-usb-sfp
+  mt7981:
+    needs: an7581
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/gwrt-build.yml
+    with:
+      device: mt7981
+      version: ${{ inputs.version }}
+      images: all
+      release: ${{ inputs.release }}
+      models: qihoo_360t7 qihoo_360t7-ubi cudy_tr3000-256mb-v1 glinet_gl-mt3000 xingloo_ax3000 xingloo_ax3000-512m
+  ipq6010_ss01:
+    needs: mt7981
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/gwrt-build.yml
+    with:
+      device: ss01
+      version: ${{ inputs.version }}
+      images: all
+      release: ${{ inputs.release }}
+  ipq6010_cs02:
+    needs: ipq6010_ss01
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/gwrt-build.yml
+    with:
+      device: cs02
+      version: ${{ inputs.version }}
+      images: all
+      release: ${{ inputs.release }}
+  ipq6010_cs07:
+    needs: ipq6010_cs02
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/gwrt-build.yml
+    with:
+      device: cs07
+      version: ${{ inputs.version }}
+      images: all
+      release: ${{ inputs.release }}
+  ipq53xx_cs06:
+    needs: ipq6010_cs07
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/gwrt-build.yml
+    with:
+      device: cs06
+      version: ${{ inputs.version }}
+      images: all
+      release: ${{ inputs.release }}
+  ipq53xx_cs08:
+    needs: ipq53xx_cs06
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/gwrt-build.yml
+    with:
+      device: cs08
+      version: ${{ inputs.version }}
+      images: all
+      release: ${{ inputs.release }}
+  mt7986:
+    needs: ipq53xx_cs08
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/gwrt-build.yml
+    with:
+      device: mt7986
+      version: ${{ inputs.version }}
+      images: all
+      release: ${{ inputs.release }}
+      models: clx_s20p clx_s20l clx_s20m jdcloud_re-cp-03 netcore_n60-pro xiaomi_redmi-router-ax6000-stock xiaomi_redmi-router-ax6000-ubootmod

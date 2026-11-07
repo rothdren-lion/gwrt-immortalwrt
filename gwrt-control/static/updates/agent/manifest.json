@@ -1,0 +1,12 @@
+{
+  "version": 1712,
+  "artifacts": {},
+  "manual": {
+    "version": "1712-r7",
+    "url": "/updates/agent/gwrt-agent-1712-r7-aarch64.apk",
+    "signature": "/updates/agent/gwrt-agent-1712-r7-aarch64.apk.sig",
+    "sha256": "9347bcf3a6ba2779c08b8f3cd474b316d36d399814a28916e46d79bcda8387dc",
+    "requires_package_install": true
+  },
+  "note": "1712-r7 needs its JSON helper and dependencies; do not replace only the native binary."
+}

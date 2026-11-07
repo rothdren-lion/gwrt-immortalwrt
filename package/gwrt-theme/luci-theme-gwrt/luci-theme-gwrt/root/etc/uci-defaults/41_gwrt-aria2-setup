@@ -1,41 +1,30 @@
 #!/bin/sh
-# GWRT: aria2 优化 —— 下载目录落到数据分区 downloads/aria2，并启用加速源
-DL="$(uci -q get gwrt.downloads_dir)"
-[ -n "$DL" ] || DL=/mnt/storage/downloads
-ARIA_DIR="$DL/aria2"
-mkdir -p "$ARIA_DIR" && chmod 0777 "$ARIA_DIR"
+# Change the package's default download path only when data storage is mounted.
+# Preserve the administrator's enable switch, credentials, and custom paths.
+mounts=${GWRT_PROC_MOUNTS:-/proc/mounts}
+download_dir=$(uci -q get gwrt.downloads_dir 2>/dev/null)
+storage_mount=$(uci -q get gwrt.storage_mount 2>/dev/null)
+[ -n "$download_dir" ] && [ -n "$storage_mount" ] || exit 0
+[ -d "$download_dir" ] || exit 0
 
-uci -q set aria2.main.enabled='1'
-uci -q set aria2.main.dir="$ARIA_DIR"
-uci -q set aria2.main.download_dir="$ARIA_DIR"
-# 加速：多线程 + 分片 + 断点续传 + 走最快的镜像
-uci -q set aria2.main.continue='true'
-uci -q set aria2.main.split='16'
-uci -q set aria2.main.max_connection_per_server='16'
-uci -q set aria2.main.min_split_size='1M'
-uci -q set aria2.main.max_concurrent_downloads='16'
-uci -q set aria2.main.dht='true'
-uci -q set aria2.main.bt_tracker='true'
-uci -q set aria2.main.seed_ratio='1.0'
-uci -q set aria2.main.aria2_rpc_enable='true'
-uci -q set aria2.main.aria2_rpc_secret='gwrt'
-uci -q set aria2.main.rpc_listen_port='6800'
-uci -q set aria2.main.follow_torrent='mem'
-uci -q set aria2.main.auto_file_renaming='true'
-uci -q set aria2.main.user='root'
-# 国内加速镜像（OpenWrt 官方源 → 清华/上交镜像）
-uci -q set aria2.main.github_mirror='https://mirror.ghproxy.com/'
+mounted=$(awk -v target="$storage_mount" '{mp=$2; gsub(/\\040/, " ", mp); if (mp == target) {print 1; exit}}' "$mounts" 2>/dev/null)
+[ "$mounted" = 1 ] || {
+	logger -t 41_gwrt-aria2 "下载存储尚未挂载，保留 aria2 设置"
+	exit 0
+}
+case "$download_dir/" in
+	"${storage_mount%/}"/*) ;;
+	*) logger -t 41_gwrt-aria2 "下载目录不属于已挂载存储，保留 aria2 设置"; exit 0 ;;
+esac
+aria_dir="$download_dir/aria2"
+current_dir=$(uci -q get aria2.main.dir 2>/dev/null)
+case "$current_dir" in
+	""|/mnt/sda1/aria2|"$aria_dir") ;;
+	*) exit 0 ;;
+esac
+mkdir -p "$aria_dir" || exit 0
+chmod 0775 "$aria_dir" 2>/dev/null
+uci -q set aria2.main.dir="$aria_dir"
 uci -q commit aria2
-
-# aria2 的 opkg/apk 源加速（与 rpcd 无关，写 dnsmasq 无关项）
-mkdir -p /etc/gwrt
-cat > /etc/gwrt/mirrors.conf <<'EOF'
-# GWRT 软件源加速（首次刷机后 uci-defaults 只跑一次，这里作为常备配置）
-DISTRIB_ARCH=aarch64_cortex-a53
-SRC_PACKAGES=https://mirrors.tuna.tsinghua.edu.cn/immortalwrt/packages
-SRC_BASE=https://mirrors.tuna.tsinghua.edu.cn/immortalwrt
-EOF
-
-/etc/init.d/aria2 restart 2>/dev/null
-logger -t 41_gwrt-aria2 "aria2 已配置 dir=$ARIA_DIR rpc=6800 加速源已写入 /etc/gwrt/mirrors.conf"
+logger -t 41_gwrt-aria2 "使用已挂载数据分区的下载目录 $aria_dir"
 exit 0

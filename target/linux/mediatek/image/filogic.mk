@@ -2479,7 +2479,8 @@ define Device/clx_s20m
   DEVICE_DTS_DIR := ../dts
   DEVICE_DTC_FLAGS := --pad 4096
   DEVICE_DTS_LOADADDR := 0x43f00000
-  DEVICE_PACKAGES := kmod-usb3 \
+  DEVICE_PACKAGES := -kmod-mt7915e -kmod-mt7986-firmware -mt7986-wo-firmware -wpad-openssl \
+	kmod-usb3 \
 	kmod-nvme nvme-cli \
 	automount e2fsprogs f2fsck mkf2fs
   KERNEL_LOADADDR := 0x44000000

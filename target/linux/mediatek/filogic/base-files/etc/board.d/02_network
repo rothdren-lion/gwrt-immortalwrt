@@ -391,9 +391,26 @@ mediatek_setup_macs()
 		label_mac=$lan_mac
 		;;
 	qihoo,360t7)
-		lan_mac=$(mtd_get_mac_ascii factory lanMac)
-		wan_mac=$(macaddr_add "$lan_mac" 1)
-		label_mac=$wan_mac
+		# The non-UBI 360T7 DTS labels this partition "Factory". A lowercase
+		# lookup returned an empty MAC, and macaddr_add turned that into ":".
+		lan_mac=$(mtd_get_mac_ascii Factory lanMac)
+		case "$lan_mac" in
+			[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F])
+				first_octet=$((0x${lan_mac%%:*}))
+				if [ $((first_octet & 1)) -eq 0 ] &&
+				   [ "$lan_mac" != "00:00:00:00:00:00" ]; then
+					wan_mac=$(macaddr_add "$lan_mac" 1)
+					label_mac=$wan_mac
+				else
+					echo "invalid Qihoo 360T7 factory LAN MAC '$lan_mac'; keeping kernel addresses" >&2
+					lan_mac=""
+				fi
+				;;
+			*)
+				echo "missing or invalid Qihoo 360T7 factory LAN MAC; keeping kernel addresses" >&2
+				lan_mac=""
+				;;
+		esac
 		;;
 	tplink,eap683-lr|\
 	tplink,f65-v1)

@@ -109,6 +109,8 @@
 	};
 
 	gmac1: mac@1 {
+		/* S20M omits the external 2.5G port fitted to S20/S20P. */
+		status = "disabled";
 		compatible = "mediatek,eth-mac";
 		reg = <1>;
 		nvmem-cells = <&macaddr_factory_24 0>;

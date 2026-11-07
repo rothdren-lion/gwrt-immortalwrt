@@ -1,5 +1,5 @@
 #!/bin/sh
-# GWRT-Agent — 重写版 (v1712-shim, 对应 gwrt-agent-1712-r2)
+# GWRT-Agent — v1712-r7 shell reporting / mesh control adapter
 #
 # 背景: 原 1712 预编译二进制与 op.gwrt.uk 服务端契约错配, 导致上报全失败:
 #   1. 认证: 原版用 X-GWRT-Token: <local_token>  -> 服务端要 Authorization: Bearer <pair_token>
@@ -17,7 +17,8 @@
 
 ORIG="/usr/sbin/gwrt-agent.bin"
 CFG="/etc/config/gwrt-agent"
-UA="gwrt-agent/1712-r2"
+UA="gwrt-agent/1712-r7"
+JSON_HELPER="/usr/share/gwrt-agent/json.uc"
 
 log() { logger -t gwrt-agent "$@"; }
 
@@ -30,8 +31,8 @@ api() {
 	local path="$1" body="$2" rsp rc err
 	# 失败时不能只返回空串：日志里会变成 "report FAILED:" 什么都看不到。
 	# 这里把 curl 退出码 + stderr 一起带回，方便判断是 DNS/超时/TLS/HTTP 码。
-	err=$(mktemp 2>/dev/null)
-	rsp=$(curl -4 -s -m 20 -w '\n__HTTP__%{http_code}' \
+	err=$(mktemp 2>/dev/null) || { echo '__API_FAIL__ temporary file'; return 1; }
+	rsp=$(curl -4 -sS -m 20 --noproxy '*' -w '\n__HTTP__%{http_code}' \
 		-H "Content-Type: application/json" \
 		-H "User-Agent: $UA" \
 		-H "Authorization: Bearer $(cfg pair_token)" \
@@ -79,204 +80,228 @@ did() { cfg device_id; }
 #   C 二进制的 dump 会永久卡在 ubus call 上 -> shim 拿到空 body -> 上报 400。
 #   这里给 dump 加超时保护，并在拿不到遥测时退回一个最小合法载荷。
 payload() {
-	[ -x "$ORIG" ] || { echo "{}"; return; }
-	local _tmp=/tmp/gwrt-agent/dump.$$ _out="" _pid _i=0
+	local _tmp _pid _i=0
 	mkdir -p /tmp/gwrt-agent
-	( "$ORIG" dump >"$_tmp" 2>/dev/null ) &
-	_pid=$!
-	while [ $_i -lt 8 ] && kill -0 "$_pid" 2>/dev/null; do sleep 1; _i=$((_i+1)); done
-	if kill -0 "$_pid" 2>/dev/null; then
-		kill -9 "$_pid" 2>/dev/null; wait "$_pid" 2>/dev/null
-		_out=""
-	else
-		wait "$_pid" 2>/dev/null
-		_out=$(cat "$_tmp" 2>/dev/null)
+	_tmp=$(mktemp /tmp/gwrt-agent/dump.XXXXXX) || return 1
+	if [ -x "$ORIG" ]; then
+		( "$ORIG" dump >"$_tmp" 2>/dev/null ) &
+		_pid=$!
+		while [ $_i -lt 8 ] && kill -0 "$_pid" 2>/dev/null; do sleep 1; _i=$((_i+1)); done
+		if kill -0 "$_pid" 2>/dev/null; then
+			kill -9 "$_pid" 2>/dev/null; wait "$_pid" 2>/dev/null
+			: >"$_tmp"
+		else
+			wait "$_pid" 2>/dev/null
+		fi
 	fi
-	rm -f "$_tmp" 2>/dev/null
-	if [ -z "$_out" ]; then
-		_out="{\"device_id\":\"$(did)\",\"agent_version\":1712,\"arch\":\"aarch64\",\"firmware_version\":\"$(. /etc/openwrt_release 2>/dev/null; echo "$DISTRIB_DESCRIPTION")\",\"telemetry\":{},\"clients\":[],\"packages\":{},\"containers\":{},\"oaf\":{},\"topology\":{}}"
-	fi
-	_out=$(printf '%s' "$_out" | sed 's/"hardware_id":"[^"]*",//; s/,"hardware_id":"[^"]*"//' | tr -d '\n')
-	case "$_out" in
-	*\}) _out="${_out%?},\"gwrt_mesh\":$(mesh_report)}" ;;
-	esac
-	printf '%s\n' "$_out"
-	return 0
+	mesh_report >"$_tmp.mesh" || { rm -f "$_tmp" "$_tmp.mesh"; return 1; }
+	ucode "$JSON_HELPER" payload "$_tmp" "$(did)" "$(uname -m)" \
+		"$(. /etc/openwrt_release 2>/dev/null; echo "$DISTRIB_DESCRIPTION")" "@$_tmp.mesh"
+	local rc=$?
+	rm -f "$_tmp" "$_tmp.mesh"
+	return "$rc"
 }
 
-jstr() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+jstr() { ucode "$JSON_HELPER" quote "$1"; }
 
 mesh_report() {
-	local st role capip online apmode ssids disc fw
-	st=$(ubus call wifiroam status 2>/dev/null)
-	if [ -z "$st" ]; then
-		printf '{"available":false}'
-		return
-	fi
-	role=$(printf '%s' "$st" | jsonfilter -e '@.role' 2>/dev/null)
-	capip=$(printf '%s' "$st" | jsonfilter -e '@.cap_ip' 2>/dev/null)
-	online=$(printf '%s' "$st" | jsonfilter -e '@.peers_online' 2>/dev/null)
-	[ -n "$online" ] || online=0
-	[ "$capip" = "null" ] && capip=""
-	apmode=0
+	local dir apmode=0 rc
+	mkdir -p /tmp/gwrt-agent
+	dir=$(mktemp -d /tmp/gwrt-agent/mesh.XXXXXX) || return 1
+	ubus -t 3 call wifiroam status >"$dir/status" 2>/dev/null
+	[ -s "$dir/status" ] || { rm -rf "$dir"; printf '{"available":false}'; return; }
 	[ -f /etc/gwrt-apmode.state ] && apmode=1
-	ssids=""
-	for x in $(printf '%s' "$st" | jsonfilter -e '@.roam.ssids[*]' 2>/dev/null); do
-		ssids="$ssids\"$(jstr "$x")\","
-	done
-	ssids="[${ssids%,}]"
-	disc=""
-	if [ "$role" = "cap" ]; then
-		for m in $(ubus call wifiroam discover 2>/dev/null | jsonfilter -e '@.devices[*].mac' 2>/dev/null); do
-			disc="$disc\"$m\","
-		done
-	fi
-	disc="[${disc%,}]"
-	fw=$(. /etc/openwrt_release 2>/dev/null; echo "$DISTRIB_DESCRIPTION")
-	printf '{"available":true,"role":"%s","cap_ip":"%s","peers_online":%s,"apmode":%s,"ssids":%s,"discover":%s,"firmware":"%s"}' \
-		"$role" "$capip" "$online" "$apmode" "$ssids" "$disc" "$(jstr "$fw")"
-}
-
-payload_orig() {
-	[ -x "$ORIG" ] || { echo "{}"; return; }
-	# 2026-10-09: 连 hardware_id 前面的逗号一起吃掉，避免它是末字段时
-	# 产出 {"a":1,} 这种尾逗号非法 JSON（服务端会 500）
-	# 2026-10-21 修正：旧式 `,\?"hardware_id":"[^"]*",\?` 在字段位于中间时
-	# 会把前后两个逗号同时吃掉 -> {"a":1"b":2} 非法 JSON（真机 261021-01 实测
-	# jsonfilter/ucode 双验证非法）。改为两次替换，每次只吃一个逗号：
-	#   ① 中间/首字段：吃尾部逗号   ② 末字段：吃前导逗号
-	"$ORIG" dump 2>/dev/null | sed 's/"hardware_id":"[^"]*",//; s/,"hardware_id":"[^"]*"//'
+	ubus -t 3 call wifiroam discover >"$dir/discover" 2>/dev/null
+	ubus -t 3 call wifiroam topology >"$dir/topology" 2>/dev/null
+	ucode "$JSON_HELPER" mesh "@$dir/status" "@$dir/discover" "@$dir/topology" "$apmode"
+	rc=$?
+	rm -rf "$dir"
+	return "$rc"
 }
 
 # read report_interval from a response (fallback: uci config, default 30, floor 5)
 interval_of() {
 	local n
-	n=$(echo "$1" | grep -o '"report_interval":[0-9]*' | grep -o '[0-9]*$')
-	case "$n" in
-	''|*[!0-9]*) n=$(cfg report_interval); [ -n "$n" ] || n=30;;
-	*) [ "$n" -lt 5 ] && n=5;;
-	esac
+	n=$(printf '%s' "$1" | jsonfilter -e '@.report_interval' 2>/dev/null)
+	case "$n" in ''|*[!0-9]*|????????*) n=$(cfg report_interval);; esac
+	case "$n" in ''|*[!0-9]*|????????*) n=30;; esac
+	# Both server and local settings must be bounded; invalid UCI must never spin.
+	[ "$n" -lt 5 ] && n=5
+	[ "$n" -gt 3600 ] && n=3600
 	echo "$n"
-}
-
-# 自愈：服务端不认当前身份（旧记录/token 不匹配）-> 重新生成一机一码并注册（每次运行只做一次）
-GWRT_IDENTITY_RESET=""
-reset_identity() {
-	[ "$GWRT_IDENTITY_RESET" = "1" ] && return 1
-	GWRT_IDENTITY_RESET=1
-	local did tok
-	did="GWRT-$(rand_hex 24)"
-	tok="$(rand_hex 24)"
-	uci -q set gwrt-agent.main.device_id="$did"
-	uci -q set gwrt-agent.main.pair_token="$tok"
-	uci -q set gwrt-agent.main.local_token="$(rand_hex 48)"
-	uci -q commit gwrt-agent
-	log "服务端不认旧身份 -> 已重新生成一机一码 (device_id=$did)"
-	do_pair >/dev/null 2>&1
-	return 0
 }
 
 do_report() {
 	local rsp body
-	body=$(payload)
+	body=$(payload) || { log 'report FAILED: telemetry serialization'; return 1; }
 	rsp=$(api /api/agent/report "$body")
-	case "$rsp" in
-	*'unknown device or token'*)
-		# 旧身份被服务端拒 -> 重生成身份后重试一次
-		if reset_identity; then
-			body=$(payload)
-			rsp=$(api /api/agent/report "$body")
-		fi
-		;;
-	esac
-	case "$rsp" in
-	*'"ok":true'*)
-		log "report ok: $(echo "$rsp" | grep -o '"report_interval":[0-9]*')"
-		echo "$rsp";;
-	*)
+	# A server-side identity error must not silently discard an existing binding.
+	if [ "$(jsonfilter -s "$rsp" -e '@.ok' 2>/dev/null)" = true ]; then
+		log "report ok: interval=$(interval_of "$rsp")"
+	else
 		log "report FAILED: $rsp"
-		echo "$rsp";;
-	esac
+	fi
+	printf '%s\n' "$rsp"
 }
 
-do_pull() { api /api/agent/pull "{\"device_id\":\"$(did)\"}"; }
+do_pull() { api /api/agent/pull "{\"device_id\":\"$(jstr "$(did)")\"}"; }
 
-do_ack() { # $1=command_id  $2=status
-	api /api/agent/ack "{\"device_id\":\"$(did)\",\"command_id\":\"$1\",\"status\":\"$2\"}"
+do_ack() { # $1=command_id  $2=status  $3=optional native result
+	[ -n "$1" ] || return 0
+	local result=""
+	[ "$#" -ge 3 ] && result=",\"result\":\"$(jstr "$3")\""
+	api /api/agent/ack "{\"device_id\":\"$(jstr "$(did)")\",\"command_id\":\"$(jstr "$1")\",\"status\":\"$2\"$result}"
 }
 
 do_heartbeat() { api /api/agent/heartbeat "{\"device_id\":\"$(did)\"}"; }
+
+command_value() {
+	local value path
+	for path in "@.$2" "@.payload.$2" "@.params.$2" "@.data.$2"; do
+		value=$(jsonfilter -s "$1" -e "$path" 2>/dev/null)
+		[ -n "$value" ] && { printf '%s' "$value"; return 0; }
+	done
+	return 1
+}
+
+mesh_rpc() {
+	local result body="$2"
+	[ -n "$body" ] || body='{}'
+	result=$(ubus -t 5 call wifiroam "$1" "$body" 2>/dev/null) || return 1
+	[ "$(jsonfilter -s "$result" -e '@.ok' 2>/dev/null)" = true ]
+}
+
+valid_mac() {
+	[ "${#1}" = 17 ] || return 1
+	case "$1" in *[!0-9a-fA-F:]*) return 1;; esac
+	printf '%s\n' "$1" | grep -Eq '^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$'
+}
+
+mesh_member() {
+	local file joined
+	mkdir -p /tmp/gwrt-agent
+	file=$(mktemp /tmp/gwrt-agent/member.XXXXXX) || return 1
+	ubus -t 3 call wifiroam topology >"$file" 2>/dev/null
+	joined=$(ucode "$JSON_HELPER" member "@$file" "$1")
+	rm -f "$file"
+	[ "$joined" = 1 ]
+}
+
+mesh_pair_one() {
+	local mac="$1" n=0
+	valid_mac "$mac" || return 1
+	mesh_member "$mac" && return 0
+	mesh_rpc pair "{\"mac\":\"$mac\"}" || return 1
+	# pair() only accepts the asynchronous request. Confirm the authenticated
+	# topology before reporting success to the app, just as the LuCI view does.
+	while [ "$n" -lt 23 ]; do
+		mesh_member "$mac" && return 0
+		sleep 2
+		n=$((n + 1))
+	done
+	return 1
+}
+
+# Preserve the original agent's local command validation and binding protocol.
+# Only authenticated cloud commands selected by run_command reach this bridge.
+native_command() {
+	local action="$1" command="$2" body result lanip data
+	[ -x "$ORIG" ] && command -v timeout >/dev/null 2>&1 || return 1
+	data=$(jsonfilter -s "$command" -e '@.payload' 2>/dev/null)
+	[ -n "$data" ] || data=$(jsonfilter -s "$command" -e '@.params' 2>/dev/null)
+	[ -n "$data" ] || data='{}'
+	body="{\"kind\":\"$(jstr "$action")\",\"payload\":$data}"
+	lanip=$(ubus -t 3 call network.interface.lan status 2>/dev/null | jsonfilter -e '@["ipv4-address"][0].address' 2>/dev/null)
+	[ -n "$lanip" ] || return 1
+	result=$(printf '%s' "$body" | REQUEST_METHOD=POST QUERY_STRING=op=command \
+		REMOTE_ADDR="$lanip" HTTP_X_GWRT_TOKEN="$(cfg local_token)" \
+		CONTENT_LENGTH="$(printf '%s' "$body" | wc -c)" timeout 45 "$ORIG" cgi) || return 1
+	result=$(printf '%s\n' "$result" | tr -d '\r' | sed -n '/^{/,$p')
+	[ "$(jsonfilter -s "$result" -e '@.ok' 2>/dev/null)" = true ] || return 1
+	NATIVE_RESULT=$(jsonfilter -s "$result" -e '@.result' 2>/dev/null)
+	return 0
+}
 
 # v1 命令执行: 默认关闭(只记日志+ack failed), uci 远程开关:
 #   uci set gwrt-agent.main.remote_exec=1 && uci commit gwrt-agent
 run_command() { # $1=json-command-object
 	local j="$1" action
 	# 云端 17.x 用 "kind"，老接口用 "action"，两个都认
-	action=$(echo "$j" | grep -o '"action":"[^"]*"' | head -1 | cut -d'"' -f4)
-	[ -n "$action" ] || action=$(echo "$j" | grep -o '"kind":"[^"]*"' | head -1 | cut -d'"' -f4)
-	local cid
-	cid=$(echo "$j" | grep -o '"command_id":"[^"]*"' | head -1 | cut -d'"' -f4)
-	[ -n "$cid" ] || cid=$(echo "$j" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+	action=$(command_value "$j" action)
+	[ -n "$action" ] || action=$(command_value "$j" kind)
+	local cid mac nr en json st m result count failed
+	cid=$(command_value "$j" command_id)
+	[ -n "$cid" ] || cid=$(command_value "$j" id)
 	[ -n "$action" ] || { log "pull: unparsable command: $j"; return; }
 	log "pull: command action=$action id=$cid"
+	case "$action" in
+	agent.refresh) do_ack "$cid" success; return;;
+	agent.issue_local_token|agent.rotate_local_token)
+		if native_command "$action" "$j"; then do_ack "$cid" success "$NATIVE_RESULT";
+		else do_ack "$cid" failed; fi
+		return;;
+	esac
 	# mesh 控制默认开启（只操作 wifiroam）；危险命令仍要 remote_exec=1
 	if [ "$(cfg mesh_control)" != "0" ]; then
 		case "$action" in
 		mesh.pair)
-			mac=$(echo "$j" | grep -o '"mac":"[^"]*"' | head -1 | cut -d'"' -f4)
+			mac=$(command_value "$j" mac)
+			count=0; failed=0
 			if [ -n "$mac" ]; then
-				ubus call wifiroam pair "{\"mac\":\"$mac\"}" >/dev/null 2>&1
+				count=1
+				mesh_pair_one "$mac" || failed=1
 			else
-				for m in $(ubus call wifiroam discover 2>/dev/null | jsonfilter -e '@.devices[*].mac' 2>/dev/null); do
-					ubus call wifiroam pair "{\"mac\":\"$m\"}" >/dev/null 2>&1
+				for m in $(ubus -t 3 call wifiroam discover 2>/dev/null | jsonfilter -e '@.devices[*].mac' 2>/dev/null); do
+					count=$((count + 1))
+					mesh_pair_one "$m" || failed=1
 				done
 			fi
-			log "mesh: pair ${mac:-all}"
-			do_ack "$cid" success
+			result=failed
+			[ "$count" -gt 0 ] && [ "$failed" = 0 ] && result=success
+			log "mesh: pair ${mac:-all} $result"
+			do_ack "$cid" "$result"
+			return ;;
+		mesh.unpair)
+			mac=$(command_value "$j" mac)
+			result=failed
+			if valid_mac "$mac" && mesh_rpc unpair "{\"mac\":\"$mac\"}"; then result=success; fi
+			do_ack "$cid" "$result"
 			return ;;
 		mesh.role)
-			nr=$(echo "$j" | grep -o '"role":"[^"]*"' | head -1 | cut -d'"' -f4)
+			nr=$(command_value "$j" role)
 			case "$nr" in
-			cap|sap|unconfigured)
-				ubus call wifiroam set_role "{\"role\":\"$nr\"}" >/dev/null 2>&1
-				log "mesh: role -> $nr"
-				do_ack "$cid" success ;;
+			cap|unconfigured)
+				result=failed
+				mesh_rpc set_role "{\"role\":\"$nr\"}" && result=success
+				log "mesh: role -> $nr $result"
+				do_ack "$cid" "$result" ;;
 			*) do_ack "$cid" failed ;;
 			esac
 			return ;;
 		mesh.apmode)
-			en=$(echo "$j" | grep -o '"enabled":[0-9]*' | head -1 | grep -o '[0-9]*$')
-			[ -n "$en" ] || en=1
-			uci -q set gwrt.mesh_apmode.enabled="$en"
-			uci -q commit gwrt
+			en=$(command_value "$j" enabled)
+			case "$en" in 0|1) ;; *) do_ack "$cid" failed; return;; esac
+			result=failed
 			if [ "$en" = "0" ]; then
-				# 强制退出 AP：恢复 192.168.3.3 + 本机 DHCP + 插件，并解绑
-				ubus call wifiroam set_role '{"role":"unconfigured"}' >/dev/null 2>&1
-				/usr/libexec/gwrt-mesh-apmode restore >/dev/null 2>&1
-				/etc/init.d/gwrt-mesh-apmode stop >/dev/null 2>&1
-				log "mesh: apmode=0 (forced back to router + unpaired)"
+				/usr/libexec/gwrt-mesh-apmode off >/dev/null 2>&1 && result=success
 			else
-				/etc/init.d/gwrt-mesh-apmode restart >/dev/null 2>&1
-				log "mesh: apmode=1"
+				uci -q set gwrt.mesh_apmode.enabled=1 && uci -q commit gwrt &&
+					/etc/init.d/gwrt-mesh-apmode restart >/dev/null 2>&1 && result=success
 			fi
-			do_ack "$cid" success
+			log "mesh: apmode=$en $result"
+			do_ack "$cid" "$result"
 			return ;;
 		mesh.ssid_sync)
-			if [ "$(uci -q get wifiroam.core.role)" = "cap" ]; then
-				json=""
-				for x in $(uci -q get wifiroam.roam.ssids); do
-					json="$json\"$x\","
-				done
-				json="[${json%,}]"
-				en=true
-				[ "$(uci -q get wifiroam.roam.enabled)" = "1" ] || en=false
-				ubus call wifiroam set_roam "{\"enabled\":$en,\"ssids\":$json,\"r_fast\":true,\"ft_mode\":\"simple\",\"ft_over_ds\":true,\"k_neighbor\":true,\"k_beacon\":true,\"v_bss_transition\":true,\"rssi_profile\":\"balanced\",\"rssi_threshold\":-70}" >/dev/null 2>&1
-				log "mesh: ssid sync pushed"
-			else
-				/etc/init.d/wifiroam restart >/dev/null 2>&1
-				log "mesh: wifiroam restarted to receive config"
-			fi
-			do_ack "$cid" success
+			st=$(ubus -t 3 call wifiroam status 2>/dev/null)
+			result=failed
+			case "$(jsonfilter -s "$st" -e '@.role' 2>/dev/null)" in
+			cap)
+				json=$(jsonfilter -s "$st" -e '@.roam' 2>/dev/null)
+				[ -n "$json" ] && mesh_rpc set_roam "$json" && result=success ;;
+			sap) /etc/init.d/wifiroam restart >/dev/null 2>&1 && result=success ;;
+			esac
+			log "mesh: ssid sync $result"
+			do_ack "$cid" "$result"
 			return ;;
 		esac
 	fi
@@ -291,27 +316,35 @@ run_command() { # $1=json-command-object
 		sleep 2; reboot;;
 	system.hostname.set)
 		local hn
-		hn=$(echo "$j" | grep -o '"hostname":"[^"]*"' | head -1 | cut -d'"' -f4)
-		[ -n "$hn" ] && { uci set system.@system[0].hostname="$hn"; uci commit system; }
-		do_ack "$cid" success;;
+		hn=$(command_value "$j" hostname)
+		if [ -n "$hn" ] && [ "${#hn}" -le 63 ] && printf '%s\n' "$hn" | grep -Eq '^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$' &&
+			uci set system.@system[0].hostname="$hn" && uci commit system; then
+			do_ack "$cid" success
+		else do_ack "$cid" failed; fi;;
+	wifi.*|network.*|plugin.*|client.*|oaf.*|package.*|istore.install|terminal.exec)
+		if native_command "$action" "$j"; then do_ack "$cid" success "$NATIVE_RESULT";
+		else do_ack "$cid" failed; fi;;
 	*)
 		do_ack "$cid" failed;;
 	esac
 }
 
 handle_commands() {
-	local rsp cmds
+	local rsp cmds requested
+	GWRT_PULL_INTERVAL=""
 	rsp=$(do_pull)
-	case "$rsp" in
-	*'"commands":[]'*) return;;
-	*'"commands":['*)
-		# 粗解析每个 command 对象 (v1: 命令体小, {} 匹配)
-		echo "$rsp" | sed -n 's/.*"commands":\[\(.*\)\].*/\1/p' | \
-		sed 's/},{/}\n{/g' | while IFS= read -r c; do
+	requested=$(jsonfilter -s "$rsp" -e '@.report_interval' 2>/dev/null)
+	if [ "$(jsonfilter -s "$rsp" -e '@.ok' 2>/dev/null)" = true ] && [ -n "$requested" ]; then
+		GWRT_PULL_INTERVAL=$(interval_of "$rsp")
+	fi
+	cmds=$(jsonfilter -s "$rsp" -e '@.commands[*]' 2>/dev/null)
+	if [ -n "$cmds" ]; then
+		printf '%s\n' "$cmds" | while IFS= read -r c; do
 			[ -n "$c" ] && run_command "$c"
-		done;;
-	*) log "pull FAILED: $rsp";;
-	esac
+		done
+	elif [ "$(jsonfilter -s "$rsp" -e '@.commands' 2>/dev/null)" != '[ ]' ]; then
+		log "pull FAILED: $rsp"
+	fi
 }
 
 do_once() {
@@ -324,9 +357,9 @@ do_once() {
 
 do_pair() {
 	local rsp
-	rsp=$(api /api/agent/register "{\"device_id\":\"$(did)\",\"agent_version\":1712,\"arch\":\"aarch64\"}")
-	case "$rsp" in
-	*'"ok":true'*)
+	rsp=$(api /api/agent/register "{\"device_id\":\"$(jstr "$(did)")\",\"agent_version\":1712,\"arch\":\"$(uname -m)\"}")
+	case "$(jsonfilter -s "$rsp" -e '@.ok' 2>/dev/null)" in
+	true)
 		echo "注册成功: $rsp"
 		echo "设备码 device_id: $(did)"
 		echo "配对码 pair_token: $(cfg pair_token)";;
@@ -335,7 +368,7 @@ do_pair() {
 }
 
 do_status() {
-	echo "gwrt-agent v1712-r2 (shim)"
+	echo "gwrt-agent v1712-r7 (shim)"
 	echo "device_id=$(did)"
 	echo "hardware_id=$(cfg hardware_id)"
 	echo "endpoint=$(endpoint)"
@@ -351,7 +384,15 @@ GWRT_SHARED_PAIR_TOKEN="99ec5d8f1c980bfe1ef131d6"
 GWRT_SHARED_LOCAL_TOKEN="13258689ddbbe015f1ff35740cbcb1424851c76713b2d37e"
 GWRT_SHARED_HARDWARE_ID="HW-b075f4d903f9d9835d136a5595118216"
 
-rand_hex() { cat /proc/sys/kernel/random/uuid 2>/dev/null | tr -d - | cut -c1-$1; }
+rand_hex() {
+	local n="$1" value="" part
+	while [ "${#value}" -lt "$n" ]; do
+		part=$(cat /proc/sys/kernel/random/uuid 2>/dev/null | tr -d -)
+		[ -n "$part" ] || return 1
+		value="$value$part"
+	done
+	printf '%s' "$value" | cut -c1-"$n"
+}
 
 ensure_device_id() {
 	local cur base did changed=0 need_id=0 need_token=0
@@ -376,7 +417,11 @@ ensure_device_id() {
 		esac
 		if [ "$need_id" = "1" ]; then
 			# 全新设备：按 hardware_id 派生（稳定、可复现）
-			did="GWRT-$(printf '%s' "$base" | sha256sum | cut -c1-24)"
+			if [ -n "$base" ]; then
+				did="GWRT-$(printf '%s' "$base" | sha256sum | cut -c1-24)"
+			else
+				did="GWRT-$(rand_hex 24)"
+			fi
 		else
 			# 迁移设备（旧记录已存在）：全新随机 ID
 			did="GWRT-$(rand_hex 24)"
@@ -407,33 +452,44 @@ ensure_device_id() {
 }
 
 daemon() {
-	log "daemon start (shim v1712-r2, endpoint=$(endpoint))"
+	log "daemon start (shim v1712-r7, endpoint=$(endpoint))"
 	ensure_device_id
-	local iv; iv=$(interval_of "")   # 初始: uci report_interval (30)
+	local iv next_report=0 started current delay rsp
+	iv=$(interval_of "")
 	while :; do
-		# 有网才发; 网络断了快速重试
+		started=$(date +%s)
 		if ip route 2>/dev/null | grep -q '^default'; then
-			local rsp
-			rsp=$(do_report)
-			# 服务端动态调节节奏(实测 5s/600s 两种), 跟随; 失败则维持原间隔
-			case "$rsp" in *'"ok":true'*) iv=$(interval_of "$rsp");; esac
+			# Keep command polling responsive even when telemetry is idle.
 			handle_commands
+			if [ -n "$GWRT_PULL_INTERVAL" ]; then
+				[ "$GWRT_PULL_INTERVAL" -lt "$iv" ] && next_report=0
+				iv="$GWRT_PULL_INTERVAL"
+			fi
+			current=$(date +%s)
+			if [ "$current" -ge "$next_report" ]; then
+				rsp=$(do_report)
+				[ "$(jsonfilter -s "$rsp" -e '@.ok' 2>/dev/null)" = true ] && iv=$(interval_of "$rsp")
+				next_report=$((current+iv))
+			fi
 		fi
-		sleep "$iv"
+		delay=$((5-($(date +%s)-started)))
+		[ "$delay" -gt 0 ] || delay=1
+		sleep "$delay"
 	done
 }
 
 case "${1:-daemon}" in
 	daemon|run) daemon;;
 	once) do_once;;
-	pair) shift; exec "$ORIG" pair "$@" ;;   # 2026-10-21 修复：转发原二进制，恢复 gwrt-pair-v2 绑定流程（claim_token + pair_uri + --qr）
+	pair) shift; if [ -x "$ORIG" ]; then exec "$ORIG" pair "$@"; else echo 'gwrt-agent: this architecture has no gwrt-pair-v2 binary' >&2; exit 1; fi ;;
 	dump) payload;;
-	cmd) shift; run_command "${1:-{}}";;
+	mesh) mesh_report;;
+	cmd) shift; command_json="$1"; [ -n "$command_json" ] || command_json='{}'; run_command "$command_json";;
 	status) do_status;;
-	version|ver) echo "gwrt-agent 1712-r2";;
+	version|ver) echo "gwrt-agent 1712-r7";;
 	cgi) [ -x "$ORIG" ] && exec "$ORIG" cgi || { echo "Status: 500"; echo; echo '{"ok":false,"error":"orig missing"}'; };;
 	help|-h|--help)
-		echo "用法: gwrt-agent [daemon|once|pair|dump|status|version|cgi|help]";;
+		echo "用法: gwrt-agent [daemon|once|pair|dump|mesh|cmd|status|version|cgi|help]";;
 	*) # 未知参数转发原二进制, 保证兼容
 		[ -x "$ORIG" ] && exec "$ORIG" "$@" || { echo "gwrt-agent: unknown command '$1'" >&2; exit 1; };;
 esac

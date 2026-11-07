@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/version.mk
 
 PKG_NAME:=ipq-wifi
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL=$(PROJECT_GIT)/project/firmware/qca-wireless.git
@@ -15,6 +15,12 @@ PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_SOURCE_SUBDIR)
 PKG_FLAGS:=nonshared
 
 include $(INCLUDE_DIR)/package.mk
+
+define Build/Prepare
+	$(call Build/Prepare/Default)
+	$(CP) $(CURDIR)/src/board-xiaomi_be6500.* $(PKG_BUILD_DIR)/
+	$(if $(wildcard $(CURDIR)/files-*),$(CP) $(CURDIR)/files-*/* $(PKG_BUILD_DIR)/)
+endef
 
 define Build/Compile
 endef
@@ -31,6 +37,7 @@ endef
 
 ALLWIFIBOARDS:= \
 	xiaomi_be10000 \
+	xiaomi_be6500 \
 	xiaomi_be7000 \
 	jdcloud_re-cs-06 \
 	ubnt_utr \
@@ -358,6 +365,8 @@ $(eval $(call generate-ipq-wifi-package,ubnt_utr,Ubiquiti UniFi Travel Router))
 $(eval $(call generate-ipq-wifi-package,jdcloud_re-cs-06,JDCloud RE-CS-06))
 
 $(eval $(call generate-ipq-wifi-package,xiaomi_be7000,Xiaomi BE7000))
+
+$(eval $(call generate-ipq-wifi-package,xiaomi_be6500,Xiaomi BE6500))
 
 $(eval $(call generate-ipq-wifi-package,xiaomi_be10000,Xiaomi BE10000))
 

@@ -1,12 +1,13 @@
 #!/bin/sh
-# 为 GWRT 主题启用 dnsmasq DHCP 指纹钩子（option 60/55 → 系统特性识别）
-# 仅当钩子存在且当前未指向它时设置；不覆盖用户自定义 dhcpscript。
-
-[ -x /usr/libexec/gwrt-dhcp-fp ] || exit 0
-
-cur="$(uci -q get dhcp.@dnsmasq[0].dhcpscript)"
-if [ "$cur" != "/usr/libexec/gwrt-dhcp-fp" ]; then
-	uci -q set dhcp.@dnsmasq[0].dhcpscript='/usr/libexec/gwrt-dhcp-fp'
+# DHCP 指纹由 /etc/hotplug.d/dhcp/30-gwrt-dhcp-fp 处理。
+#
+# 旧版本把 /usr/libexec/gwrt-dhcp-fp 配成 dnsmasq 的 USER_DHCPSCRIPT。
+# dnsmasq 在 ujail 沙箱中 source 该脚本，沙箱没有 tr/sed，导致每次租约
+# 事件刷 "tr: not found"，同时 hotplug 路径仍会再次执行。只删除我们自己
+# 写入的旧值，保留用户的自定义 dhcpscript。
+cur="$(uci -q get dhcp.@dnsmasq[0].dhcpscript 2>/dev/null)"
+if [ "$cur" = "/usr/libexec/gwrt-dhcp-fp" ]; then
+	uci -q delete dhcp.@dnsmasq[0].dhcpscript
 	uci -q commit dhcp
 fi
 exit 0

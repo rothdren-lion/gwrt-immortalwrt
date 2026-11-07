@@ -79,8 +79,6 @@ lan_conflict_fix() {
 }
 
 # 未组网/路由模式：持续刷新无线快照，回退时用它恢复原 SSID/密码
-# 无线配置是否「像一份真配置」：至少含一个 wifi-device。
-# 防止把空文件/半截文件当成宝：一旦把空文件快照成 orig，回退时就会把 WiFi 永久抹掉。
 valid_wireless() {
 	[ -f "$1" ] || return 1
 	[ "$(stat -c%s "$1" 2>/dev/null)" -ge 64 ] 2>/dev/null || return 1
@@ -93,7 +91,6 @@ refresh_orig() {
 	[ -f /etc/config/wireless ] || return 0
 	[ "$(uci -q get wifiroam.core.role)" = "sap" ] && return 0
 	in_apmode && return 0
-	# 只快照有效配置；空图/半截图一旦成为 orig，回退时会把 WiFi 永久抹掉
 	valid_wireless /etc/config/wireless || return 0
 	md5="$(md5sum /etc/config/wireless 2>/dev/null | cut -d' ' -f1)"
 	old="$(cat /etc/gwrt-wireless-orig.md5 2>/dev/null)"
@@ -102,31 +99,36 @@ refresh_orig() {
 	echo "$md5" >/etc/gwrt-wireless-orig.md5
 }
 
-# 把 wwan 加进 lan 防火墙区域（配对期间允许 50607/50608 以及管理访问）
-fw_add_wwan() {
-	local z
+# wwan 只能属于一个防火墙区域，避免配对遗留的 lan 区域抢在 wan 前匹配。
+fw_move_wwan() {
+	local target="$1" z networks n next changed=0
 	for z in $(uci -q show firewall | sed -n 's/^firewall\.\([^.]*\)=zone$/\1/p'); do
-		[ "$(uci -q get "firewall.$z.name")" = "lan" ] || continue
-		uci -q get "firewall.$z.network" | grep -qw wwan && return 0
-		uci -q add_list "firewall.$z.network=wwan"
+		networks="$(uci -q get "firewall.$z.network")"
+		if [ "$(uci -q get "firewall.$z.name")" = "$target" ]; then
+			printf '%s\n' "$networks" | grep -qw wwan && continue
+			uci -q add_list "firewall.$z.network=wwan"
+			changed=1
+		elif printf '%s\n' "$networks" | grep -qw wwan; then
+			next=""
+			for n in $networks; do
+				[ "$n" = "wwan" ] || next="$next $n"
+			done
+			uci -q delete "firewall.$z.network"
+			for n in $next; do uci -q add_list "firewall.$z.network=$n"; done
+			changed=1
+		fi
+	done
+	if [ "$changed" = 1 ]; then
 		uci -q commit firewall
 		/etc/init.d/firewall reload >/dev/null 2>&1
-		return 0
-	done
+	fi
 }
 
+# 把 wwan 加进 lan 防火墙区域（配对期间允许 50607/50608 以及管理访问）
+fw_add_wwan() { fw_move_wwan lan; }
+
 # 把 wwan 加进 wan 防火墙区域（无线回传时做 NAT）
-fw_add_wwan_wan() {
-	local z
-	for z in $(uci -q show firewall | sed -n 's/^firewall\.\([^.]*\)=zone$/\1/p'); do
-		[ "$(uci -q get "firewall.$z.name")" = "wan" ] || continue
-		uci -q get "firewall.$z.network" | grep -qw wwan && return 0
-		uci -q add_list "firewall.$z.network=wwan"
-		uci -q commit firewall
-		/etc/init.d/firewall reload >/dev/null 2>&1
-		return 0
-	done
-}
+fw_add_wwan_wan() { fw_move_wwan wan; }
 
 # 未组网 + 没有有线：建一个 STA 连主AP 的 mesh-gwrt（wwan 网络，DHCP 拿地址），
 # 这样主AP 才能发现并配对它（纯无线首次组网）
@@ -192,6 +194,7 @@ clear_wireless_pairing() {
 		changed=1
 	fi
 	if [ "$changed" = 1 ]; then
+		fw_move_wwan ""
 		/sbin/wifi reload >/dev/null 2>&1
 		/etc/init.d/network reload >/dev/null 2>&1
 		log "cleared wireless pairing STA"
@@ -229,7 +232,18 @@ ensure_backhaul() {
 
 	sig="band=$band dev=$dev ch=$ch wds=$wds dis=$want_dis net=$net ssid=$ssid key=$key"
 	old="$(cat /tmp/gwrt-bh.sig 2>/dev/null)"
-	[ "$sig" = "$old" ] && return 0
+	# 守护进程的回传推送也会改这段配置，缓存相同不代表实际配置仍正确。
+	if [ "$sig" = "$old" ] &&
+	   [ "$(uci -q get wireless.wifiroam_bh.device)" = "$dev" ] &&
+	   [ "$(uci -q get wireless.wifiroam_bh.mode)" = "sta" ] &&
+	   [ "$(uci -q get wireless.wifiroam_bh.network)" = "$net" ] &&
+	   [ "$(uci -q get wireless.wifiroam_bh.wds)" = "$wds" ] &&
+	   [ "$(uci -q get wireless.wifiroam_bh.disabled)" = "$want_dis" ] &&
+	   [ "$(uci -q get wireless.wifiroam_bh.encryption)" = "psk2+ccmp" ] &&
+	   [ "$(uci -q get wireless.wifiroam_bh.ssid)" = "$ssid" ] &&
+	   [ "$(uci -q get wireless.wifiroam_bh.key)" = "$key" ]; then
+		return 0
+	fi
 
 	# 5G 回传：本机 5G 热点信道对齐主AP（AP+STA 同频才能共存）
 	if [ "$band" = "5g" ] && [ -n "$ch" ] && [ "$ch" -gt 0 ] 2>/dev/null; then
@@ -249,23 +263,29 @@ ensure_backhaul() {
 	uci -q set wireless.wifiroam_bh.disabled="$want_dis"
 	uci -q commit wireless
 	echo "$sig" >/tmp/gwrt-bh.sig
-	log "backhaul reconciled: $sig"
+	log "backhaul reconciled: band=$band dev=$dev ch=$ch wds=$wds dis=$want_dis net=$net"
 	/sbin/wifi reload >/dev/null 2>&1
 }
 
 paired() {
 	local st role capip online
-	st="$(ubus call wifiroam status 2>/dev/null)" || return 1
-	[ -n "$st" ] || return 1
+	st="$(ubus call wifiroam status 2>/dev/null)"
 	role="$(printf '%s' "$st" | jsonfilter -e '@.role' 2>/dev/null)"
 	capip="$(printf '%s' "$st" | jsonfilter -e '@.cap_ip' 2>/dev/null)"
 	online="$(printf '%s' "$st" | jsonfilter -e '@.peers_online' 2>/dev/null)"
+	# 守护进程短暂重启时 ubus 不存在，已配对的角色/主AP地址仍保存在 UCI。
+	[ -n "$role" ] || role="$(uci -q get wifiroam.core.role)"
+	[ -n "$capip" ] && [ "$capip" != "null" ] || capip="$(uci -q get wifiroam.core.cap_ip)"
 	[ "$role" = "sap" ] || return 1
 	[ -n "$capip" ] && [ "$capip" != "null" ] || return 1
 	# 必须是「真的连着主路由」：重启后 cap_ip 还在，但没连上时 peers_online=0
 	# 有线拔掉、无线 WDS 已连上时，peers_online 可能短暂为 0，用 STA 状态兜底
 	[ "${online:-0}" -gt 0 ] 2>/dev/null && return 0
-	sta_up
+	sta_up && return 0
+	# 已有的有线 AP 转发仍正常时保留桥接，不能因控制连接丢失恢复 DHCP/NAT。
+	# 显式解绑的 role 已变化，不会进入此兜底；首次配对也不会靠 ping 自动切 AP。
+	in_apmode && [ "$(wan_carrier)" = "1" ] && have_lease &&
+		ping -I br-lan -c 1 -W 1 "$capip" >/dev/null 2>&1
 }
 
 brlan_dev_section() {
@@ -299,16 +319,86 @@ wan_carrier() {
 	cat "/sys/class/net/$(wan_dev_name)/carrier" 2>/dev/null
 }
 
+state_quote() {
+	local escaped
+	escaped="$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+	printf "'%s'" "$escaped"
+}
+
+save_option() {
+	local section="$1" option="$2" prefix="$3" type="$4" value
+	if uci -q get "$section.$option" >/dev/null 2>&1; then
+		value="$(uci -q get "$section.$option")"
+		printf '%s_present=1\n' "$prefix"
+		[ -n "$type" ] && printf '%s_type=%s\n' "$prefix" "$type"
+		printf '%s=%s\n' "$prefix" "$(state_quote "$value")"
+	else
+		printf '%s_present=0\n' "$prefix"
+	fi
+}
+
+restore_option() {
+	local section="$1" option="$2" present="$3" value="$4" type="$5" item
+	# Legacy files saved LAN address values without presence flags. Restore those
+	# known values, but leave current options alone when the old file has no value.
+	if [ -z "$present" ]; then
+		[ -n "$value" ] || return 0
+		present=1
+	fi
+	if [ "$present" = 1 ]; then
+		if [ "$type" = list ]; then
+			uci -q delete "$section.$option" 2>/dev/null
+			for item in $value; do uci -q add_list "$section.$option=$item"; done
+		else
+			uci -q set "$section.$option=$value"
+		fi
+	else
+		uci -q delete "$section.$option" 2>/dev/null
+	fi
+}
+
+restore_wan_bridge_membership() {
+	local brsec="$1" brged="$2" ports p newp="" wdev
+	[ -n "$brsec" ] || return 0
+	wdev="${wandev:-$(wan_dev_name)}"
+	ports="$(uci -q get "network.$brsec.ports")"
+	for p in $ports; do
+		[ "$p" = "$wdev" ] || newp="$newp $p"
+	done
+	if [ "$brged" = 1 ]; then
+		newp="$newp $wdev"
+	fi
+	uci -q delete "network.$brsec.ports"
+	for p in $newp; do uci -q add_list "network.$brsec.ports=$p"; done
+}
+
+load_state() {
+	# The daemon can restore several snapshots during one process lifetime.
+	# Do not let fields absent from an older snapshot inherit earlier values.
+	unset lan_proto lan_ipaddr lan_netmask lan_gateway lan_dns
+	unset lan_ipaddr_present lan_netmask_present lan_gateway_present lan_dns_present lan_dns_type
+	unset wan_proto wan6_proto wan_ipaddr wan_netmask wan_gateway wan_dns
+	unset wan_ipaddr_present wan_netmask_present wan_gateway_present wan_dns_present wan_dns_type
+	unset dhcp_ignore db_iface brdev wandev bridged_wandev svc_enabled
+	. "$STATE"
+}
+
 save_state() {
 	local brsec
 	brsec="$(brlan_dev_section)"
 	{
 		echo "lan_proto=$(uci -q get network.lan.proto)"
-		echo "lan_ipaddr=$(uci -q get network.lan.ipaddr)"
-		echo "lan_netmask=$(uci -q get network.lan.netmask)"
+		save_option network lan.ipaddr lan_ipaddr
+		save_option network lan.netmask lan_netmask
+		save_option network lan.gateway lan_gateway
+		save_option network lan.dns lan_dns list
 		echo "dhcp_ignore=$(uci -q get dhcp.lan.ignore)"
 		echo "wan_proto=$(uci -q get network.wan.proto)"
 		echo "wan6_proto=$(uci -q get network.wan6.proto)"
+		save_option network wan.ipaddr wan_ipaddr
+		save_option network wan.netmask wan_netmask
+		save_option network wan.gateway wan_gateway
+		save_option network wan.dns wan_dns list
 		echo "db_iface=$(uci -q get dropbear.@dropbear[0].Interface)"
 		echo "brdev=$brsec"
 		if [ -n "$brsec" ]; then
@@ -342,6 +432,49 @@ have_uplink() {
 	else
 		ubus call network.interface.wwan status 2>/dev/null | grep -q '"up": true'
 	fi
+}
+
+ft_bridge_socket_stale() {
+	awk '($4 == "890d" || $4 == "88b7") && $5 == "-1" { stale = 1 } END { exit !stale }' /proc/net/packet 2>/dev/null
+}
+
+repair_ft_bridge_sockets() {
+	local status radio radios="" ifnames ifname conf needed sig waited=0
+	ft_bridge_socket_stale || return 0
+	# 对同一旧 socket 只尝试一次，失败不能变成周期性踢客。
+	sig="$(cat /sys/class/net/br-lan/ifindex 2>/dev/null):$(awk '($4 == "890d" || $4 == "88b7") && $5 == "-1" { printf "%s:%s;", $4, $9 }' /proc/net/packet 2>/dev/null)"
+	[ "$sig" = "$(cat /tmp/gwrt-ft-bridge-repair.sig 2>/dev/null)" ] && return 0
+	status="$(ubus call network.wireless status 2>/dev/null)"
+	for radio in $(uci -q show wireless | sed -n 's/^wireless\.\([^.]*\)=wifi-device$/\1/p'); do
+		ifnames="$(printf '%s' "$status" | jsonfilter -e "@.$radio.interfaces[*].ifname" 2>/dev/null)"
+		needed=0
+		for ifname in $ifnames; do
+			conf="/var/run/hostapd-${ifname%%-*}.conf"
+			[ -r "$conf" ] || continue
+			grep -qx 'bridge=br-lan' "$conf" &&
+				grep -qx 'ft_iface=br-lan' "$conf" &&
+				grep -q '^mobility_domain=' "$conf" && needed=1
+		done
+		[ "$needed" = 1 ] || continue
+		radios="$radios $radio"
+	done
+	[ -n "$radios" ] || return 0
+	echo "$sig" >/tmp/gwrt-ft-bridge-repair.sig
+	log "stale FT bridge socket, rebuilding BSS:$radios"
+	# ETH_P_OUI 在同一个 bridge 的 BSS 之间共享，必须先停完再启动，
+	# 逐个 down/up 会让其他 BSS 一直引用旧 ifindex。
+	for radio in $radios; do
+		ubus call network.wireless down "{\"device\":\"$radio\"}" >/dev/null 2>&1
+	done
+	# netifd 的 down 是异步操作；等共享 socket 释放后才能重新注册。
+	while ft_bridge_socket_stale && [ "$waited" -lt 10 ]; do
+		sleep 1
+		waited=$((waited + 1))
+	done
+	for radio in $radios; do
+		ubus call network.wireless up "{\"device\":\"$radio\"}" >/dev/null 2>&1
+	done
+	ft_bridge_socket_stale && log "FT bridge socket still stale, automatic retry suppressed for this socket"
 }
 
 apply_apmode() {
@@ -386,6 +519,7 @@ apply_apmode() {
 		uci -q delete network.lan.dns 2>/dev/null
 		uci -q set dhcp.lan.ignore='1'
 		uci -q delete network.wwan 2>/dev/null
+		fw_move_wwan ""
 		uci -q commit network
 		uci -q commit dhcp
 		/etc/init.d/dnsmasq stop >/dev/null 2>&1
@@ -417,6 +551,7 @@ apply_apmode() {
 		if have_uplink; then
 			if [ "$carrier" = "1" ]; then
 				log "AP mode ok (wired), br-lan $(ip -4 addr show br-lan | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -1)"
+				repair_ft_bridge_sockets
 			else
 				log "AP mode ok (wireless relay), wwan $(ip -4 addr show 2>/dev/null | sed -n '/phy[0-9]-sta0/,+2 s/.*inet \([0-9.]*\).*/\1/p' | head -1)"
 			fi
@@ -433,33 +568,27 @@ apply_apmode() {
 # 只恢复网络部分（不恢复无线 SSID、不删 state）：用于上行从无线<->有线切换时重放
 restore_network_only() {
 	[ -f "$STATE" ] || return 0
-	. "$STATE"
+	load_state
 	local brsec ports newp p
 	brsec="${brdev:-$(brlan_dev_section)}"
 	hnat_off
-	case "${wan_proto:-none}" in
-		none|"") : ;;
-		*)
-			if [ -n "$brsec" ]; then
-				ports="$(uci -q get "network.$brsec.ports")"
-				newp=""
-				for p in $ports; do
-					[ "$p" = "$(wan_dev_name)" ] && continue
-					newp="$newp $p"
-				done
-				uci -q delete "network.$brsec.ports"
-				for p in $newp; do
-					uci -q add_list "network.$brsec.ports=$p"
-				done
-			fi
-			;;
-	esac
+	if [ -n "${bridged_wandev+x}" ]; then
+		restore_wan_bridge_membership "$brsec" "$bridged_wandev"
+	else
+		case "${wan_proto:-none}" in
+			none|"") : ;;
+			*) restore_wan_bridge_membership "$brsec" 0 ;;
+		esac
+	fi
 	uci -q get network.relay >/dev/null 2>&1 && uci -q delete network.relay
 	uci -q get network.wwan >/dev/null 2>&1 && uci -q delete network.wwan
+	fw_move_wwan ""
 	uci -q set dropbear.@dropbear[0].Interface="${db_iface:-lan}"
 	uci -q set network.lan.proto="${lan_proto:-static}"
-	[ -n "$lan_ipaddr" ] && uci -q set network.lan.ipaddr="$lan_ipaddr"
-	[ -n "$lan_netmask" ] && uci -q set network.lan.netmask="$lan_netmask"
+	restore_option network lan.ipaddr "${lan_ipaddr_present:-}" "${lan_ipaddr-}"
+	restore_option network lan.netmask "${lan_netmask_present:-}" "${lan_netmask-}"
+	restore_option network lan.gateway "${lan_gateway_present:-}" "${lan_gateway-}"
+	restore_option network lan.dns "${lan_dns_present:-}" "${lan_dns-}" "${lan_dns_type:-}"
 	if [ -n "$dhcp_ignore" ]; then
 		uci -q set dhcp.lan.ignore="$dhcp_ignore"
 	else
@@ -467,6 +596,10 @@ restore_network_only() {
 	fi
 	[ -n "$wan_proto" ] && uci -q set network.wan.proto="$wan_proto"
 	[ -n "$wan6_proto" ] && uci -q set network.wan6.proto="$wan6_proto"
+	restore_option network wan.ipaddr "${wan_ipaddr_present:-}" "${wan_ipaddr-}"
+	restore_option network wan.netmask "${wan_netmask_present:-}" "${wan_netmask-}"
+	restore_option network wan.gateway "${wan_gateway_present:-}" "${wan_gateway-}"
+	restore_option network wan.dns "${wan_dns_present:-}" "${wan_dns-}" "${wan_dns_type:-}"
 	uci -q commit network
 	uci -q commit dhcp
 	uci -q commit dropbear
@@ -485,7 +618,7 @@ restore_network_only() {
 
 restore_routermode() {
 	[ -f "$STATE" ] || return 0
-	. "$STATE"
+	load_state
 
 	local brsec ports newp p
 	brsec="${brdev:-$(brlan_dev_section)}"
@@ -494,35 +627,28 @@ restore_routermode() {
 	hnat_off
 
 	# 只要原来有 WAN（proto 不是 none），WAN 口就不该留在 br-lan 里
-	case "${wan_proto:-none}" in
-		none|"")
-			: ;;   # 本来就是桥接 AP，不动
-		*)
-			if [ -n "$brsec" ]; then
-				ports="$(uci -q get "network.$brsec.ports")"
-				newp=""
-				for p in $ports; do
-					[ "$p" = "$(wan_dev_name)" ] && continue
-					newp="$newp $p"
-				done
-				uci -q delete "network.$brsec.ports"
-				for p in $newp; do
-					uci -q add_list "network.$brsec.ports=$p"
-				done
-			fi
-			;;
-	esac
+	if [ -n "${bridged_wandev+x}" ]; then
+		restore_wan_bridge_membership "$brsec" "$bridged_wandev"
+	else
+		case "${wan_proto:-none}" in
+			none|"") : ;;   # compatibility with old state files
+			*) restore_wan_bridge_membership "$brsec" 0 ;;
+		esac
+	fi
 
 	# 清理无线 relay 配置
 	uci -q get network.relay >/dev/null 2>&1 && uci -q delete network.relay
 	uci -q get network.wwan >/dev/null 2>&1 && uci -q delete network.wwan
+	fw_move_wwan ""
 	/etc/init.d/relayd stop >/dev/null 2>&1
 	uci -q set dropbear.@dropbear[0].Interface="${db_iface:-lan}"
 	uci -q commit dropbear
 
 	uci -q set network.lan.proto="${lan_proto:-static}"
-	[ -n "$lan_ipaddr" ] && uci -q set network.lan.ipaddr="$lan_ipaddr"
-	[ -n "$lan_netmask" ] && uci -q set network.lan.netmask="$lan_netmask"
+	restore_option network lan.ipaddr "${lan_ipaddr_present:-}" "${lan_ipaddr-}"
+	restore_option network lan.netmask "${lan_netmask_present:-}" "${lan_netmask-}"
+	restore_option network lan.gateway "${lan_gateway_present:-}" "${lan_gateway-}"
+	restore_option network lan.dns "${lan_dns_present:-}" "${lan_dns-}" "${lan_dns_type:-}"
 	if [ -n "$dhcp_ignore" ]; then
 		uci -q set dhcp.lan.ignore="$dhcp_ignore"
 	else
@@ -530,13 +656,16 @@ restore_routermode() {
 	fi
 	[ -n "$wan_proto" ] && uci -q set network.wan.proto="$wan_proto"
 	[ -n "$wan6_proto" ] && uci -q set network.wan6.proto="$wan6_proto"
+	restore_option network wan.ipaddr "${wan_ipaddr_present:-}" "${wan_ipaddr-}"
+	restore_option network wan.netmask "${wan_netmask_present:-}" "${wan_netmask-}"
+	restore_option network wan.gateway "${wan_gateway_present:-}" "${wan_gateway-}"
+	restore_option network wan.dns "${wan_dns_present:-}" "${wan_dns-}" "${wan_dns_type:-}"
 
 	uci -q commit network
 	uci -q commit dhcp
 	/etc/init.d/network reload >/dev/null 2>&1
 
 	# 恢复路由模式的原 SSID/密码（否则子AP 还在广播主路由 SSID，回退后连不上）
-	# 关键保护：orig 必须是有效配置，否则宁可不恢复（丢 WiFi 比丢 SSID 严重得多）
 	if [ -f /etc/gwrt-wireless-orig ]; then
 		if valid_wireless /etc/gwrt-wireless-orig; then
 			cp -f /etc/gwrt-wireless-orig /etc/config/wireless
@@ -548,8 +677,7 @@ restore_routermode() {
 			uci -q commit wifiroam
 			log "restored original wireless SSID/key"
 		else
-			log "skip wireless restore: /etc/gwrt-wireless-orig invalid"
-			rm -f /etc/gwrt-wireless-orig /etc/gwrt-wireless-orig.md5
+			log "wireless snapshot invalid, preserving current config"
 		fi
 	fi
 
@@ -642,6 +770,7 @@ case "$1" in
 				fi
 			fi
 			in_apmode && hnat_off
+			in_apmode && repair_ft_bridge_sockets
 			refresh_orig
 			lan_conflict_fix
 			ensure_wireless_pairing
