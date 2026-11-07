@@ -44,8 +44,17 @@ SS-01 已选择 `ath11k-firmware-ipq6018-ddwrt`；上游固件的禁用项是原
 
 ## 提交、构建与回滚
 
-工作树：`/home/godsun/build/gwrt-ci-261107`；远端：`rothdren-lion/gwrt-immortalwrt` 默认分支 `master`。本轮版本为 `261107-02`，云端启动记录在启动后补入。
+工作树：`/home/godsun/build/gwrt-ci-261107`；远端：`rothdren-lion/gwrt-immortalwrt` 默认分支 `master`。本轮版本为 `261107-02`。
 
 未进行刷机、重启或容器存储清理。Podman 的旧设备 overlay 挂载失败仅记录，未破坏容器数据。云端固件在构建和 manifest/hash 检查通过前不能视为可交付成品。
 
 回滚源码使用对应提交的 `git revert`；停止云端队列使用 `gh run cancel <run-id> -R rothdren-lion/gwrt-immortalwrt`。本地 NAS 源码的其它历史改动不在本次清理范围。
+
+### 已推送并启动
+
+- 源码提交 `de35c36a`，合并远端 SSID 修复 `45c84bf1`，CS-05 / RE-CP-03 名称说明 `c2afcb3a727a1eaae1876d96ec0483af02958689`；已推送到 `master`。
+- 云端队列：[GWRT selected models 261107-02](https://github.com/rothdren-lion/gwrt-immortalwrt/actions/runs/42383128293)，2026-11-07 14:46:01 UTC 创建，固定构建源码为 `c2afcb3a`。
+- 已确认 `an7581 / build` 正常领取 GitHub runner，Checkout 成功，开始准备编译环境；后续任务按队列自动推进。此记录不代表固件已经编译完成。
+- GitHub 亚洲地址连接超时，改用单次命令的 `http.curloptResolve` 连接可用的 GitHub 地址并保留正常 TLS 校验，未修改系统 DNS、Git 远端或认证配置。
+- NAS 已同步本轮脚本、主题默认值、SSID 修复和 S20L/M 定义；保留本地其它修改。原文件备份：`/home/godsun/build/gwrt-releases/261107-batch-review/nas-before-sync/`。
+- NAS 的 base-files 保留了旧 192.168.1.1 回退地址；仅同步云端已有的 192.168.3.3 / 192.168.3.255 回退值，使本地源码与项目约定一致，未更改运行设备网络。
