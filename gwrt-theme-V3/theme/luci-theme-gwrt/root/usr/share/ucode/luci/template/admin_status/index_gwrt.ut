@@ -50,7 +50,7 @@
 			<div class="stat-row stat-meter-row" id="gwrtPpeRow" style="display:none"><span class="stat-row-label" data-i18n="PPE">PPE</span><div class="mini-bar usage-bar"><div class="mini-bar-fill" id="gwrtPpeBar" style="width:0"></div></div><span class="stat-row-val" id="gwrtPpe">-</span></div>
 			<div class="stat-row stat-meter-row"><span class="stat-row-label">SoC</span><div class="mini-bar usage-bar"><div class="mini-bar-fill" id="gwrtTempBar" style="width:0"></div></div><span class="stat-row-val" id="gwrtTemp">-</span></div>
 			<div class="stat-row stat-meter-row"><span class="stat-row-label">WiFi</span><div class="mini-bar usage-bar"><div class="mini-bar-fill" id="gwrtWifiTempBar" style="width:0"></div></div><span class="stat-row-val" id="gwrtWifiTemp">-</span></div>
-			<div class="dev-summary-row"><span class="dev-summary-label" data-i18n="型号">型号</span><span class="dev-summary-num left"><strong id="gwrtSocModel">-</strong></span><span class="dev-summary-sep">|</span><span class="dev-summary-num right"><strong id="gwrtCoremark" class="gwrt-coremark-run" role="button" tabindex="0" title="点击运行 CoreMark" aria-label="运行 CoreMark 跑分">-</strong></span><span class="dev-summary-label" title="CoreMark">CM</span></div>
+				<div class="dev-summary-row"><span class="dev-summary-label" data-i18n="SoC">SoC</span><span class="dev-summary-num left"><strong id="gwrtSocModel">-</strong></span><span class="dev-summary-sep">|</span><span class="dev-summary-num right"><strong id="gwrtCoremark" class="gwrt-coremark-run" role="button" tabindex="0" title="点击运行 CoreMark" aria-label="运行 CoreMark 跑分">-</strong></span><span class="dev-summary-label" title="CoreMark">CM</span></div>
 			<div class="stat-row"><span class="stat-row-label" data-i18n="频率">频率</span><span class="stat-row-val" id="gwrtCpuFreq">-</span></div>
 		</div>
 
@@ -3288,28 +3288,18 @@ function refresh(){
       });
     }
 
-    /* SoC / CPU 真实型号：compatible + /proc/cpuinfo 核数 + cpufreq 最高频率 */
+    /* SoC / CPU 型号和线程数：读取 device-tree compatible 与 /proc/cpuinfo */
     var socEl=document.getElementById('gwrtSocModel');
     if(socEl&&!socEl.dataset.fetched){
-      if(gwrtIsMtk){
-        rpc('file','exec',{command:'/usr/libexec/gwrt-socinfo'}).then(function(res){
-          var o=String((res&&res.stdout)||'').split('\n');
-          var chip=String(o[0]||'').trim().toUpperCase();
-          var cores=parseInt(o[1],10)||0,khz=parseInt(o[2],10)||0;
-          var names={'MT7981':'MediaTek MT7981B','MT7986':'MediaTek MT7986','MT7988':'MediaTek MT7988','MT7622':'MediaTek MT7622','MT7621':'MediaTek MT7621','MT7987':'MediaTek MT7987'};
-          var freqs={'MT7981':'1.3GHz','MT7986':'2.0GHz','MT7622':'1.35GHz','MT7621':'0.88GHz','MT7988':'1.8GHz'};
-          var txt=(chip==='MT7981'?'MT7981B':chip)||'SoC';
-          if(cores)txt+=' \u00d7'+cores;
-          socEl.textContent=txt;
-        });
-      }
-      else{
-      rpc('file','exec',{command:'/bin/cat',params:['/sys/devices/soc0/machine']}).then(function(res){
-        if(res&&typeof res.stdout==='string'&&res.stdout.trim()){
-          socEl.textContent=res.stdout.trim();
-        }else{socEl.textContent=board.model||'-';}
-      });
-      }
+      rpc('file','exec',{command:'/usr/libexec/gwrt-socinfo'}).then(function(res){
+        var o=String((res&&res.stdout)||'').split('\n');
+        var chip=String(o[0]||'').trim().toUpperCase();
+        var threads=parseInt(o[1],10)||0;
+        var models={'MT7981':'MT7981B','MT7986':'MT7986A','MT7988':'MT7988A'};
+        var txt=models[chip]||chip||'';
+        if(threads)txt+=(txt?' \u00d7 ':'')+threads+'线程';
+        socEl.textContent=txt||board.model||'-';
+      }).catch(function(){socEl.textContent=board.model||'-';});
       socEl.dataset.fetched='1';
     }
 
