@@ -87,9 +87,14 @@ probe with driver ath12k_wifi7_ahb failed with error -5
 
 ### TR3000 移出当前队列
 
-- 旧队列 `42478183710` 正在合并编译 TR3000 和 360T7；已请求取消整条旧队列，
+- 旧队列 `42478183710` 原本正在合并编译 TR3000 和 360T7；已确认整条旧队列取消完成，
   避免继续消耗资源编译 TR3000。没有取消单独运行的 CS-06 修复候选任务。
 - `gwrt-soc-queue.yml` 的 MT7981 任务只保留 `qihoo_360t7`，未改动原预设文件
   或设备定义。队列增加 `skip_cs06` 参数，以便恢复其余机型时跳过已单独运行的 CS-06。
 - 后续顺序：360T7 → CS-02 → CS-02-GWRT2 → CS-07 → S20P。
 - 本次只调整本轮构建范围；TR3000 已有正常固件和机型源码保留。
+- 调整提交为 `99fec13ce4d41e352cc178ee4747c8027d545b34`。新队列
+  <https://github.com/rothdren-lion/gwrt-immortalwrt/actions/runs/42483117795>
+  于 2026-11-08 21:03:31（Asia/Shanghai）创建，版本 `261108-02`，
+  `release=true`、`skip_cs06=true`。已核对云端使用该提交，CS-06 job 正确跳过，
+  MT7981 job 已运行，模型列表只有 `qihoo_360t7`。单独的 CS-06 修复构建仍在运行。
