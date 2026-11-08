@@ -58,3 +58,9 @@ SS-01 已选择 `ath11k-firmware-ipq6018-ddwrt`；上游固件的禁用项是原
 - GitHub 亚洲地址连接超时，改用单次命令的 `http.curloptResolve` 连接可用的 GitHub 地址并保留正常 TLS 校验，未修改系统 DNS、Git 远端或认证配置。
 - NAS 已同步本轮脚本、主题默认值、SSID 修复和 S20L/M 定义；保留本地其它修改。原文件备份：`/home/godsun/build/gwrt-releases/261107-batch-review/nas-before-sync/`。
 - NAS 的 base-files 保留了旧 192.168.1.1 回退地址；仅同步云端已有的 192.168.3.3 / 192.168.3.255 回退值，使本地源码与项目约定一致，未更改运行设备网络。
+
+### 首批校验修复
+
+- 首批 AN7581、MT7981 的固件编译本身成功，但 CI 校验误要求多机型下每个 profile 都有独立 `*.manifest`，使两项失败并跳过固件 artifact 上传。
+- `CONFIG_TARGET_MULTI_PROFILE` 下 OpenWrt 将每台设备的镜像名和 `device_packages` 放入 `profiles.json`，共用目标包 manifest。校验器现同时支持单机型专属 manifest，以及多机型 profiles 元数据 + 共用 manifest，并检查 profile 图片实际存在。
+- 已用已下载的 CS-02 成功 artifact 验证单机型路径，并用 MT7986 七 profile 配置（含 S20M 无线包排除和 CS-05/CP-03 profile）验证多机型路径。首批两个预设将使用修复后的 master 单独补编。

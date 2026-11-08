@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Validate resolved GWRT configs and the final per-device package manifests."""
 import argparse
+import json
 from pathlib import Path
 import re
 import subprocess
@@ -109,19 +110,51 @@ if 'daed' in packages:
 
 if args.manifests:
     manifests = list(args.manifests.rglob('*.manifest'))
+    profiles_file = next(args.manifests.rglob('profiles.json'), None)
+    profiles = {}
+    if profiles_file:
+        profiles = json.loads(profiles_file.read_text()).get('profiles', {})
     for device in devices:
         matching = [m for m in manifests if m.name.endswith('-' + device + '.manifest')]
-        if not matching:
-            fail('no image manifest produced for ' + device)
-        for manifest in matching:
-            installed = {line.split()[0] for line in manifest.read_text().splitlines() if line.strip()}
-            required, forbidden = requirements(device)
-            # Reject radio packages even if a config forgot to select them.
-            if device in ('jdcloud_re-cs-07', 'jdcloud_re-cs-08', 'clx_s20m'):
-                forbidden |= {p for p in installed if p.startswith(('kmod-ath11k', 'ath11k-firmware-', 'kmod-ath12k', 'ath12k-firmware-', 'kmod-mt79'))}
-            check_packages(installed, required, forbidden, manifest.name)
-            if 'daed' in packages:
-                check_packages(installed, {'daed', 'kmod-sched-bpf'}, (), manifest.name)
+        required, forbidden = requirements(device)
+        # Reject radio packages even if a config forgot to select them.
+        if device in ('jdcloud_re-cs-07', 'jdcloud_re-cs-08', 'clx_s20m'):
+            forbidden |= {p for p in packages if p.startswith(('kmod-ath11k', 'ath11k-firmware-', 'kmod-ath12k', 'ath12k-firmware-', 'kmod-mt79'))}
+
+        if matching:
+            for manifest in matching:
+                installed = {line.split()[0] for line in manifest.read_text().splitlines() if line.strip()}
+                check_packages(installed, required, forbidden, manifest.name)
+                if 'daed' in packages:
+                    check_packages(installed, {'daed', 'kmod-sched-bpf'}, (), manifest.name)
+            continue
+
+        # Multi-profile targets share a rootfs manifest; profiles.json records
+        # each device's built images and package additions/removals.
+        profile = profiles.get(device)
+        if not profile:
+            fail('no image manifest or profiles.json entry produced for ' + device)
+            continue
+        images = profile.get('images', [])
+        if not images:
+            fail('no firmware images recorded for ' + device)
+            continue
+        for image in images:
+            if not (profiles_file.parent / image['name']).is_file():
+                fail('image listed for ' + device + ' is missing: ' + image['name'])
+
+        base_manifests = [m for m in manifests if m not in matching]
+        if not base_manifests:
+            fail('no shared package manifest produced for ' + device)
+            continue
+        installed = {line.split()[0] for manifest in base_manifests
+                     for line in manifest.read_text().splitlines() if line.strip()}
+        device_packages = set(profile.get('device_packages', []))
+        installed -= {p[1:] for p in device_packages if p.startswith('-')}
+        installed |= {p for p in device_packages if not p.startswith('-')}
+        check_packages(installed, required, forbidden, device)
+        if 'daed' in packages:
+            check_packages(installed, {'daed', 'kmod-sched-bpf'}, (), device)
 
 if errors:
     raise SystemExit('\n'.join('FAIL: ' + error for error in errors))
