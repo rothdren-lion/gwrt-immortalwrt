@@ -12,6 +12,10 @@ run-name: GWRT selected firmware ${{ inputs.version }}
         description: Publish successful firmware images to GitHub Releases
         type: boolean
         default: true
+      skip_cs06:
+        description: Skip CS-06 when its separate validation build is already running
+        type: boolean
+        default: false
 permissions:
   contents: write
 concurrency:
@@ -19,6 +23,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   cs06:
+    if: ${{ !inputs.skip_cs06 }}
     uses: ./.github/workflows/gwrt-build.yml
     with:
       device: cs06
@@ -35,7 +40,7 @@ jobs:
       version: ${{ inputs.version }}
       images: flashable
       release: ${{ inputs.release }}
-      models: cudy_tr3000-256mb-v1 qihoo_360t7
+      models: qihoo_360t7
   cs02:
     needs: mt7981
     if: ${{ !cancelled() }}

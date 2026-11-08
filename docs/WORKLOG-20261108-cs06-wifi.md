@@ -2,8 +2,9 @@
 
 ## 用户范围
 
-本轮只构建：RE-CS-06、TR3000 256MB v1、360T7 原厂 DTS（不选 UBI）、
+本轮只构建：RE-CS-06、360T7 原厂 DTS（不选 UBI）、
 RE-CS-02、RE-CS-02-GWRT2、RE-CS-07、S20P。S20P 必须带 PCI/NVMe。
+用户随后确认 TR3000 当前版本 Wi-Fi 正常，本轮停止排查并取消其编译。
 CS-01 尚无对应 profile，不用其它设备代替。CS-07 为无无线硬件，不加入无线驱动。
 交付只收 factory（设备支持时）和 sysupgrade 镜像。
 
@@ -82,4 +83,13 @@ probe with driver ath12k_wifi7_ahb failed with error -5
 - 重新验证已展开配置 `/tmp/gwrt-ipq-selector.bYh4LK/cs06.config`：
   qualcommbe/ipq53xx、单一 RE-CS-06 profile、ath12k、IPQ5332/QCN9274
   专用固件、RE-CS-06 板级包和 wpad-openssl 检查通过。
-- TR3000 尚无对应的实机日志，本记录不能作为 TR3000 Wi-Fi 故障的定位结果。
+- TR3000 当前版本的 Wi-Fi 已由用户确认正常，不再排查或重新编译。
+
+### TR3000 移出当前队列
+
+- 旧队列 `42478183710` 正在合并编译 TR3000 和 360T7；已请求取消整条旧队列，
+  避免继续消耗资源编译 TR3000。没有取消单独运行的 CS-06 修复候选任务。
+- `gwrt-soc-queue.yml` 的 MT7981 任务只保留 `qihoo_360t7`，未改动原预设文件
+  或设备定义。队列增加 `skip_cs06` 参数，以便恢复其余机型时跳过已单独运行的 CS-06。
+- 后续顺序：360T7 → CS-02 → CS-02-GWRT2 → CS-07 → S20P。
+- 本次只调整本轮构建范围；TR3000 已有正常固件和机型源码保留。
