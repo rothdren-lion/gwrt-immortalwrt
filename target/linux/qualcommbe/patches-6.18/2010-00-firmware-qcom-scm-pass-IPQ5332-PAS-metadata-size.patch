@@ -1,0 +1,43 @@
+From: Manikanta Mylavarapu <manikanta.mylavarapu@oss.qualcomm.com>
+Subject: [PATCH] firmware: qcom_scm: ipq5332: pass PAS metadata size
+
+IPQ5332 TrustZone requires the firmware metadata size with the new PAS
+initialization command. The WCSS secure PIL driver was backported without
+this prerequisite, leaving qcom_mdt_pas_init() on the legacy two-argument
+command. CS-06 logs fail at this operation before loading Q6 segments.
+
+Backport the upstream command-availability check to the Linux 6.18 SCM
+implementation. Use the size-aware command when supported and retain the
+legacy call for older security firmware. Authentication is unchanged.
+
+Link: https://lore.kernel.org/r/20260803-rproc-v14-1-a1f87b0b0ad2@oss.qualcomm.com
+Signed-off-by: Manikanta Mylavarapu <manikanta.mylavarapu@oss.qualcomm.com>
+Signed-off-by: Gokul Sriram Palanisamy <gokul.sriram.p@oss.qualcomm.com>
+---
+--- a/drivers/firmware/qcom/qcom_scm.c
++++ b/drivers/firmware/qcom/qcom_scm.c
+@@ -663,6 +663,14 @@ int qcom_scm_pas_init_image(u32 pas_id, const void *metadata, size_t size,
+ 
+ 	desc.args[1] = mdata_phys;
+ 
++	if (__qcom_scm_is_call_available(__scm->dev, QCOM_SCM_SVC_PIL,
++					 QCOM_SCM_PIL_PAS_INIT_IMAGE_V2)) {
++		desc.cmd = QCOM_SCM_PIL_PAS_INIT_IMAGE_V2;
++		desc.arginfo = QCOM_SCM_ARGS(3, QCOM_SCM_VAL, QCOM_SCM_RW,
++					     QCOM_SCM_VAL);
++		desc.args[2] = size;
++	}
++
+ 	ret = qcom_scm_call(__scm->dev, &desc, &res);
+ 	qcom_scm_bw_disable();
+ 
+--- a/drivers/firmware/qcom/qcom_scm.h
++++ b/drivers/firmware/qcom/qcom_scm.h
+@@ -105,6 +105,7 @@ int qcom_scm_shm_bridge_enable(struct device *scm_dev);
+ #define QCOM_SCM_PIL_PAS_SHUTDOWN	0x06
+ #define QCOM_SCM_PIL_PAS_IS_SUPPORTED	0x07
+ #define QCOM_SCM_PIL_PAS_MSS_RESET	0x0a
++#define QCOM_SCM_PIL_PAS_INIT_IMAGE_V2	0x1a
+ 
+ #define QCOM_SCM_SVC_IO			0x05
+ #define QCOM_SCM_IO_READ		0x01
