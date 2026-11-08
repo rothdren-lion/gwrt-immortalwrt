@@ -1,10 +1,17 @@
 #!/bin/sh
 # GWRT dashboard helper: 输出 SoC/CPU 信息（每行一个字段）
-#   line1: SoC 代号（如 mt7981，取不到则为空）
-#   line2: CPU 核数
+#   line1: SoC 代号（如 mt7981、ipq5332、en7581）
+#   line2: CPU 线程数
 #   line3: 最高频率 kHz（无 cpufreq 时为空）
-tr '\0' '\n' < /proc/device-tree/compatible 2>/dev/null \
-	| grep -m1 -o 'mediatek,mt[0-9]*[a-z]*' \
-	| sed 's/^mediatek,//'
-grep -c '^processor' /proc/cpuinfo 2>/dev/null
-cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null
+
+compatible_file=${GWRT_SOCINFO_COMPATIBLE_FILE:-/proc/device-tree/compatible}
+cpuinfo_file=${GWRT_SOCINFO_CPUINFO_FILE:-/proc/cpuinfo}
+freq_file=${GWRT_SOCINFO_FREQ_FILE:-/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq}
+
+soc=$(tr '\0' '\n' < "$compatible_file" 2>/dev/null \
+	| sed -nE 's/^(mediatek|qcom|airoha),(mt[0-9]+[[:alpha:]]*|ipq[0-9]+[[:alpha:]]*|en[0-9]+[[:alpha:]]*)$/\2/p' \
+	| head -n 1)
+threads=$(awk '/^processor[[:space:]]*:/ { count++ } END { print count + 0 }' "$cpuinfo_file" 2>/dev/null)
+freq=$(cat "$freq_file" 2>/dev/null || true)
+
+printf '%s\n%s\n%s\n' "$soc" "${threads:-0}" "$freq"
