@@ -41,6 +41,8 @@ PY
 
 sh scripts/tests/test-gwrt-aria2-mount.sh gwrt-overlays/feeds/packages/net/aria2/files/aria2.init
 sh scripts/tests/test-gwrt-aria2-uci-defaults.sh
+sh scripts/tests/test-gwrt-socinfo.sh
+python3 scripts/tests/test-gwrt-collect-firmware.py
 
 helper=gwrt-theme-V3/theme/luci-theme-gwrt/root/usr/libexec/gwrt-apk-autoinstall
 if [ -f scripts/tests/test-gwrt-apk-autoinstall.sh ]; then
