@@ -23,7 +23,7 @@ jobs:
     with:
       device: an758x
       version: ${{ inputs.version }}
-      images: all
+      images: sysupgrade
       release: ${{ inputs.release }}
       models: fiberhome_hg5585f-ct fiberhome_hg5585f-cu fiberhome_hg5585f-ct-usb-sfp fiberhome_hg5585f-cu-usb-sfp nokia_xg-040g-md nokia_xg-040g-md-ubi
         nokia_xg-040g-md-ubi-usb-sfp
@@ -34,7 +34,7 @@ jobs:
     with:
       device: mt7981
       version: ${{ inputs.version }}
-      images: all
+      images: sysupgrade
       release: ${{ inputs.release }}
       models: qihoo_360t7 qihoo_360t7-ubi cudy_tr3000-256mb-v1 glinet_gl-mt3000 xingloo_ax3000 xingloo_ax3000-512m
   ipq6010_ss01:
@@ -44,7 +44,7 @@ jobs:
     with:
       device: ss01
       version: ${{ inputs.version }}
-      images: all
+      images: ipq
       release: ${{ inputs.release }}
   ipq6010_cs02:
     needs: ipq6010_ss01
@@ -53,7 +53,7 @@ jobs:
     with:
       device: cs02
       version: ${{ inputs.version }}
-      images: all
+      images: ipq
       release: ${{ inputs.release }}
   ipq6010_cs07:
     needs: ipq6010_cs02
@@ -62,7 +62,7 @@ jobs:
     with:
       device: cs07
       version: ${{ inputs.version }}
-      images: all
+      images: ipq
       release: ${{ inputs.release }}
   ipq53xx_cs06:
     needs: ipq6010_cs07
@@ -71,7 +71,7 @@ jobs:
     with:
       device: cs06
       version: ${{ inputs.version }}
-      images: all
+      images: ipq
       release: ${{ inputs.release }}
   ipq53xx_cs08:
     needs: ipq53xx_cs06
@@ -80,7 +80,7 @@ jobs:
     with:
       device: cs08
       version: ${{ inputs.version }}
-      images: all
+      images: ipq
       release: ${{ inputs.release }}
   mt7986:
     needs: ipq53xx_cs08
@@ -89,6 +89,6 @@ jobs:
     with:
       device: mt7986
       version: ${{ inputs.version }}
-      images: all
+      images: sysupgrade
       release: ${{ inputs.release }}
       models: clx_s20p clx_s20l clx_s20m jdcloud_re-cp-03 netcore_n60-pro xiaomi_redmi-router-ax6000-stock xiaomi_redmi-router-ax6000-ubootmod
