@@ -57,6 +57,8 @@ probe with driver ath12k_wifi7_ahb failed with error -5
   两个文件均无 reject。
 - 使用现有 aarch64 GCC 14.4 工具链、J6、CPU 0–5 重新交叉编译
   `drivers/firmware/qcom/qcom_scm.o`，退出码 0。
+- 用户日志为 Linux 6.18.60 / 源码 c2afcb3；另从官方 stable v6.18.60
+  获取 SCM 两个文件，验证新补丁同样可用 `--fuzz=0` 精确应用。
 - `sh scripts/gwrt-source-preflight.sh` 通过：主题副本、JS/shell/JSON、
   aria2、机型筛选、SoC 线程显示、固件收集和 APK 首次恢复检查通过。
 - 技能旧 audit 仍假定已不存在的包目录，并误要求 LAN Makefile 使用字面量；
@@ -67,3 +69,17 @@ probe with driver ath12k_wifi7_ahb failed with error -5
 旧 CS-06 单独编译 run `42479128610` 已取消，防止未修复镜像自动发布。
 选定队列 run `42478183710` 的旧 CS-06 配置筛选失败已另行修复，MT7981
 仍在运行；此记录不表示新固件已完成或通过实机验收。
+
+### 修复候选已推送
+
+- 原子提交 `317e7ad8f8ebd6b53090a2586ac451821a39724c` 只新增 SCM 补丁和本记录。
+- CS-06 验证版 `261108-02` 的单独编译：
+  <https://github.com/rothdren-lion/gwrt-immortalwrt/actions/runs/42481730924>。
+  创建时间为 2026-11-08 20:45:30（Asia/Shanghai），已开始运行。
+- 参数为 `device=cs06`、`models=jdcloud_re-cs-06`、`images=flashable`、
+  `release=false`。成功后只产生 factory/sysupgrade 下载 artifact，
+  实机验证前不自动发布正式 release。
+- 重新验证已展开配置 `/tmp/gwrt-ipq-selector.bYh4LK/cs06.config`：
+  qualcommbe/ipq53xx、单一 RE-CS-06 profile、ath12k、IPQ5332/QCN9274
+  专用固件、RE-CS-06 板级包和 wpad-openssl 检查通过。
+- TR3000 尚无对应的实机日志，本记录不能作为 TR3000 Wi-Fi 故障的定位结果。
