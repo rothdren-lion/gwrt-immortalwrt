@@ -9,7 +9,7 @@ wanted = set(re.split(r'[\s,]+', sys.argv[2].strip())) - {''}
 if not wanted or any(not re.fullmatch(r'[A-Za-z0-9_.-]+', name) for name in wanted):
     raise SystemExit('model list must contain device profile names separated by spaces or commas')
 source = config.read_text()
-pattern = re.compile(r'^(CONFIG_TARGET_DEVICE_\w+_DEVICE_([A-Za-z0-9_.-]+))=y$', re.M)
+pattern = re.compile(r'^(CONFIG_TARGET_(?:DEVICE_)?\w+_DEVICE_([A-Za-z0-9_.-]+))=y$', re.M)
 selected = {match.group(2) for match in pattern.finditer(source)}
 if wanted - selected:
     raise SystemExit('models absent from the original preset: ' + ', '.join(sorted(wanted - selected)))
