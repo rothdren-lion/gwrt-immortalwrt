@@ -63,4 +63,7 @@ SS-01 已选择 `ath11k-firmware-ipq6018-ddwrt`；上游固件的禁用项是原
 
 - 首批 AN7581、MT7981 的固件编译本身成功，但 CI 校验误要求多机型下每个 profile 都有独立 `*.manifest`，使两项失败并跳过固件 artifact 上传。
 - `CONFIG_TARGET_MULTI_PROFILE` 下 OpenWrt 将每台设备的镜像名和 `device_packages` 放入 `profiles.json`，共用目标包 manifest。校验器现同时支持单机型专属 manifest，以及多机型 profiles 元数据 + 共用 manifest，并检查 profile 图片实际存在。
-- 已用已下载的 CS-02 成功 artifact 验证单机型路径，并用 MT7986 七 profile 配置（含 S20M 无线包排除和 CS-05/CP-03 profile）验证多机型路径。首批两个预设将使用修复后的 master 单独补编。
+- 已用已下载的 CS-02 成功 artifact 验证单机型路径，并用 MT7986 七 profile 配置（含 S20M 无线包排除和 CS-05/CP-03 profile）验证多机型路径。首批两个预设已使用修复后的 master 单独补编。
+- Artifact 文件策略：IPQ 的 SS-01/CS-02/CS-07/CS-06/CS-08 只收 `factory` 和 `sysupgrade`；AN7581、MT7981、MT7986 只收 `sysupgrade`。通过 `profiles.json` 的 `type` 字段选择，`sysupgrade.itb` 等扩展名不受限制。
+- `scripts/gwrt-collect-firmware.py` 已用真实 CS-02 artifact 验证：IPQ 模式收 factory/sysupgrade 两个镜像，sysupgrade 模式只收 sysupgrade。
+- 已运行中的 workflow 使用启动时的源码版本和 `images=all` 参数，不能被本次提交追溯修改；新队列按上述策略收集。
