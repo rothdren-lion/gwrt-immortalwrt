@@ -41,6 +41,7 @@ PY
 
 sh scripts/tests/test-gwrt-aria2-mount.sh gwrt-overlays/feeds/packages/net/aria2/files/aria2.init
 sh scripts/tests/test-gwrt-aria2-uci-defaults.sh
+python3 scripts/tests/test-gwrt-select-models.py
 sh scripts/tests/test-gwrt-socinfo.sh
 python3 scripts/tests/test-gwrt-collect-firmware.py
 
