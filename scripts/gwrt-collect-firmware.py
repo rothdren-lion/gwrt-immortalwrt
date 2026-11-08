@@ -8,7 +8,7 @@ import shutil
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--profiles', type=Path, required=True,
                     help='profiles.json file or bin/targets directory')
-parser.add_argument('--mode', choices=('ipq', 'sysupgrade'), required=True)
+parser.add_argument('--mode', choices=('flashable',), required=True)
 parser.add_argument('--output', type=Path, required=True)
 args = parser.parse_args()
 
@@ -24,7 +24,7 @@ profiles = json.loads(profiles_file.read_text()).get('profiles', {})
 if not profiles:
     raise SystemExit(f'no device profiles in {profiles_file}')
 
-allowed = {'sysupgrade'} if args.mode == 'sysupgrade' else {'factory', 'sysupgrade'}
+allowed = {'factory', 'sysupgrade'}
 selected = {}
 for device, profile in profiles.items():
     images = [image for image in profile.get('images', []) if image.get('type') in allowed]
@@ -38,9 +38,12 @@ for device, profile in profiles.items():
         source = profiles_file.parent / relative
         if not source.is_file():
             raise SystemExit(f'image listed for {device} is missing: {source}')
-        selected[name] = source
+        artifact_name = relative.name
+        if artifact_name in selected and selected[artifact_name] != source:
+            raise SystemExit(f'image basename collision in profiles.json: {artifact_name}')
+        selected[artifact_name] = source
 
 args.output.mkdir(parents=True, exist_ok=True)
 for name, source in sorted(selected.items()):
-    shutil.copy2(source, args.output / Path(name).name)
-print(f'Collected {len(selected)} {args.mode} firmware image(s) for {len(profiles)} profile(s)')
+    shutil.copy2(source, args.output / name)
+print(f'Collected {len(selected)} factory/sysupgrade firmware image(s) for {len(profiles)} profile(s)')
