@@ -61,6 +61,8 @@ def requirements(device):
     elif args.preset in ('mt7981', 'mt7986'):
         soc = args.preset
         required |= {'kmod-mt7915e', 'kmod-' + soc + '-firmware', soc + '-wo-firmware', 'wpad-openssl'}
+        if args.preset == 'mt7986' and device == 'clx_s20p':
+            required.add('kmod-nvme')
     return required, forbidden
 
 # Per-device rootfs selects default drivers as modules for the image builder.
@@ -93,6 +95,10 @@ if args.preset in ('mt7981', 'mt7986'):
 
 if args.preset in ('cs06', 'be6500') and values.get('PACKAGE_MAC80211_DEBUGFS') != 'y':
     fail('ath12k PPE-DS requires MAC80211_DEBUGFS')
+if args.preset == 'mt7981':
+    for option in ('PACKAGE_MAC80211_DEBUGFS', 'PACKAGE_MAC80211_MESH'):
+        if values.get(option) != 'y':
+            fail('MT7981 WiFi validation requires ' + option)
 if args.preset in ('cs02', 'cs02-gwrt2'):
     image = (ROOT / 'target/linux/qualcommax/image/ipq60xx.mk').read_text()
     blocks = dict(re.findall(r'^define Device/([^\n]+)\n(.*?)^endef', image, re.M | re.S))
