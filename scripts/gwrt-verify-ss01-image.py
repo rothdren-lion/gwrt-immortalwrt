@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import shutil
 import struct
 import subprocess
 import tarfile
@@ -109,7 +110,12 @@ def main():
             require(factory.read(4) == b'hsqs', 'wrong factory rootfs offset')
         print(f'PASS layout: KERNEL_SIZE={size.group(1)}k; kernel={len(kernel)} rootfs={rootfs.stat().st_size}')
         verify_dtb(kernel)
-        unsquashfs = ROOT / 'staging_dir/host/bin/unsquashfs'
+        candidates = [ROOT / 'staging_dir/host/bin/unsquashfs4',
+                      ROOT / 'staging_dir/host/bin/unsquashfs']
+        unsquashfs = next((str(path) for path in candidates if path.is_file()),
+                         shutil.which('unsquashfs'))
+        require(unsquashfs is not None, 'missing host unsquashfs4/unsquashfs')
+        print('Using squashfs reader:', unsquashfs)
         def read_file(name):
             return subprocess.check_output([str(unsquashfs), '-cat', str(rootfs), name])
         theme = ROOT / 'gwrt-theme-V3/theme/luci-theme-gwrt'

@@ -185,6 +185,7 @@ jobs:
           grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)|^CONFIG_VERSION_NUMBER|^CONFIG_PACKAGE_(gwrt-agent|gwrt-mesh-apmode|gwrt-device-defaults|ucode-mod-socket)' .config
 
       - name: Build firmware
+        id: build_firmware
         shell: bash
         run: |
           set -o pipefail
@@ -214,7 +215,24 @@ jobs:
 
       - name: Verify SS-01 packaged theme and Ethernet
         if: success() && inputs.device == 'ss01'
-        run: python3 scripts/gwrt-verify-ss01-image.py bin/targets/qualcommax/ipq60xx
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 scripts/gwrt-verify-ss01-image.py bin/targets/qualcommax/ipq60xx | tee logs/ss01-image-audit.log
+
+      - name: Save SS-01 verification records
+        if: success() && inputs.device == 'ss01'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gwrt-ss01-${{ env.VER }}-verification
+          path: |
+            logs/ss01-image-audit.log
+            bin/targets/qualcommax/ipq60xx/*.manifest
+            bin/targets/qualcommax/ipq60xx/profiles.json
+            bin/targets/qualcommax/ipq60xx/sha256sums
+            bin/targets/qualcommax/ipq60xx/*.buildinfo
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Collect images
         if: success()
@@ -240,6 +258,19 @@ jobs:
           name: gwrt-${{ inputs.device }}-${{ env.VER }}-logs
           path: logs/
           if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Preserve SS-01 images for failed package inspection
+        if: failure() && inputs.device == 'ss01' && steps.build_firmware.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gwrt-ss01-${{ env.VER }}-inspection
+          path: |
+            bin/targets/qualcommax/ipq60xx/*.bin
+            bin/targets/qualcommax/ipq60xx/*.manifest
+            bin/targets/qualcommax/ipq60xx/profiles.json
+            bin/targets/qualcommax/ipq60xx/sha256sums
+          if-no-files-found: error
           retention-days: 7
 
       - name: Publish release

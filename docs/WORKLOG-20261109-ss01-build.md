@@ -57,4 +57,23 @@ CSS 开关、JS/shell/JSON、LAN 默认值、型号筛选、SoC 和 APK 首次�
 因此本轮使用仍可用的本地交付根目录；只给用户两份带 12M/版本标记的固件。
 诊断材料、manifest/hash 证据保存在 build 下单独备份目录。
 
-待完成：推送、只触发 SS-01、检查构建结果和成品、记录运行链接与 SHA256。
+已推送源码提交 `eb6c276aed1ab4068ee084f9d131d434a5492f31`，并仅触发 SS-01：
+[运行 42541456882](https://github.com/rothdren-lion/gwrt-immortalwrt/actions/runs/42541456882)，
+2026-11-09 08:40 CST 开始，版本 261109-01，release=false，images=flashable。
+串口分区证据与初始运行元数据已复制到
+`/home/godsun/build/gwrt-backups/20261109-ss01-build/`。
+
+## 首次构建结果与检查脚本修正
+
+运行 42541456882 在 11:05 CST 完成编译，耗时约 141 分钟；常规 manifest 与
+SHA256 检查通过。新增拆包检查已确认 factory 12M 偏移、6950748 字节内核、
+124926976 字节 rootfs，以及 ESS/EDMA 与四个 DP 端口。
+随后因脚本使用 `staging_dir/host/bin/unsquashfs` 而失败，实际构建工具名是
+`unsquashfs4`（`tools/squashfs4/Makefile:40`）。该次未上传固件，不能作为已验收成品。
+已修正为优先使用 unsquashfs4，并增加检查失败时保留成品的诊断 artifact，
+以免单纯检查脚本问题再导致已编译镜像丢失。没有改动固件内的修复内容。
+
+失败检查日志、完整 Actions 日志保存在本轮备份目录；第一次镜像 hash 仅作为
+构建证据记录，后续重新构建需以新产物的 hash 为准。
+
+待完成：重新构建、通过全部成品检查、记录实际 SHA256。
