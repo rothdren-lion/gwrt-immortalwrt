@@ -119,6 +119,17 @@ for p in \
 	add_pkg "$p"
 done
 
+echo "[an7581] IPTV / rtp2httpd / Windows 激活:"
+for p in \
+	rtp2httpd \
+	luci-app-rtp2httpd \
+	luci-i18n-rtp2httpd-zh-cn \
+	vlmcsd \
+	luci-app-vlmcsd \
+	luci-i18n-vlmcsd-zh-cn ; do
+	add_pkg "$p"
+done
+
 echo "[an7581] 插件面板（只要 LuCI，不要本体/内核扩展）:"
 for p in \
 	luci-app-airoha-npu \
@@ -214,6 +225,12 @@ if [ "${WITH_OPENCLASH}" = "1" ]; then
 		add_pkg "$p"
 	done
 fi
+
+# luci-app-airoha-npu 的 Frame Engine / PPE 详情读取依赖 busybox devmem 与 debugfs
+echo "[an7581] NPU 详情页依赖（devmem + debugfs）:"
+for sym in CONFIG_BUSYBOX_CONFIG_DEVMEM CONFIG_KERNEL_DEBUG_FS; do
+	grep -q "^${sym}=y$" "$TOP/.config" || echo "${sym}=y" >>"$TOP/.config"
+done
 
 # --- 4. 再次 defconfig 并强制复检 --------------------------------------------
 make defconfig >/dev/null
