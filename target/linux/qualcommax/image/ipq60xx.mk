@@ -182,7 +182,7 @@ define Device/jdcloud_re-ss-01
 	BLOCKSIZE := 64k
 	KERNEL_SIZE := 12288k
 	DEVICE_DTS_CONFIG := config@cp03-c2
-	DEVICE_PACKAGES := ipq-wifi-jdcloud_re-ss-01
+	DEVICE_PACKAGES := ipq-wifi-jdcloud_re-ss-01 kmod-qca-nss-dp
 	IMAGES += factory.bin
 	IMAGE/factory.bin := append-kernel | pad-to $$$$(KERNEL_SIZE) | append-rootfs | append-metadata
 endef

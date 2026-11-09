@@ -3,12 +3,16 @@ include $(TOPDIR)/rules.mk
 LUCI_TITLE:=GWRT Theme
 LUCI_DEPENDS:=+luci-base
 
+# CSSTidy 1.3 drops modern dashboard rules, including the WAN graph and
+# device counters. Ship the stylesheet unchanged so packaged and live UI agree.
+LUCI_MINIFY_CSS:=0
+
 PKG_NAME:=luci-theme-gwrt
 PKG_VERSION:=1.0
 # Keep this above the last field package (r111).  The theme owns a runtime
 # repair hook; a lower release would make apk/opkg keep the older package and
 # leave a luci-mod-status upgrade able to restore the stock dashboard.
-PKG_RELEASE:=113
+PKG_RELEASE:=114
 PKG_MAINTAINER:=GWRT
 PKG_LICENSE:=Apache-2.0
 

@@ -189,11 +189,11 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p logs
-          make -j6 \
+          taskset -c 0-5 make -j6 \
             REVISION="$(git rev-parse --short HEAD)" \
             CONFIG_VERSION_DIST=GWRT \
             CONFIG_VERSION_NUMBER="$VER" 2>&1 | tee logs/build.log \
-            || make -j1 V=s \
+            || taskset -c 0-5 make -j1 V=s \
             REVISION="$(git rev-parse --short HEAD)" \
             CONFIG_VERSION_DIST=GWRT \
             CONFIG_VERSION_NUMBER="$VER" 2>&1 | tee -a logs/build.log
@@ -211,6 +211,10 @@ jobs:
           for path in sums:
               subprocess.run(['sha256sum', '-c', path.name], cwd=path.parent, check=True)
           PY
+
+      - name: Verify SS-01 packaged theme and Ethernet
+        if: success() && inputs.device == 'ss01'
+        run: python3 scripts/gwrt-verify-ss01-image.py bin/targets/qualcommax/ipq60xx
 
       - name: Collect images
         if: success()

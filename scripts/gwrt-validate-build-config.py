@@ -48,7 +48,8 @@ def requirements(device):
                            'ath11k-firmware-qcn9074-ddwrt', 'ipq-wifi-jdcloud_re-cs-02'}
         forbidden |= {'ath11k-firmware-ipq6018', 'ath11k-firmware-qcn9074'}
     elif device == 'jdcloud_re-ss-01':
-        required |= ahb | {'ath11k-firmware-ipq6018-ddwrt', 'ipq-wifi-jdcloud_re-ss-01'}
+        required |= ahb | {'ath11k-firmware-ipq6018-ddwrt', 'ipq-wifi-jdcloud_re-ss-01',
+                           'kmod-qca-nss-dp', 'kmod-qca-ssdk'}
         forbidden |= pci | {'ipq-wifi-jdcloud_re-cs-02', 'luci-app-athena-led'}
     elif device in ('jdcloud_re-cs-06', 'xiaomi_be6500'):
         required |= ath12k | {'ipq-wifi-' + device}
@@ -70,6 +71,16 @@ def requirements(device):
 for device in devices:
     required, forbidden = requirements(device)
     check_packages(packages, required, forbidden if len(devices) == 1 else (), 'config/' + device)
+
+if 'jdcloud_re-ss-01' in devices:
+    dts = (ROOT / 'target/linux/qualcommax/dts/ipq6000-re-ss-01.dts').read_text()
+    if '#include "ipq6018-ess-nss.dtsi"' not in dts:
+        fail('SS-01 requires the NSS/SSDK Ethernet DTS, matching kmod-qca-nss-dp')
+    for port, label in ((2, 'lan1'), (3, 'lan2'), (4, 'lan3'), (5, 'wan')):
+        node = re.search(r'&dp' + str(port) + r'\s*\{([^}]+)\}', dts, re.S)
+        if not node or not re.search(r'status\s*=\s*"okay"', node.group(1)) or not re.search(
+                r'label\s*=\s*"' + label + r'"', node.group(1)):
+            fail('SS-01 Ethernet mapping must enable dp' + str(port) + '=' + label)
 
 if args.preset in ('mt7981', 'mt7986'):
     image = (ROOT / 'target/linux/mediatek/image/filogic.mk').read_text()

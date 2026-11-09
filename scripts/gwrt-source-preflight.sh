@@ -10,6 +10,14 @@ import json
 import re
 import subprocess
 theme = Path('gwrt-theme-V3/theme/luci-theme-gwrt')
+for package in (theme, Path('package/gwrt-theme/luci-theme-gwrt'),
+                Path('package/gwrt-theme/luci-theme-gwrt/luci-theme-gwrt')):
+    makefile = (package / 'Makefile').read_text()
+    assert re.search(r'^LUCI_MINIFY_CSS\s*:=\s*0\s*$', makefile, re.M), \
+        str(package) + ': CSSTidy drops modern dashboard CSS; minification must be disabled'
+    css = (package / 'htdocs/luci-static/gwrt/css/cascade.css').read_text()
+    for selector in ('.gwrt-netspeed-head', '.gwrt-devpair', '.gwrt-wan-trend-popup', '.gwrt-home-menu-tabs'):
+        assert selector in css, str(package) + ': missing dashboard CSS ' + selector
 roots = [theme, Path('gwrt-overlays'), Path('package/gwrt-agent'),
          Path('package/gwrt-device-defaults'), Path('package/gwrt-mesh-apmode'), Path('package/gwrt-mesh-led')]
 counts = dict(js=0, shell=0, json=0)

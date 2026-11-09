@@ -17,7 +17,7 @@
 </footer>
 </div>
 </div>
-<script src="/luci-static/gwrt/resources/gwrt.js?v=20261107fix2"></script>
+<script src="/luci-static/gwrt/resources/gwrt.js?v=20261109r114"></script>
 <script>
 	// thanks for Jo-Philipp Wich <jow@openwrt.org>
 	var luciLocation = {{ ctx.path }};

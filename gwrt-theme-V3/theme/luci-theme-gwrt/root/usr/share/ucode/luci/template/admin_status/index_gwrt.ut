@@ -3106,7 +3106,7 @@ function renderWanTrend(){
   }).join(' ');
   var histHtml=arr.slice().reverse().map(function(p){
     var d=new Date(p.t);
-    return '<div class="gwrt-wan-trend-hist-row"><span>'+d.toLocaleTimeString('zh-CN',{hour12:false})+'</span><span class="gwrt-wan-trend-hist-down">↓ '+fmtSpeed(p.v)+'</span></div>';
+    return '<div class="gwrt-wan-trend-hist-row"><span>'+d.toLocaleTimeString('zh-CN',{hour12:false})+'</span><span class="gwrt-wan-trend-hist-down">'+fmtSpeed(p.v)+'</span></div>';
   }).join('');
   el.innerHTML='<svg class="gwrt-wan-trend-svg" viewBox="0 0 '+w+' '+hh+'" preserveAspectRatio="none">'
     +'<defs><linearGradient id="gwrtWanTrendGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--accent-cyan)" stop-opacity=".35"/><stop offset="100%" stop-color="var(--accent-cyan)" stop-opacity="0"/></linearGradient></defs>'
@@ -3114,7 +3114,7 @@ function renderWanTrend(){
     +'<polyline points="'+pts+'" fill="none" stroke="var(--accent-cyan)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>'
     +'</svg>'
     +'<div class="gwrt-wan-trend-tip" id="gwrtWanTrendTip"></div>'
-    +'<div class="gwrt-wan-trend-popup"><div class="gwrt-wan-trend-popup-head">实时流量记录（每分钟）</div><div class="gwrt-wan-trend-popup-list">'+histHtml+'</div></div>';
+    +'<div class="gwrt-wan-trend-popup"><div class="gwrt-wan-trend-popup-head">实时总流量记录（每 5 秒采样）</div><div class="gwrt-wan-trend-popup-list">'+histHtml+'</div></div>';
   var svg=el.querySelector('svg');
   if(svg&&!svg._bound){
     svg._bound=true;
@@ -3297,8 +3297,9 @@ function refresh(){
         var threads=parseInt(o[1],10)||0;
         var models={'MT7981':'MT7981B','MT7986':'MT7986A','MT7988':'MT7988A'};
         var txt=models[chip]||chip||'';
-        if(threads)txt+=(txt?' \u00d7 ':'')+threads+'线程';
+        if(threads)txt+=(txt?' \u00d7 ':'')+threads;
         socEl.textContent=txt||board.model||'-';
+        if(threads)socEl.title=threads+' 线程';
       }).catch(function(){socEl.textContent=board.model||'-';});
       socEl.dataset.fetched='1';
     }
