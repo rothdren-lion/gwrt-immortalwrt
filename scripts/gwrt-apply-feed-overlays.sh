@@ -22,4 +22,13 @@ find . -type f | LC_ALL=C sort | while IFS= read -r file; do
 		*) chmod 644 "$destination" ;;
 	esac
 done
+
+# python-dotenv selects the setuptools PEP 517 backend. Its Makefile does not
+# declare python-setuptools/host, so a parallel world build can reach it before
+# setuptools is staged and fail with "Cannot import 'setuptools.build_meta'".
+dotenv_mk="$top/feeds/packages/lang/python/python-dotenv/Makefile"
+if [ -f "$dotenv_mk" ] && ! grep -q '^PKG_BUILD_DEPENDS:=.*python-setuptools/host' "$dotenv_mk"; then
+	sed -i '/^PKG_HASH:=/a PKG_BUILD_DEPENDS:=python-setuptools/host' "$dotenv_mk"
+fi
+
 echo "GWRT feed overlays applied"
