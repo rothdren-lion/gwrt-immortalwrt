@@ -963,22 +963,22 @@
  #undef XASSIGN
 --- a/net/ipv4/ip_gre.c
 +++ b/net/ipv4/ip_gre.c
-@@ -691,6 +691,8 @@ static netdev_tx_t ipgre_xmit(struct sk_
- 					      tunnel->parms.o_flags)))
+@@ -690,6 +690,8 @@
+ 	if (gre_handle_offloads(skb, test_bit(IP_TUNNEL_CSUM_BIT, flags)))
  		goto free_skb;
  
 +	skb->skb_iif = dev->ifindex;
 +
- 	__gre_xmit(skb, dev, tnl_params, skb->protocol);
+ 	__gre_xmit(skb, dev, tnl_params, skb->protocol, flags);
  	return NETDEV_TX_OK;
  
-@@ -775,6 +777,8 @@ static netdev_tx_t gre_tap_xmit(struct s
+@@ -779,6 +781,8 @@
  	if (skb_cow_head(skb, dev->needed_headroom))
  		goto free_skb;
  
 +	skb->skb_iif = dev->ifindex;
 +
- 	__gre_xmit(skb, dev, &tunnel->parms.iph, htons(ETH_P_TEB));
+ 	__gre_xmit(skb, dev, &tunnel->parms.iph, htons(ETH_P_TEB), flags);
  	return NETDEV_TX_OK;
  
 @@ -1386,6 +1390,7 @@ static void ipgre_tap_setup(struct net_d

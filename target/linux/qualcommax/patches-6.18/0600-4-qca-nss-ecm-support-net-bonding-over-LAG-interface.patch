@@ -659,10 +659,10 @@
  int bond_create(struct net *net, const char *name);
  int bond_create_sysfs(struct bond_net *net);
  void bond_destroy_sysfs(struct bond_net *net);
-@@ -713,6 +716,13 @@ struct bond_vlan_tag *bond_verify_device
- 					      int level);
+@@ -714,6 +714,13 @@
  int bond_update_slave_arr(struct bonding *bond, struct slave *skipslave);
  void bond_slave_arr_work_rearm(struct bonding *bond, unsigned long delay);
+ void bond_peer_notify_work_rearm(struct bonding *bond, unsigned long delay);
 +/* QCA NSS ECM bonding support - Start */
 +uint32_t bond_xmit_hash_without_skb(uint8_t *src_mac, uint8_t *dst_mac,
 +				    void *psrc, void *pdst, uint16_t protocol,
