@@ -77,3 +77,23 @@ SHA256 检查通过。新增拆包检查已确认 factory 12M 偏移、6950748 �
 构建证据记录，后续重新构建需以新产物的 hash 为准。
 
 待完成：重新构建、通过全部成品检查、记录实际 SHA256。
+
+## 第二次构建
+
+修正提交 `3c633c693d53574ab7f9164652e389a3d26a35e2` 已推送；
+[运行 42554956424](https://github.com/rothdren-lion/gwrt-immortalwrt/actions/runs/42554956424)
+于 2026-11-09 11:10:59 CST 触发，仍仅 SS-01、261109-01、factory/sysupgrade。
+成功时另存内部 manifest/hash/拆包记录；用户交付目录仍只有两份固件。
+
+该次在 `Build firmware` 阶段失败（2h33m35s）：`python-dotenv 1.2.2` 的
+PEP 517 后端报 `BackendUnavailable: Cannot import 'setuptools.build_meta'`，
+hostpkg 中没有 setuptools。feed 的 `python-dotenv/Makefile` 没有声明
+`python-setuptools/host` 构建依赖，并行 world 构建可能在该依赖尚未 staged
+时先编译它。首次构建只是碰巧由其它包先带入了 setuptools，属于竞态。
+
+## 第三次构建
+
+修复提交 `bc08c1f2`：`scripts/gwrt-apply-feed-overlays.sh` 在 feed 更新后为
+`python-dotenv` 补 `PKG_BUILD_DEPENDS:=python-setuptools/host`，不依赖并发顺序。
+[运行 42626393956](https://github.com/rothdren-lion/gwrt-immortalwrt/actions/runs/42626393956)
+于 2026-11-09 21:32 CST 触发，仍仅 SS-01、261109-01、factory/sysupgrade。
