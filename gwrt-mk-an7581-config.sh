@@ -245,7 +245,7 @@ fi
 # BUSYBOX_CONFIG_DEVMEM 才有提示并可写入 .config；否则 busybox 只用
 # Config-defaults.in 的隐藏默认值（261110-03/04 拆包均无 devmem）。
 echo "[an7581] NPU 详情页依赖（devmem + debugfs）:"
-for sym in CONFIG_BUSYBOX_CUSTOM CONFIG_BUSYBOX_CONFIG_DEVMEM CONFIG_KERNEL_DEBUG_FS; do
+for sym in CONFIG_BUSYBOX_CUSTOM CONFIG_BUSYBOX_CONFIG_DEVMEM CONFIG_KERNEL_DEBUG_FS CONFIG_KERNEL_DEVMEM; do
 	grep -q "^${sym}=y$" "$TOP/.config" || echo "${sym}=y" >>"$TOP/.config"
 done
 
