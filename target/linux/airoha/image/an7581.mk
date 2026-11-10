@@ -233,6 +233,17 @@ define Device/fiberhome_hg5585f-ct
 endef
 TARGET_DEVICES += fiberhome_hg5585f-ct
 
+define Device/fiberhome_hg5585f-ct-usb3
+  $(call Device/fiberhome_hg5585f-common)
+  DEVICE_MODEL := HG5585F
+  DEVICE_VARIANT := CT-USB3
+  DEVICE_DTS := an7581-fiberhome-hg5585f-ct-usb3
+  DEVICE_PACKAGES += kmod-phy-maxlinear
+  SUPPORTED_DEVICES += fiberhome,hg5585f-ct
+  $(call Device/fiberhome_hg5585f-images)
+endef
+TARGET_DEVICES += fiberhome_hg5585f-ct-usb3
+
 define Device/fiberhome_hg5585f-cu
   $(call Device/fiberhome_hg5585f-common)
   DEVICE_MODEL := HG5585F
