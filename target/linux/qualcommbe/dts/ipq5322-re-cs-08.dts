@@ -74,11 +74,20 @@
 		pinctrl-names = "default";
 		los-gpios = <&tlmm 45 GPIO_ACTIVE_HIGH>;
 		tx-disable-gpios = <&tlmm 34 GPIO_ACTIVE_HIGH>;
+		/* SFF-8472 defines the 2-wire interface for 100 kHz. 10GBASE-T
+		 * copper modules commonly need close to 2 W, and the 1 W
+		 * default leaves them in power mode 1, where the internal PHY
+		 * never answers on MDIO-over-I2C ("no PHY detected").
+		 */
+		maximum-power-milliwatt = <2000>;
 	};
 };
 
 &blsp1_i2c1 {
-	clock-frequency = <400000>;
+	/* SFF-8472 caps the module 2-wire bus at 100 kHz; 400 kHz makes
+	 * the A2h status page NAK (-ENXIO) on these copper modules.
+	 */
+	clock-frequency = <100000>;
 	status = "okay";
 
 	pinctrl-0 = <&i2c1_pins>;
