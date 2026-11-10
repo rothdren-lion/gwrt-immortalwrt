@@ -39,3 +39,5 @@ git-src
 
 # 生成器备份
 .config.bak-*
+scripts/__pycache__/
+**/__pycache__/
