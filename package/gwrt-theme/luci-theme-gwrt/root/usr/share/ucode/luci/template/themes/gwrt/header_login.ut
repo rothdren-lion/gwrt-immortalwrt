@@ -77,7 +77,7 @@
 	</script>
 
 	<!-- Main Stylesheet -->
-	<link rel="stylesheet" href="/luci-static/gwrt/css/cascade.css?v=20261109r114">
+	<link rel="stylesheet" href="/luci-static/gwrt/css/cascade.css?v=20261111r115">
 
 	{% if (node?.css): %}
 	<link rel="stylesheet" href="{{ resource }}/{{ node.css}}">

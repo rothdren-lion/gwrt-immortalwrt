@@ -207,20 +207,7 @@ for p in \
 	add_pkg "$p"
 done
 
-echo "[an7581] Podman 容器（内核模块 =m）:"
-for p in \
-	podman \
-	conmon \
-	netavark \
-	aardvark-dns \
-	passt \
-	libseccomp \
-	libgpgme \
-	nsenter \
-	zoneinfo-simple \
-	luci-app-podman-market ; do
-	add_pkg "$p"
-done
+echo "[an7581] Podman 所需内核模块（=m，podman 用户自行安装）:"
 for m in \
 	kmod-veth \
 	kmod-br-netfilter \
