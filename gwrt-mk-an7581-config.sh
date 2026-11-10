@@ -233,8 +233,6 @@ done
 
 echo "[an7581] SSR Plus 代理:"
 for p in \
-	luci-app-ssr-plus \
-	luci-i18n-ssr-plus-zh-cn \
 	gwrt-ssr-plus-luci \
 	xray-core \
 	v2ray-core \
