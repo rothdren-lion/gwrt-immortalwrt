@@ -2189,22 +2189,26 @@ function isSs01Board(){return /RE-SS-01|re-ss-01/i.test(String(window._gwrtBoard
 function networkDevicePresent(state){
   return !!state&&state.__rpcError===undefined&&(state.present===true||state.present===1||state.present==='1');
 }
-function ethPortEntries(ports,states){
+function ethPortEntries(ports,states,wanDevices){
   var list=Array.isArray(ports)?ports:((ports&&ports.result)||[]);
   if(!list.length)list=Object.keys(states||{}).filter(function(name){
-    return /^(wan|lan\d+)$/i.test(name);
+    return /^(wan|lan\d+|pon\d+)$/i.test(name);
   }).sort(function(a,b){
-    if(/^wan$/i.test(a))return -1;
-    if(/^wan$/i.test(b))return 1;
+    if(/^(wan|pon\d+)$/i.test(a))return -1;
+    if(/^(wan|pon\d+)$/i.test(b))return 1;
     return a.localeCompare(b,undefined,{numeric:true});
   }).map(function(name){
-    return {role:/^wan$/i.test(name)?'wan':'lan',device:name};
+    return {role:/^(wan|pon\d+)$/i.test(name)?'wan':'lan',device:name};
   });
+  var wans=wanDevices||window._gwrtWanDevices||{};
   return list.map(function(p){
     var name=p.device||p.name||p.ifname;
     if(!name)return null;
-    var role=/^wan$/i.test(p.role||name)?'wan':'lan';
-    return {name:name,label:role==='wan'?'WAN':String(name).toUpperCase(),role:role};
+    var isPon=/^pon\d+$/i.test(name);
+    var wanSec=wans[name]||null;
+    var role=(wanSec||/^wan\d*$/i.test(name)||/^wan$/i.test(String(p.role||'')))?'wan':'lan';
+    var label=isPon?'PON':(role==='wan'?'WAN':(/^wan\d*$/i.test(name)?'LAN':String(name).toUpperCase()));
+    return {name:name,label:label,baseLabel:label,role:role,pon:isPon,wanSection:wanSec||undefined};
   }).filter(Boolean);
 }
 function bridgeExternalMemberNames(bridge,ports){
@@ -2366,14 +2370,241 @@ function renderMeshInfo(force){
   });
   return gwrtMeshRefreshInFlight;
 }
+/* ---- PON optical uplink (AN7581 pon0) ---- */
+function ponModeLabel(mode){
+  switch(String(mode||'')){
+  case 'gpon':return 'GPON';
+  case 'xgpon':return 'XG-PON';
+  case 'xgspon':return 'XGS-PON';
+  case 'epon-1g':return 'EPON 1G';
+  case 'epon-10g-1g':return '10G-EPON 10G/1G';
+  case 'epon-10g-10g':return '10G-EPON 10G/10G';
+  case 'none':return '\u672a\u6fc0\u6d3b';
+  default:return mode?String(mode):'PON';
+  }
+}
+function ponLifecycleLabel(value){
+  switch(value){
+  case 'stopped':return '\u5df2\u505c\u6b62';
+  case 'wait-optical-signal':return '\u7b49\u5f85\u5149\u4fe1\u53f7';
+  case 'pma-configured':return 'PMA \u5df2\u914d\u7f6e';
+  case 'wait-line-sync':return '\u7b49\u5f85\u7ebf\u8def\u540c\u6b65';
+  case 'protocol-activating':return '\u534f\u8bae\u6fc0\u6d3b\u4e2d';
+  case 'operational':return '\u8fd0\u884c\u4e2d';
+  case 'error':return '\u5f02\u5e38';
+  default:return value||'\u672a\u77e5';
+  }
+}
+function ponOnuLabel(value){
+  switch(value){
+  case 'O1':return 'O1 \u521d\u59cb\u5316';
+  case 'O2_3':return 'O2-3 \u5e8f\u5217\u53f7';
+  case 'O4':return 'O4 \u6d4b\u8ddd';
+  case 'O5':return 'O5 \u8fd0\u884c';
+  case 'O7':return 'O7 \u7d27\u6025\u505c\u6b62';
+  default:return value||'--';
+  }
+}
+function ponMpcpLabel(value){
+  switch(value){
+  case 'wait':return '\u7b49\u5f85\u53d1\u73b0';
+  case 'registering':return '\u6ce8\u518c\u4e2d';
+  case 'register-request':return '\u5df2\u53d1\u9001\u6ce8\u518c\u8bf7\u6c42';
+  case 'register-pending':return '\u7b49\u5f85 ACK';
+  case 'registered':return '\u5df2\u6ce8\u518c';
+  case 'denied':return '\u88ab\u62d2\u7edd';
+  case 'not-applicable':return '\u4e0d\u9002\u7528';
+  default:return value||'--';
+  }
+}
+function ponSnapshot(){
+  var raw=window._gwrtPon;
+  if(!raw)return null;
+  if(typeof raw==='object')return raw;
+  try{var j=JSON.parse(raw);return (j&&j.schema_version===1)?j:null;}catch(e){return null;}
+}
+function ponMetric(frontend,key,digits){
+  if(!frontend||Number(frontend.error||0)!==0)return null;
+  var v=frontend[key];
+  if(v==null||v===''||isNaN(Number(v)))return null;
+  return Number(v).toFixed(digits);
+}
+function ponMetricText(frontend,key,digits,unit){
+  var v=ponMetric(frontend,key,digits);
+  return v==null?'--':v+' '+unit;
+}
+function ponStatusText(pon){
+  var line=(pon&&pon.line)||{},reg=(pon&&pon.registration)||{};
+  var regState=reg.onu_state||reg.mpcp_state;
+  if(line.lifecycle==='operational'&&(!regState||reg.onu_state==='O5'||reg.mpcp_state==='registered'))
+    return '\u5df2\u6ce8\u518c \u00b7 \u8fd0\u884c\u4e2d';
+  if(line.lifecycle)return ponLifecycleLabel(line.lifecycle);
+  if(reg.onu_state)return ponOnuLabel(reg.onu_state);
+  return '\u7b49\u5f85\u8bfb\u53d6';
+}
+function fetchPonStatus(force){
+  var args={command:'/usr/sbin/ponctl',params:['--device','pon0','status','--json']};
+  var job=force?rpcD('file','exec',args):rpcCached('ponStatus',10000,'file','exec',args);
+  return job.then(function(r){
+    if(r&&r.stdout)window._gwrtPon=r.stdout;
+    return ponSnapshot();
+  }).catch(function(){return null;});
+}
+function ponCardHtml(p,st){
+  var now=Date.now(),stat=(st&&st.statistics)||{};
+  var rx=Number(stat.rx_bytes||0),tx=Number(stat.tx_bytes||0);
+  var prev=portPrev[p.name],dt=prev?(now-prev.ts)/1000:0,drx=0,dtx=0;
+  if(prev&&dt>0&&dt<30){drx=Math.max(0,rx-prev.rx)/dt;dtx=Math.max(0,tx-prev.tx)/dt;}
+  portPrev[p.name]={rx:rx,tx:tx,ts:now};
+  var pon=ponSnapshot(),line=(pon&&pon.line)||{},fe=(pon&&pon.frontend)||{},reg=(pon&&pon.registration)||{};
+  var regState=reg.onu_state||reg.mpcp_state;
+  var operational=line.lifecycle==='operational'&&(!regState||reg.onu_state==='O5'||reg.mpcp_state==='registered');
+  var hasSignal=line.optical_signal===true;
+  var state=operational?'up':(hasSignal?'warn':((st&&st.carrier)?'warn':'down'));
+  var mode=ponModeLabel(line.active_mode||line.configured_mode||'');
+  var rxv=ponMetric(fe,'rx_power_dbm',2),txv=ponMetric(fe,'tx_power_dbm',2),temp=ponMetric(fe,'temperature_celsius',1);
+  var rxHtml='RX <b>'+(rxv==null?'--':esc(rxv))+'</b>'+(rxv==null?'':' dBm');
+  var txHtml='TX <b>'+(txv==null?'--':esc(txv))+'</b>'+(txv==null?'':' dBm');
+  var tempHtml=temp==null?'--':esc(temp)+' \u00b0C';
+  return '<div class="gwrt-port pon '+state+'" data-gwrt-port-name="'+esc(p.name)+'" data-gwrt-port-role="wan" data-gwrt-pon="1" title="'+esc(p.label)+' \u5149\u94fe\u8def / PON WAN \u8bbe\u7f6e" role="button" tabindex="0">'
+    +'<div class="gwrt-port-top"><span class="gwrt-port-title"><span class="gwrt-port-dot"></span><span class="gwrt-port-name">PON</span><span class="gwrt-pon-mode">'+esc(mode)+'</span></span><span class="gwrt-port-gear">\u2699</span></div>'
+    +'<div class="gwrt-pon-optics"><span>'+rxHtml+'</span><span>'+txHtml+'</span></div>'
+    +'<div class="gwrt-pon-meta"><span>\ud83c\udf21 '+tempHtml+'</span><span class="gwrt-pon-rate">\u2193 '+esc(fmtSpeed(drx))+' \u2191 '+esc(fmtSpeed(dtx))+'</span></div>'
+    +'<div class="gwrt-pon-state">'+esc(ponStatusText(pon))+'</div>'
+    +'</div>';
+}
+function renderPonPanel(){
+  var el=document.getElementById('gwrtPonOptics');
+  if(!el)return;
+  var p=window._gwrtPonPort||{name:'pon0'};
+  var pon=ponSnapshot(),line=(pon&&pon.line)||{},fe=(pon&&pon.frontend)||{},reg=(pon&&pon.registration)||{},ctr=(pon&&pon.counters)||{};
+  var modeEl=document.getElementById('gwrtPonPanelMode');
+  if(modeEl)modeEl.textContent=ponModeLabel(line.active_mode||line.configured_mode||'');
+  var statusEl=document.getElementById('gwrtPonPanelStatus');
+  if(statusEl)statusEl.textContent=pon?ponStatusText(pon):'\u5149\u6a21\u5757\u72b6\u6001\u8bfb\u53d6\u5931\u8d25\uff08ponctl \u4e0d\u53ef\u7528\u6216 pon0 \u672a\u542f\u52a8\uff09';
+  var rows=[
+    ['\u63a5\u6536\u5149\u529f\u7387',ponMetricText(fe,'rx_power_dbm',2,'dBm')],
+    ['\u53d1\u9001\u5149\u529f\u7387',ponMetricText(fe,'tx_power_dbm',2,'dBm')],
+    ['\u6a21\u5757\u6e29\u5ea6',ponMetricText(fe,'temperature_celsius',1,'\u00b0C')],
+    ['\u5de5\u4f5c\u7535\u538b',ponMetricText(fe,'voltage_volts',2,'V')],
+    ['TX Bias',ponMetricText(fe,'tx_bias_ma',1,'mA')],
+    ['ONU \u72b6\u6001',ponOnuLabel(reg.onu_state)],
+    ['MPCP \u72b6\u6001',ponMpcpLabel(reg.mpcp_state)],
+    ['ONU ID',reg.onu_id!=null?String(reg.onu_id):'--']
+  ];
+  el.innerHTML=rows.map(function(r){return '<div><span>'+esc(r[0])+'</span><b>'+esc(r[1])+'</b></div>';}).join('');
+  var traffic=document.getElementById('gwrtPonTraffic');
+  if(!traffic)return;
+  var st=(window._gwrtPortStates||{})[p.name]||{},stat=st.statistics||{};
+  var rx=Number(stat.rx_bytes||0),tx=Number(stat.tx_bytes||0);
+  var prev=portPrev[p.name],dt=prev?(Date.now()-prev.ts)/1000:0,drx=0,dtx=0;
+  if(prev&&dt>0&&dt<30){drx=Math.max(0,rx-prev.rx)/dt;dtx=Math.max(0,tx-prev.tx)/dt;}
+  traffic.innerHTML='<div class="gwrt-pon-traffic-row"><span>\u672c\u6b21\u8fd0\u884c</span><b>\u2193 '+esc(F(rx))+' \u00b7 \u2191 '+esc(F(tx))+'</b></div>'
+    +'<div class="gwrt-pon-traffic-row"><span>\u5b9e\u65f6\u901f\u7387</span><b>\u2193 '+esc(fmtSpeed(drx))+' \u00b7 \u2191 '+esc(fmtSpeed(dtx))+'</b></div>'
+    +'<div class="gwrt-pon-traffic-row"><span>XGEM \u5e27</span><b>RX '+esc(ctr.xgem_rx!=null?String(ctr.xgem_rx):'--')+' \u00b7 TX '+esc(ctr.xgem_tx!=null?String(ctr.xgem_tx):'--')+'</b></div>';
+}
+function togglePonWanFields(proto){
+  var ppp=proto==='pppoe',st=proto==='static';
+  ['gwrt_pon_wan_pppoe_user','gwrt_pon_wan_pppoe_pass'].forEach(function(id){
+    var el=document.getElementById(id);if(el)el.style.display=ppp?'':'none';
+  });
+  ['gwrt_pon_wan_static_ip','gwrt_pon_wan_static_gw'].forEach(function(id){
+    var el=document.getElementById(id);if(el)el.style.display=st?'':'none';
+  });
+}
+function loadPonWanSettings(){
+  rpcD('uci','get',{config:'pon_wan'}).then(function(r){
+    var vals=(r&&r.values)||{},v=vals.settings||{};
+    var en=document.getElementById('gwrt_pon_wan_enabled');
+    if(en)en.checked=String(v.enabled||'0')==='1';
+    var vlan=document.getElementById('gwrt_pon_wan_vlan');if(vlan)vlan.value=v.vlan||'';
+    var proto=document.getElementById('gwrt_pon_wan_proto');if(proto)proto.value=v.proto||'dhcp';
+    var user=document.getElementById('gwrt_pon_wan_username');if(user)user.value=v.pppoe_username||'';
+    var pass=document.getElementById('gwrt_pon_wan_password');if(pass)pass.value=v.pppoe_password||'';
+    var ip=document.getElementById('gwrt_pon_wan_ipaddr');if(ip)ip.value=v.ipaddr||'';
+    var gw=document.getElementById('gwrt_pon_wan_gateway');if(gw)gw.value=v.gateway||'';
+    togglePonWanFields(proto?proto.value:'dhcp');
+  }).catch(function(){togglePonWanFields('dhcp');});
+}
+function savePonWan(){
+  var btn=document.getElementById('gwrtPonSave'),sp=document.getElementById('gwrtPonSpinner'),txt=document.getElementById('gwrtPonSaveText');
+  var enabled=document.getElementById('gwrt_pon_wan_enabled').checked;
+  var vlan=String(document.getElementById('gwrt_pon_wan_vlan').value||'').trim();
+  var proto=document.getElementById('gwrt_pon_wan_proto').value||'dhcp';
+  if(enabled&&(!/^\d+$/.test(vlan)||Number(vlan)<1||Number(vlan)>4094)){gwrtToast('\u4e1a\u52a1 VLAN \u5fc5\u987b\u5728 1-4094 \u4e4b\u95f4','error');return;}
+  var vals={enabled:enabled?'1':'0',uplink:'pon0',iface:'wan',proto:proto,vlan:vlan};
+  if(proto==='pppoe'){
+    vals.pppoe_username=document.getElementById('gwrt_pon_wan_username').value||'';
+    vals.pppoe_password=document.getElementById('gwrt_pon_wan_password').value||'';
+  }else if(proto==='static'){
+    vals.ipaddr=document.getElementById('gwrt_pon_wan_ipaddr').value||'';
+    vals.netmask='255.255.255.0';
+    vals.gateway=document.getElementById('gwrt_pon_wan_gateway').value||'';
+  }
+  if(btn)btn.disabled=true;if(sp)sp.style.display='inline-block';if(txt)txt.textContent='\u5e94\u7528\u4e2d...';
+  rpcMust('uci','set',{config:'pon_wan',section:'settings',values:vals})
+  .then(function(){return rpcMust('uci','commit',{config:'pon_wan'});})
+  .then(function(){return rpcMust('file','exec',{command:'/usr/libexec/pon-wan-apply',params:['apply']});})
+  .then(function(){
+    gwrtToast('\u2713 PON WAN \u5df2\u4fdd\u5b58\u5e76\u5e94\u7528','success');
+    setTimeout(function(){closePonOverlay();refresh();},700);
+  })
+  .catch(function(e){gwrtToast('PON WAN \u4fdd\u5b58\u5931\u8d25: '+(e&&e.message||e),'error');})
+  .then(function(){if(btn)btn.disabled=false;if(sp)sp.style.display='none';if(txt)txt.textContent='\u4fdd\u5b58\u5e76\u5e94\u7528';});
+}
+function showPonPanel(p){
+  closePonOverlay();
+  window._gwrtPonPort=p;
+  var overlay=document.createElement('div');
+  overlay.id='gwrtPonOverlay';
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(4px);z-index:10000;display:flex;align-items:center;justify-content:center;animation:gwrtFadeIn .2s ease';
+  var panel=document.createElement('div');
+  panel.className='gwrt-settings-panel gwrt-pon-panel';
+  panel.innerHTML='<div class="gwrt-sf-header"><div style="display:flex;align-items:center;gap:8px;min-width:0"><span style="font-size:20px">\ud83c\udf10</span><h3 style="margin:0;font-size:16px;color:var(--text-primary)">PON \u5149\u94fe\u8def</h3><span id="gwrtPonPanelMode" class="gwrt-pon-badge">PON</span></div><button id="gwrtPonClose" class="gwrt-sf-close">\u2715</button></div>'
+    +'<div id="gwrtPonPanelStatus" class="gwrt-sf-status">\u8bfb\u53d6\u4e2d...</div>'
+    +'<div id="gwrtPonOptics" class="gwrt-pon-grid"></div>'
+    +'<div id="gwrtPonTraffic" class="gwrt-pon-traffic"></div>'
+    +gwrtSection('PON WAN \u4e1a\u52a1')
+    +'<div class="gwrt-sf gwrt-sf-row"><label>\u542f\u7528 PON WAN</label><label class="gwrt-switch"><input type="checkbox" id="gwrt_pon_wan_enabled"><span class="gwrt-switch-slider"></span></label></div>'
+    +'<div class="gwrt-sf"><label>\u4e1a\u52a1 VLAN</label><input id="gwrt_pon_wan_vlan" type="number" min="1" max="4094" placeholder="41"></div>'
+    +'<div class="gwrt-sf"><label>WAN \u534f\u8bae</label><select id="gwrt_pon_wan_proto"><option value="dhcp">DHCP \u5ba2\u6237\u7aef</option><option value="pppoe">PPPoE \u62e8\u53f7</option><option value="static">\u9759\u6001 IP</option><option value="none">\u4e0d\u914d\u7f6e\u534f\u8bae</option></select></div>'
+    +'<div class="gwrt-sf" id="gwrt_pon_wan_pppoe_user" style="display:none"><label>PPPoE \u7528\u6237\u540d</label><input id="gwrt_pon_wan_username" placeholder="\u5bbd\u5e26\u8d26\u53f7"></div>'
+    +'<div class="gwrt-sf" id="gwrt_pon_wan_pppoe_pass" style="display:none"><label>PPPoE \u5bc6\u7801</label><input id="gwrt_pon_wan_password" type="password" placeholder="\u5bbd\u5e26\u5bc6\u7801"></div>'
+    +'<div class="gwrt-sf" id="gwrt_pon_wan_static_ip" style="display:none"><label>IPv4 / CIDR</label><input id="gwrt_pon_wan_ipaddr" placeholder="10.0.0.2/24"></div>'
+    +'<div class="gwrt-sf" id="gwrt_pon_wan_static_gw" style="display:none"><label>\u7f51\u5173</label><input id="gwrt_pon_wan_gateway" placeholder="10.0.0.1"></div>'
+    +'<div class="gwrt-pon-note">\u542f\u7528\u540e\u4f1a\u521b\u5efa <code>pon0.&lt;VLAN&gt;</code> \u5e76\u7ed1\u5b9a\u5230 <code>wan</code> \u63a5\u53e3\uff1b\u5173\u95ed\u540e\u6062\u590d pon0 \u76f4\u8fde\u3002\u5e94\u7528\u65f6\u4f1a\u91cd\u8f7d network/firewall\uff0cWAN \u53ef\u80fd\u77ed\u6682\u4e2d\u65ad\u3002</div>'
+    +'<div class="gwrt-pon-links"><a href="#" id="gwrtPonLineBtn">\u7ebf\u8def\u6a21\u5f0f / SN / LOID \u8bbe\u7f6e \u2192</a></div>'
+    +gwrtSectionEnd()
+    +'<div class="gwrt-sf-footer"><button id="gwrtPonCancel" class="gwrt-sf-btn gwrt-sf-btn-cancel">\u53d6\u6d88</button><button id="gwrtPonSave" class="gwrt-sf-btn gwrt-sf-btn-save"><span id="gwrtPonSpinner" style="display:none" class="gwrt-spinner"></span><span id="gwrtPonSaveText">\u4fdd\u5b58\u5e76\u5e94\u7528</span></button></div>';
+  overlay.appendChild(panel);document.body.appendChild(overlay);
+  document.getElementById('gwrtPonClose').onclick=closePonOverlay;
+  document.getElementById('gwrtPonCancel').onclick=closePonOverlay;
+  overlay.onclick=function(e){if(e.target===overlay)closePonOverlay();};
+  document.getElementById('gwrtPonSave').onclick=savePonWan;
+  document.getElementById('gwrtPonLineBtn').onclick=function(e){
+    e.preventDefault();closePonOverlay();
+    setTimeout(function(){gwrtOpenModal('/cgi-bin/luci/admin/network/pon/config','PON \u7ebf\u8def\u8bbe\u7f6e');},220);
+  };
+  var proto=document.getElementById('gwrt_pon_wan_proto');
+  if(proto)proto.onchange=function(){togglePonWanFields(this.value);};
+  renderPonPanel();
+  loadPonWanSettings();
+  fetchPonStatus(true).then(renderPonPanel);
+  window._gwrtPonPanelTimer=setInterval(function(){fetchPonStatus(true).then(renderPonPanel);},10000);
+}
+function closePonOverlay(){
+  if(window._gwrtPonPanelTimer){clearInterval(window._gwrtPonPanelTimer);window._gwrtPonPanelTimer=null;}
+  var overlay=document.getElementById('gwrtPonOverlay');
+  if(overlay){overlay.style.opacity='0';setTimeout(function(){if(overlay.parentNode)overlay.parentNode.removeChild(overlay);},200);}
+}
 function renderPortStrip(states,ports){
   var el=document.getElementById("gwrtPortStrip");
   if(!el)return;
   var now=Date.now();
-  ports=ports||ethPortEntries(null,states);
+  ports=ports||ethPortEntries(null,states,window._gwrtWanDevices);
   if(!ports.length){el.innerHTML='<div class="net-empty">\u6682\u65e0\u7f51\u53e3\u72b6\u6001</div>';return;}
-  var wanPorts=[], lanPorts=[];
-  ports.forEach(function(p){p.role==="wan"?wanPorts.push(p):lanPorts.push(p);});
+  var ponPorts=[], wanPorts=[], lanPorts=[];
+  ports.forEach(function(p){p.pon?ponPorts.push(p):(p.role==="wan"?wanPorts.push(p):lanPorts.push(p));});
   function phtml(p,pi){
     var isWifi=p.role==="wifi", names=isWifi&&p.ifnames&&p.ifnames.length?p.ifnames:[p.name];
     var st=states[names[0]]||{}, up=isWifi?p.wifiUp!==false:!!st.carrier;
@@ -2437,6 +2668,7 @@ function renderPortStrip(states,ports){
     if(tag){p.label=(p.role==='wan'?'WAN*':'LAN*')+tag;window._gwrtRateLabels[p.name]=p.label;}
     else if(window._gwrtRateLabels[p.name]){p.label=window._gwrtRateLabels[p.name];}
   });
+  ponPorts.forEach(function(p){html+=ponCardHtml(p,states[p.name]||{});});
   wanPorts.forEach(function(p,i){html+=phtml(p,i);});
   if(lanOnly.length){
     html+='<div class="gwrt-port-group group-lan">';
@@ -2449,10 +2681,10 @@ function renderPortStrip(states,ports){
     html+='</div>';
   }
   el.innerHTML=html;
-  window._gwrtPorts=wanPorts.concat(lanOnly).concat(wifiOnly);
+  window._gwrtPorts=ponPorts.concat(wanPorts).concat(lanOnly).concat(wifiOnly);
   window._gwrtStripLanOrder=lanOnly.map(function(p){return p.name;});
   window._gwrtStripWifiOrder=wifiOnly.map(function(p){return p.name;});
-  function openPort(target){var d=target&&target.closest&&target.closest(".gwrt-port");if(!d)return;var name=d.getAttribute("data-gwrt-port-name"),r=d.getAttribute("data-gwrt-port-role");var p=(window._gwrtPorts||[]).filter(function(item){return item&&item.name===name;})[0];if(!p||!r)return;showPortSettings(p,r);}
+  function openPort(target){var d=target&&target.closest&&target.closest(".gwrt-port");if(!d)return;var name=d.getAttribute("data-gwrt-port-name"),r=d.getAttribute("data-gwrt-port-role");var p=(window._gwrtPorts||[]).filter(function(item){return item&&item.name===name;})[0];if(!p||!r)return;if(p.pon){showPonPanel(p);return;}showPortSettings(p,r);}
   el.onclick=function(e){openPort(e.target);};
   el.onkeydown=function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();openPort(e.target);}};
 }
@@ -2462,8 +2694,9 @@ function refreshPorts(){
     rpcCached('wirelessDevices',15000,'luci-rpc','getWirelessDevices'),
     rpcCached('lanBridgeStatus',15000,'network.device','status',{name:'br-lan'})
   ]).then(function(r){
-    var eth=ethPortEntries(r[0]);
+    var eth=ethPortEntries(r[0],null,window._gwrtWanDevices);
     var ports=eth.concat(bridgeLanPortEntries(r[2],eth),wifiPortEntries(r[1]));
+    var hasPon=ports.some(function(p){return p.pon;});
     var wifiMacMap={},staMap={};
     return Promise.all(ports.map(function(p){
       if(p.role!=='wifi')return null;
@@ -2478,7 +2711,8 @@ function refreshPorts(){
       window._gwrtWifiStaMap=staMap;
       var devNames=[];
       ports.forEach(function(p){(p.role==='wifi'&&p.ifnames&&p.ifnames.length?p.ifnames:[p.name]).forEach(function(name){if(devNames.indexOf(name)<0)devNames.push(name);});});
-      return Promise.all(devNames.map(function(name){return rpcD('network.device','status',{name:name});})).then(function(list){
+      return Promise.all(devNames.map(function(name){return rpcD('network.device','status',{name:name});}).concat([hasPon?fetchPonStatus(false):Promise.resolve(null)])).then(function(list){
+        list.pop();
         var states={};
         devNames.forEach(function(name,i){states[name]=list[i]||{};});
         var livePorts=ports.filter(function(p){return !p.external||networkDevicePresent(states[p.name]);});
@@ -3295,7 +3529,7 @@ function refresh(){
         var o=String((res&&res.stdout)||'').split('\n');
         var chip=String(o[0]||'').trim().toUpperCase();
         var threads=parseInt(o[1],10)||0;
-        var models={'MT7981':'MT7981B','MT7986':'MT7986A','MT7988':'MT7988A'};
+        var models={'MT7981':'MT7981B','MT7986':'MT7986A','MT7988':'MT7988A','EN7581':'AN7581','EN7583':'AN7583'};
         var txt=models[chip]||chip||'';
         if(threads)txt+=(txt?' \u00d7 ':'')+threads;
         socEl.textContent=txt||board.model||'-';
