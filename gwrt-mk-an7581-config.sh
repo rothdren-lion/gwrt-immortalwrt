@@ -119,14 +119,17 @@ for p in \
 	add_pkg "$p"
 done
 
-echo "[an7581] WiFi（MT7916D）/ USB（设备 profile 的 DEVICE_PACKAGES 在 CI 过滤后会被漏）:"
+echo "[an7581] WiFi（MT7916D）/ USB3 / 2.5G PHY（CI 机型过滤会漏 DEVICE_PACKAGES）:"
 for p in \
 	kmod-mt76-core \
 	kmod-mt76-connac \
 	kmod-mt7915e \
 	kmod-mt7916-firmware \
 	wpad-openssl \
-	kmod-usb3 ; do
+	kmod-usb3 \
+	kmod-usb-xhci-hcd \
+	kmod-usb-xhci-mtk \
+	kmod-phy-maxlinear ; do
 	add_pkg "$p"
 done
 
