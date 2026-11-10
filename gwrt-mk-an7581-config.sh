@@ -95,6 +95,19 @@ add_pkg() {
 	echo "  + $sym"
 }
 
+add_mod() {
+	sym=$1
+	grep -q "^CONFIG_PACKAGE_${sym}=m$" "$TOP/.config" && return 0
+	if grep -q "^CONFIG_PACKAGE_${sym}=" "$TOP/.config"; then
+		sed -i "s|^CONFIG_PACKAGE_${sym}=.*|CONFIG_PACKAGE_${sym}=m|" "$TOP/.config"
+	elif grep -q "^# CONFIG_PACKAGE_${sym} is not set$" "$TOP/.config"; then
+		sed -i "s|^# CONFIG_PACKAGE_${sym} is not set$|CONFIG_PACKAGE_${sym}=m|" "$TOP/.config"
+	else
+		echo "CONFIG_PACKAGE_${sym}=m" >>"$TOP/.config"
+	fi
+	echo "  ~ $sym (m)"
+}
+
 unset_pkg() {
 	sym=$1
 	grep -q "^CONFIG_PACKAGE_${sym}=y$" "$TOP/.config" || return 0
@@ -194,6 +207,53 @@ for p in \
 	add_pkg "$p"
 done
 
+echo "[an7581] Podman 容器（内核模块 =m）:"
+for p in \
+	podman \
+	conmon \
+	netavark \
+	aardvark-dns \
+	passt \
+	libseccomp \
+	libgpgme \
+	nsenter \
+	zoneinfo-simple \
+	luci-app-podman-market ; do
+	add_pkg "$p"
+done
+for m in \
+	kmod-veth \
+	kmod-br-netfilter \
+	kmod-nf-nat \
+	kmod-iptable-nat \
+	kmod-nft-nat \
+	kmod-fuse ; do
+	add_mod "$m"
+done
+
+echo "[an7581] SSR Plus 代理:"
+for p in \
+	luci-app-ssr-plus \
+	luci-i18n-ssr-plus-zh-cn \
+	gwrt-ssr-plus-luci \
+	xray-core \
+	v2ray-core \
+	hysteria \
+	sing-box \
+	dns2socks \
+	microsocks \
+	ipt2socks \
+	dns2tcp \
+	simple-obfs \
+	tcping \
+	lua-neturl \
+	lyaml \
+	resolveip \
+	bind-dig \
+	nping ; do
+	add_pkg "$p"
+done
+
 echo "[an7581] 清除（后期设备自行安装，固件不带）:"
 for p in \
 	openclash \
@@ -205,9 +265,7 @@ for p in \
 	docker \
 	dockerd \
 	docker-compose \
-	podman \
 	kmod-wireguard \
-	kmod-tun \
 	kmod-nft-tproxy \
 	kmod-inet-diag \
 	luci-app-bandix-plus \

@@ -725,3 +725,21 @@ body::before{content:"";position:fixed;inset:0;z-index:20000;pointer-events:none
 .gwrt-mesh-legend{display:inline-flex;align-items:center;gap:5px;font-size:.56rem;color:var(--text-tertiary)}
 .gwrt-mesh-legend i{display:inline-block;width:11px;height:11px;border:1px solid #fff;border-radius:50%;margin-left:4px;box-sizing:border-box}
 .gwrt-mesh-legend i.wireless{border-style:dashed}
+.gwrt-mesh-legend i{display:inline-block;width:11px;height:11px;border:1px solid #fff;border-radius:50%;margin-left:4px;box-sizing:border-box}
+.gwrt-mesh-legend i.wireless{border-style:dashed}
+
+/* GWRT 2026-11-10: 网络接口状态图按实际网口数量自适应，卡片等宽 */
+.gwrt-port-strip{display:flex;flex-wrap:nowrap;align-items:stretch;gap:6px;width:100%;min-width:0}
+.gwrt-port-strip>.gwrt-port,.gwrt-port-group .gwrt-port,.gwrt-port.pon{flex:1 1 0!important;min-width:0!important;max-width:none!important}
+.gwrt-port-group{display:flex;flex-wrap:nowrap;gap:6px;flex:1 1 0;min-width:0}
+@media(max-width:1240px){
+  .gwrt-port-strip-wrap{overflow-x:auto}
+  .gwrt-port-strip{width:100%;min-width:0}
+  .gwrt-port-group{flex:1 1 0}
+  .gwrt-port-group .gwrt-port,.gwrt-port.wan,.gwrt-port.pon{flex:1 1 0!important;min-width:96px!important}
+}
+@media(max-width:640px){
+  .gwrt-port-strip{flex-wrap:wrap}
+  .gwrt-port-group{flex:1 1 100%;flex-wrap:wrap}
+  .gwrt-port-group .gwrt-port,.gwrt-port.pon{flex:1 1 calc(50% - 6px)!important;min-width:118px!important}
+}
