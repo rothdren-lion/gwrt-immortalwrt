@@ -227,10 +227,11 @@ if [ "${WITH_OPENCLASH}" = "1" ]; then
 fi
 
 # luci-app-airoha-npu 的 Frame Engine / 频率详情读取依赖 busybox devmem 与 debugfs。
-# 未开 CONFIG_BUSYBOX_CUSTOM 时 busybox 用 BUSYBOX_DEFAULT_* 默认集，
-# 此时 CONFIG_BUSYBOX_CONFIG_DEVMEM 不生效（261110-03 拆包证实没有 devmem）。
+# 只有 CONFIG_BUSYBOX_CUSTOM=y 时才会 source config/Config.in，
+# BUSYBOX_CONFIG_DEVMEM 才有提示并可写入 .config；否则 busybox 只用
+# Config-defaults.in 的隐藏默认值（261110-03/04 拆包均无 devmem）。
 echo "[an7581] NPU 详情页依赖（devmem + debugfs）:"
-for sym in CONFIG_BUSYBOX_DEFAULT_DEVMEM CONFIG_KERNEL_DEBUG_FS; do
+for sym in CONFIG_BUSYBOX_CUSTOM CONFIG_BUSYBOX_CONFIG_DEVMEM CONFIG_KERNEL_DEBUG_FS; do
 	grep -q "^${sym}=y$" "$TOP/.config" || echo "${sym}=y" >>"$TOP/.config"
 done
 
