@@ -23,7 +23,7 @@
 #         （airoha-ponctl / airoha-pond / luci-app-pon / luci-app-iptv /
 #           luci-app-pon-wan / airoha xpon 驱动）和 airoha-npu 面板。
 #
-# 设备：xingloo_ax3000(+512m) / 360T7(+ubi) / NX30 Pro / AX3000T(+ubootmod)
+# 设备：xingloo_ax3000(+512m) / 360T7(原厂分区) / NX30 Pro / AX3000T(+ubootmod)
 #       / RAX3000M / Cudy TR3000 256mb v1 / GL.iNet GL-MT3000（同一套 MT7981 全家桶）
 #   sysupgrade.bin : OpenWrt 标准 sysupgrade 包（tar）
 #   factory.bin    : append-ubi 整包（可整块写入 ubi 分区）
@@ -57,7 +57,6 @@ CONFIG_TARGET_PER_DEVICE_ROOTFS=y
 CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_xingloo_ax3000=y
 CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_xingloo_ax3000-512m=y
 CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_qihoo_360t7=y
-CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_qihoo_360t7-ubi=y
 CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_h3c_magic-nx30-pro=y
 CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_xiaomi_mi-router-ax3000t=y
 CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_xiaomi_mi-router-ax3000t-ubootmod=y
