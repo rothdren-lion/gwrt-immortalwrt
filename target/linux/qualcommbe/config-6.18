@@ -649,12 +649,15 @@ CONFIG_ZONE_DMA32=y
 CONFIG_ZSTD_COMMON=y
 CONFIG_ZSTD_COMPRESS=y
 CONFIG_ZSTD_DECOMPRESS=y
-# Enable DMA CMA; the 256 MiB pool is requested only by SBE1V1K bootargs.
+# Enable DMA CMA with enough headroom for two ath12k radios in one WSI/MLO
+# group: the 16 MiB default was fully consumed at runtime and 512-page
+# coherent allocations failed during recovery (CS-06, 261110-01).
+# SBE1V1K still overrides this from bootargs with cma=256M.
 CONFIG_CMA=y
 CONFIG_CMA_ALIGNMENT=8
 CONFIG_CMA_AREAS=19
 # CONFIG_CMA_DEBUGFS is not set
-CONFIG_CMA_SIZE_MBYTES=16
+CONFIG_CMA_SIZE_MBYTES=64
 CONFIG_CMA_SIZE_SEL_MBYTES=y
 # CONFIG_CMA_SIZE_SEL_PERCENTAGE is not set
 # CONFIG_CMA_SIZE_SEL_MIN is not set
