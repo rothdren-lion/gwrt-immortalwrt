@@ -517,16 +517,59 @@
 	};
 };
 
-/* GWRT 2026-10-05: patch 0145 (add uniphy clocks to gcc) appends
- * <&uniphy0/1 UNIPHY_CLK_RX/TX> to the shared gcc node. Those labels only
- * exist in the mainline ethernet-pcs flavour of ipq6018-ess.dtsi; the QSDK
- * NSS stack used here has neither nodes nor label. gcc-ipq6018 only consumes
- * clocks[0..1] (xo, sleep_clk) - verified against the working 9.9 reference
- * DTB, whose gcc node contains exactly: clocks = <&xo>, <&sleep_clk>.
- * Overriding the property here (property-level override, no label needed)
- * restores the proven wiring for NSS boards while leaving mainline boards
- * on the patched path. */
+/* The QSDK/NSS switch stack drives the UNIPHY itself (qca_ssdk matches
+ * "qcom,ess-uniphy" above) and registers uniphy0/1 rx/tx as name-only clocks
+ * with no clock provider, so <&uniphy0 UNIPHY_CLK_RX> from patch 0145 has no
+ * label to point at on this flavour.
+ *
+ * gcc-ipq6018, however, lists uniphy0/1 rx/tx as parent_data entries 2..5 of
+ * the NSS port RCGs (nss_port1..5_{rx,tx}_clk_src). Those parents are looked
+ * up by phandle index in the gcc node's "clocks" property, so dropping them
+ * (the previous override) left every lookup NULL: each RCG then skipped all
+ * of its P_UNIPHY0_RX/TX configs and fell back to XO, i.e. 24 MHz through a
+ * /16 divider = 1.5 MHz into the MAC. That is far below the 125 MHz a gigabit
+ * MAC needs, so ports kept link (PHY side) but never moved a frame, which is
+ * what made LAN DHCP/DHCP-discover fail silently.
+ *
+ * Supply the missing parents as fixed 125 MHz clocks instead: PSGMII/SGMII
+ * mode makes the UNIPHY a 125 MHz reference, and the RCGs still divide that
+ * down for 100M/10M links. They stay phandle-only (no clock-output-names) so
+ * the names cannot collide with the ones qca_ssdk registers.
+ */
+&soc {
+	uniphy0_gcc_rx_clk: uniphy0-gcc-rx-clk {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <125000000>;
+	};
+
+	uniphy0_gcc_tx_clk: uniphy0-gcc-tx-clk {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <125000000>;
+	};
+
+	uniphy1_gcc_rx_clk: uniphy1-gcc-rx-clk {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <125000000>;
+	};
+
+	uniphy1_gcc_tx_clk: uniphy1-gcc-tx-clk {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <125000000>;
+	};
+};
+
+/* Keep xo/sleep_clk at indices 0/1: gcc-ipq6018 resolves those two by name.
+ * Indices 2..5 must stay in this exact order to match the parent_data tables
+ * in gcc-ipq6018.c. */
 &gcc {
-	clocks = <&xo>, <&sleep_clk>;
-	clock-names = "xo", "sleep_clk";
+	clocks = <&xo>, <&sleep_clk>,
+		 <&uniphy0_gcc_rx_clk>, <&uniphy0_gcc_tx_clk>,
+		 <&uniphy1_gcc_rx_clk>, <&uniphy1_gcc_tx_clk>;
+	clock-names = "xo", "sleep_clk",
+		      "uniphy0_gcc_rx_clk", "uniphy0_gcc_tx_clk",
+		      "uniphy1_gcc_rx_clk", "uniphy1_gcc_tx_clk";
 };

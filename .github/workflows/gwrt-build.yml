@@ -155,7 +155,7 @@ jobs:
           esac
           echo "MODEL_NAME=$MN" >> "$GITHUB_ENV"
           case "${{ inputs.device }}" in
-            ss01) cp config.ci-ss01-261030-01 .config ;;
+            ss01) cp config.ss01-261101-01-nss .config ;;
             cs02) OUT=.config VER="$VER" sh gwrt-mk-cs02-standard-config.sh ;;
             cs02-gwrt2) cp config.ci-cs02-gwrt2-261030-01 .config ;;
             cs06) OUT=.config VER="$VER" sh gwrt-mk-cs06-config.sh ;;
