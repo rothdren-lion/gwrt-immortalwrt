@@ -22,8 +22,46 @@ START=18
 LOG_TAG=gwrt-caldata
 CAL=/lib/firmware/ath11k/IPQ6018/hw1.0/cal-ahb-c000000.wifi.bin
 DEF_KEY=12345678
+OVERLAY_STATE=/overlay/.fs_state
+REBOOT_MARKER=/etc/gwrt-caldata-rebooted
+REBOOT_WAIT_INTERVAL=2
+REBOOT_WAIT_ATTEMPTS=180
 
 log() { logger -t "$LOG_TAG" "$@"; }
+
+wait_for_overlay_ready() {
+	local i=0 state
+
+	while [ "$i" -lt "$REBOOT_WAIT_ATTEMPTS" ]; do
+		# fstools stores FS_STATE_READY as the symlink target "2".
+		if state="$(readlink "$OVERLAY_STATE" 2>/dev/null)" && [ "$state" = "2" ]; then
+			return 0
+		fi
+		sleep "$REBOOT_WAIT_INTERVAL"
+		i=$((i + 1))
+	done
+	return 1
+}
+
+reboot_after_caldata_extract() {
+	local max_wait=$((REBOOT_WAIT_INTERVAL * REBOOT_WAIT_ATTEMPTS))
+
+	if ! wait_for_overlay_ready; then
+		log "overlay did not become READY after ${max_wait}s; skipping calibration reboot"
+		return 1
+	fi
+
+	: > "$REBOOT_MARKER" || {
+		log "cannot persist reboot guard; skipping calibration reboot"
+		return 1
+	}
+	sync || {
+		log "sync failed; skipping calibration reboot"
+		return 1
+	}
+	log "overlay is READY and calibration is persistent; rebooting once to activate wifi"
+	reboot
+}
 
 # cal_ensure <目标文件> <分区名> <偏移字节> <长度字节>
 cal_ensure() {
@@ -134,14 +172,13 @@ start() {
 	if cal_ensure "$CAL" "0:ART" 4096 65536; then
 		# 本次 ath11k 已经错过校准数据，需要重启一次
 		# 防死循环：补过一次还没生效就不再重启（比如 overlay 写不进去）
-		if [ -e /etc/gwrt-caldata-rebooted ]; then
+		if [ -e "$REBOOT_MARKER" ]; then
 			log "caldata still missing after one reboot, not rebooting again"
 			( wifi_bootstrap ) >/dev/null 2>&1 &
 			return 0
 		fi
-		: > /etc/gwrt-caldata-rebooted
-		log "caldata was missing at probe time, rebooting once to activate wifi"
-		( sleep 8; sync; reboot ) >/dev/null 2>&1 &
+		log "caldata was missing at probe time; waiting for persistent overlay before reboot"
+		( reboot_after_caldata_extract ) >/dev/null 2>&1 &
 		return 0
 	fi
 

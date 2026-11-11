@@ -184,6 +184,10 @@ jobs:
           sh scripts/gwrt-source-preflight.sh
           grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)|^CONFIG_VERSION_NUMBER|^CONFIG_PACKAGE_(gwrt-agent|gwrt-mesh-apmode|gwrt-device-defaults|ucode-mod-socket)' .config
 
+      - name: Test SS-01 calibration reboot guard
+        if: inputs.device == 'ss01'
+        run: sh scripts/tests/test-gwrt-caldata-reboot.sh
+
       - name: Build firmware
         id: build_firmware
         shell: bash
