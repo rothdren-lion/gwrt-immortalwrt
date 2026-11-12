@@ -125,6 +125,9 @@ def main():
         for name in ('header', 'header_login', 'footer', 'footer_login'):
             checks[template + 'themes/gwrt/' + name + '.ut'] = 'root/' + template + 'themes/gwrt/' + name + '.ut'
         checks[template + 'admin_status/index_gwrt.ut'] = 'root/' + template + 'admin_status/index_gwrt.ut'
+        for name in ('gwrt-runtime-dir', 'gwrt-clients-dump', 'gwrt-coremark', 'gwrt-ota'):
+            checks['usr/libexec/' + name] = 'root/usr/libexec/' + name
+        checks['usr/share/rpcd/acl.d/luci-theme-gwrt.json'] = 'root/usr/share/rpcd/acl.d/luci-theme-gwrt.json'
         for installed, source in checks.items():
             content = read_file(installed)
             require(content == (theme / source).read_bytes(), 'packaged theme differs: ' + installed)
@@ -165,6 +168,7 @@ def main():
             'etc/hotplug.d/ieee80211/10-wifi-detect': 'package/network/config/wifi-scripts/files/etc/hotplug.d/ieee80211/10-wifi-detect',
             'etc/hotplug.d/ieee80211/30-gwrt-ssid-name': 'gwrt-theme-V3/theme/luci-theme-gwrt/root/etc/hotplug.d/ieee80211/30-gwrt-ssid-name',
             'etc/init.d/gwrt-caldata': 'target/linux/qualcommax/ipq60xx/base-files/etc/init.d/gwrt-caldata',
+            'usr/share/gwrt/wifiroam/wifiroamd.uc': 'package/gwrt-device-defaults/files/wifiroam/wifiroamd.uc',
         }
         for installed, source in firstboot_sources.items():
             require(read_file(installed) == (ROOT / source).read_bytes(),
@@ -177,9 +181,9 @@ def main():
             require(re.search(r'^' + package + r'\s+-\s+', manifest_text, re.M),
                     'missing mesh package in manifest: ' + package)
         print('PASS SS-01 packaged mesh stack and first-boot defaults')
-        require(any(re.search(r'^luci-theme-gwrt\s+-\s+1\.0-r114\s*$', p.read_text(), re.M)
+        require(any(re.search(r'^luci-theme-gwrt\s+-\s+1\.0-r115\s*$', p.read_text(), re.M)
                     for p in manifests), 'wrong theme package release')
-        print('PASS SS-01 packaged theme r114 and Ethernet modules')
+        print('PASS SS-01 packaged theme r115 and Ethernet modules')
 
 
 if __name__ == '__main__':

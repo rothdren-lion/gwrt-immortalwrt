@@ -19,9 +19,9 @@
 #   DNSMASQ_VENDOR_CLASS      DHCP option 60（厂商类，OS 信号最强）
 #   DNSMASQ_REQUESTED_OPTIONS DHCP option 55（参数请求列表，经典 OS 指纹）
 #   DNSMASQ_CLIENT_ID         DHCP option 61
-# 输出：/tmp/gwrt-dhcp-fp.list，每行  mac|os|vendor_class|requested_options
+# 输出：/tmp/gwrt-theme/dhcp-fp.list，每行  mac|os|vendor_class|requested_options
 #   os ∈ android|windows|apple|linux|unknown
-#   clients.sh 会把它并进 /gwrt-clients.json 的 clients[].os，
+#   clients.sh 会把它并进客户端状态的 clients[].os，
 #   供主题按「先 MAC，后系统特性」决定图标。
 #
 # 幂等：同一 MAC 先删旧行再追加；解析失败不影响 DHCP。
@@ -32,9 +32,13 @@ case "$ACTION" in
 esac
 
 mac="$(printf '%s' "$MACADDR" | tr 'A-F' 'a-f')"
-[ -n "$mac" ] || exit 0
+case "$mac" in
+	[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]) ;;
+	*) exit 0 ;;
+esac
 
-list=/tmp/gwrt-dhcp-fp.list
+runtime_dir=$(/usr/libexec/gwrt-runtime-dir 2>/dev/null) || exit 0
+list=$runtime_dir/dhcp-fp.list
 
 if [ "$ACTION" = "remove" ]; then
 	[ -f "$list" ] && sed -i "/^$mac|/d" "$list" 2>/dev/null

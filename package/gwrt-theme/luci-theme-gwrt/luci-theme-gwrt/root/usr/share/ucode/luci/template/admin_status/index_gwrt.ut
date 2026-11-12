@@ -32,7 +32,7 @@
 		</div>
 		<div class="gwrt-sec-body" id="gwrtSecOverviewPanel">
 	<div class="dashboard-grid">
-		<div class="stat-card" data-gwrt="sysinfo">
+		<div class="stat-card gwrt-menu-card-link" data-gwrt="sysinfo" data-gwrt-menu-target="overview" aria-label="系统信息，按回车打开概述菜单" tabindex="0">
 			<div class="stat-card-label" data-i18n="系统信息">系统信息</div>
 			<div class="stat-card-value" id="gwrtHostname">GWRT</div>
 			<div class="pixel-title" id="gwrtModel" aria-label="GWRT Model">Loading...</div>
@@ -42,7 +42,7 @@
 			<div class="stat-row gwrt-ota-row"><span class="stat-row-label" data-i18n="固件">固件</span><span class="stat-row-val" id="gwrtFirmware">-</span><button type="button" class="gwrt-ota-btn gwrt-ota-busy" id="gwrtOtaBtn" disabled>检查中</button></div>
 		</div>
 
-		<div class="stat-card" data-gwrt="cpu_temp">
+		<div class="stat-card gwrt-menu-card-link" data-gwrt="cpu_temp" data-gwrt-menu-target="overview" aria-label="处理器状态，按回车打开概述菜单" tabindex="0">
 			<div class="stat-card-label" id="gwrtAccelCardTitle" data-i18n="CPU · NSS · PPE · 温度">CPU · NSS · PPE · 温度</div>
 			<div class="stat-row stat-meter-row"><span class="stat-row-label">CPU</span><div class="mini-bar usage-bar"><div class="mini-bar-fill" id="gwrtCpuBar" style="width:0"></div></div><span class="stat-row-val" id="gwrtCpu">-</span></div>
 			<div class="stat-row stat-meter-row" id="gwrtAccelRow"><span class="stat-row-label" id="gwrtAccelLabel">NSS</span><div class="mini-bar usage-bar"><div class="mini-bar-fill" id="gwrtAccelBar" style="width:0"></div></div><span class="stat-row-val" id="gwrtNss">-</span></div>
@@ -54,7 +54,7 @@
 			<div class="stat-row"><span class="stat-row-label" data-i18n="频率">频率</span><span class="stat-row-val" id="gwrtCpuFreq">-</span></div>
 		</div>
 
-		<div class="stat-card" data-gwrt="memstore">
+		<div class="stat-card gwrt-menu-card-link" data-gwrt="memstore" data-gwrt-menu-target="store" aria-label="运行存储，按回车打开存储菜单" tabindex="0">
 			<div class="stat-card-label" data-i18n="运行存储">运行存储</div>
 			<div class="stat-row"><span class="stat-row-label">MEM</span><div class="mini-bar"><div class="mini-bar-fill" id="gwrtMemBar" style="width:0;background:var(--accent-primary)"></div></div><span class="stat-row-val" id="gwrtMemVal">-</span></div>
 			<div class="stat-row"><span class="stat-row-label">SWAP</span><div class="mini-bar"><div class="mini-bar-fill" id="gwrtSwapBar" style="width:0;background:var(--accent-warning)"></div></div><span class="stat-row-val" id="gwrtSwapVal">-</span></div>
@@ -62,7 +62,7 @@
 			<div class="stat-row"><span class="stat-row-label">DISK</span><div class="mini-bar"><div class="mini-bar-fill" id="gwrtDiskBar" style="width:0;background:var(--accent-secondary)"></div></div><span class="stat-row-val" id="gwrtDiskVal">-</span></div>
 		</div>
 
-		<div class="stat-card" data-gwrt="active_apps">
+		<div class="stat-card gwrt-menu-card-link" data-gwrt="active_apps" data-gwrt-menu-target="service" aria-label="活跃应用，按回车打开服务菜单" tabindex="0">
 			<div class="stat-card-label" data-i18n="活跃 App">活跃 App</div>
 			<div class="stat-card-value" id="gwrtAppCount">0</div>
 			<div class="stat-card-sub" data-i18n="apps active">apps active</div>
@@ -83,7 +83,7 @@
 			<div class="gwrt-wan-trend gwrt-wan-trend-big" id="gwrtWanTrend" aria-label="实时流量趋势"></div>
 		</div>
 
-		<div class="stat-card" data-gwrt="devices">
+		<div class="stat-card gwrt-menu-card-link" data-gwrt="devices" data-gwrt-menu-target="net" aria-label="连接设备，按回车打开网络菜单" tabindex="0">
 			<div class="gwrt-devpair">
 				<div class="gwrt-devpair-col gwrt-devpair-left">
 					<div class="gwrt-devpair-head"><span class="gwrt-devpair-lbl" data-i18n="连接设备">连接设备</span><span class="gwrt-devpair-val" id="gwrtDevices">0</span></div>
@@ -212,19 +212,19 @@ function coremarkValue(text){var m=String(text||'').match(/([\d]{4,}(?:\.[\d]*)?
 function loadCoremark(el){
   return rpc('luci','getCPUBench').then(function(res){
     if(res&&res.cpubench){el.textContent=coremarkValue(res.cpubench);return;}
-    return rpc('file','exec',{command:'/bin/cat',params:['/etc/bench.log']}).then(function(r){el.textContent=coremarkValue(r&&r.stdout);});
+    return rpc('file','read',{path:'/etc/bench.log'}).then(function(r){el.textContent=coremarkValue(r&&r.data);});
   });
 }
 function runCoremark(el){
   if(el.dataset.running)return;
   el.dataset.running="1";el.setAttribute("aria-busy","true");el.textContent="...";
-  fetch("/cgi-bin/coremark").then(function(r){return r.json();}).then(function(res){
-    if(res){pollCoremark(el);return;}
+  rpc('file','exec',{command:'/usr/libexec/gwrt-coremark',params:['start']}).then(function(res){
+    if(res&&res.__rpcError===undefined&&/^(started|running)\s*$/.test(res.stdout||'')){pollCoremark(el);return;}
     el.textContent="失败";delete el.dataset.running;el.removeAttribute("aria-busy");
   });
 }
 function pollCoremark(el){
-  fetch("/cgi-bin/coremark?status").then(function(r){return r.json();}).then(function(res){
+  rpc('file','exec',{command:'/usr/libexec/gwrt-coremark',params:['status']}).then(function(res){
     if(res&&res.stdout&&/running/.test(res.stdout)){setTimeout(function(){pollCoremark(el);},2000);return;}
     loadCoremark(el).then(function(){delete el.dataset.running;el.removeAttribute("aria-busy");});
   });
@@ -379,7 +379,7 @@ function gwrtWifiIfaceSection(port){
 function refreshUsbLanStatus(){
   var el=document.getElementById('gwrtUsbLanStatus');
   if(!el)return;
-  rpcD('network.device','status',{name:'br-lan'}).then(function(info){
+  rpcD('network.device','status',{name:window._gwrtLanBridgeDevice||'br-lan'}).then(function(info){
     var candidates=bridgeExternalMemberNames(info,[]);
     return Promise.all(candidates.map(function(name){
       return rpcD('network.device','status',{name:name}).then(function(state){
@@ -664,7 +664,7 @@ function wakeDhcpDevice(d,btn){
   if(!/^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/.test(mac)){gwrtToast('设备没有有效 MAC 地址','error');return;}
   if(btn)btn.disabled=true;
   if(btn)btn.textContent='发送中...';
-  rpcMust('luci.wolp','wake',{mac:mac,iface:'br-lan',broadcast:true})
+  rpcMust('luci.wolp','wake',{mac:mac,iface:window._gwrtLanBridgeDevice||'br-lan',broadcast:true})
   .then(function(r){
     if(!r||Number(r.code||0)!==0)throw new Error((r&&r.stderr)||('code '+((r&&r.code)||1)));
     gwrtToast('✓ 唤醒包已发送','success');
@@ -1171,7 +1171,7 @@ function gwrtDeviceAliases(){
   gwrtDeviceAliasCache={};
   try{
     var raw=JSON.parse(localStorage.getItem(GWRT_DEVICE_ALIAS_KEY)||'{}')||{};
-    Object.keys(raw).forEach(function(k){gwrtDeviceAliasCache[k]=gwrtLabelNorm(raw[k]);});
+    Object.keys(raw).forEach(function(k){var identity=gwrtDeviceLabelIdentity(k),key=identity?identity.key:k;gwrtDeviceAliasCache[key]=gwrtLabelNorm(raw[k]);});
   }catch(e){}
   return gwrtDeviceAliasCache;
 }
@@ -1179,79 +1179,138 @@ function gwrtSaveDeviceAliases(){
   try{localStorage.setItem(GWRT_DEVICE_ALIAS_KEY,JSON.stringify(gwrtDeviceAliasCache||{}));}catch(e){}
 }
 function gwrtIsMac(key){return /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/.test(normMac(key));}
+function gwrtValidLabelIp(value){
+  var parts=String(value||'').split('.');
+  return parts.length===4&&parts.every(function(part){return /^\d{1,3}$/.test(part)&&Number(part)>=0&&Number(part)<=255;});
+}
+function gwrtDeviceLabelIdentity(key){
+  var raw=String(key||'');
+  if(/^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(raw)||/^[0-9a-f]{12}$/i.test(raw)){
+    var mac=normMac(raw);
+    if(gwrtIsMac(mac))return {key:mac,id:'mac:'+mac,mac:mac,ip:''};
+  }
+  if(raw.indexOf('ip:')===0&&gwrtValidLabelIp(raw.slice(3)))return {key:raw,id:raw,mac:'',ip:raw.slice(3)};
+  return null;
+}
 /* 启动时从 uci /etc/config/gwrt 读回标注；uci 为准，localStorage 兜底并迁移 */
 function gwrtLoadDeviceLabels(){
   if(gwrtDeviceLabelLoading)return gwrtDeviceLabelLoading;
   gwrtDeviceLabelLoading=rpcD('uci','get',{config:'gwrt'}).then(function(r){
+    if(r&&r.__rpcError!==undefined)throw new Error('读取路由器设备标注失败 (uci.get '+r.__rpcError+')');
     var vals=(r&&r.values)||{},map=gwrtDeviceAliases(),next={},migrate=[];
     Object.keys(vals).forEach(function(sec){
       var s=vals[sec]||{};
-      if(s['.type']!=='device'||!s.mac)return;
-      var key=normMac(s.mac);
-      if(!key)return;
-      next[key]={name:cleanHost(s.name||''),brand:String(s.brand||''),type:String(s.type||''),section:sec};
+      if(s['.type']!=='device')return;
+      var identity=gwrtDeviceLabelIdentity(s.mac?normMac(s.mac):(s.id||('ip:'+String(s.ip||''))));
+      if(!identity)return;
+      next[identity.key]={name:cleanHost(s.name||''),brand:String(s.brand||''),type:String(s.type||''),section:sec};
     });
     Object.keys(map).forEach(function(k){
       if(next[k])return;
       var l=gwrtLabelNorm(map[k]);
       if(!(l.name||l.brand||l.type))return;
       next[k]=l;
-      if(gwrtIsMac(k))migrate.push(k);
+      if(gwrtDeviceLabelIdentity(k))migrate.push(k);
     });
     gwrtDeviceAliasCache=next;gwrtSaveDeviceAliases();
-    migrate.forEach(function(k){gwrtUciUpsertLabel(k,next[k]).catch(function(){});});
     gwrtRerenderDeviceViews();
-    return next;
+    return Promise.all(migrate.map(function(k){return gwrtUciUpsertLabel(k,next[k]).catch(function(){return null;});})).then(function(){return next;});
   }).catch(function(){return gwrtDeviceAliases();});
   return gwrtDeviceLabelLoading;
 }
 function gwrtUciUpsertLabel(key,label){
-  var mac=normMac(key);
-  if(!gwrtIsMac(mac))return Promise.resolve();
-  var l=gwrtLabelNorm(label),values={mac:mac};
-  if(l.name)values.name=l.name;
-  if(l.brand)values.brand=l.brand;
-  if(l.type)values.type=l.type;
-  var cur=gwrtDeviceAliases()[mac]||{},task;
-  if(cur.section){
-    task=rpcMust('uci','set',{config:'gwrt',section:cur.section,values:values});
-  }else{
-    task=rpcMust('uci','add',{config:'gwrt',type:'device',values:values}).then(function(r){
-      var sec=r&&r.section?r.section:'';
-      if(sec){var c=gwrtDeviceAliases()[mac]||(gwrtDeviceAliases()[mac]=gwrtLabelNorm(null));c.section=sec;}
-      return r;
-    });
+  var identity=gwrtDeviceLabelIdentity(key);
+  if(!identity)return Promise.resolve();
+  var l=gwrtLabelNorm(label),cached=gwrtDeviceAliases()[identity.key]||{},section='';
+  var values={id:identity.id,name:l.name,brand:l.brand,type:l.type};
+  if(identity.mac)values.mac=identity.mac;
+  if(identity.ip)values.ip=identity.ip;
+  function findSections(r){
+    var vals=r&&r.values||{},found=[];
+    Object.keys(vals).forEach(function(sec){var s=vals[sec]||{},sameMac=identity.mac&&normMac(s.mac)===identity.mac,sameId=String(s.id||'')===identity.id,sameIp=identity.ip&& !s.mac&&String(s.ip||'')===identity.ip;if(s['.type']==='device'&&(sameMac||sameId||sameIp))found.push(sec);});
+    return found;
   }
-  return task.then(function(){return rpcMust('uci','commit',{config:'gwrt'});});
+  return rpcD('uci','get',{config:'gwrt'}).then(function(r){
+    if(r&&r.__rpcError!==undefined)throw new Error('读取路由器设备标注失败 (uci.get '+r.__rpcError+')');
+    var found=findSections(r);
+    section=found.indexOf(cached.section)>=0?cached.section:(found[found.length-1]||'');
+    if(section)return section;
+    return rpcMust('uci','add',{config:'gwrt',type:'device',values:values}).then(function(added){
+      section=String(added&&added.section||'');
+      if(section)return section;
+      return rpcD('uci','get',{config:'gwrt'}).then(function(check){
+        if(check&&check.__rpcError!==undefined)throw new Error('读取新设备标注失败 (uci.get '+check.__rpcError+')');
+        var matches=findSections(check);
+        section=matches[matches.length-1]||'';
+        if(!section)throw new Error('路由器未返回新设备标注段');
+        return section;
+      });
+    });
+  }).then(function(sec){
+    section=sec;
+    return rpcMust('uci','set',{config:'gwrt',section:section,values:values});
+  }).then(function(){return rpcMust('uci','commit',{config:'gwrt'});})
+    .then(function(){return rpcD('uci','get',{config:'gwrt'});})
+    .then(function(r){
+      if(r&&r.__rpcError!==undefined)throw new Error('验证路由器设备标注失败 (uci.get '+r.__rpcError+')');
+      var saved=(r&&r.values||{})[section];
+      var savedIdentity=saved&&gwrtDeviceLabelIdentity(saved.mac?normMac(saved.mac):(saved.id||('ip:'+String(saved.ip||''))));
+      if(!saved||saved['.type']!=='device'||!savedIdentity||savedIdentity.id!==identity.id||cleanHost(saved.name||'')!==l.name||String(saved.brand||'')!==l.brand||String(saved.type||'')!==l.type)
+        throw new Error('路由器未保存设备标注，请重试');
+      l.section=section;
+      gwrtDeviceAliases()[identity.key]=l;
+      gwrtSaveDeviceAliases();
+      return l;
+    });
 }
 function gwrtUciDeleteLabel(key){
-  var map=gwrtDeviceAliases(),mac=normMac(key),cur=map[mac]||{};
-  if(!cur.section)return Promise.resolve();
-  return rpcMust('uci','delete',{config:'gwrt',section:cur.section})
-    .then(function(){return rpcMust('uci','commit',{config:'gwrt'});})
-    .catch(function(){});
+  var identity=gwrtDeviceLabelIdentity(key),sections=[];
+  if(!identity)return Promise.resolve();
+  return rpcD('uci','get',{config:'gwrt'}).then(function(r){
+    if(r&&r.__rpcError!==undefined)throw new Error('读取路由器设备标注失败 (uci.get '+r.__rpcError+')');
+    var vals=r&&r.values||{};
+    Object.keys(vals).forEach(function(sec){var s=vals[sec]||{},sameMac=identity.mac&&normMac(s.mac)===identity.mac,sameId=String(s.id||'')===identity.id,sameIp=identity.ip&&!s.mac&&String(s.ip||'')===identity.ip;if(s['.type']==='device'&&(sameMac||sameId||sameIp))sections.push(sec);});
+    var p=Promise.resolve();
+    sections.forEach(function(sec){p=p.then(function(){return rpcMust('uci','delete',{config:'gwrt',section:sec});});});
+    return p;
+  }).then(function(){
+    if(!sections.length)return;
+    return rpcMust('uci','commit',{config:'gwrt'});
+  }).then(function(){
+    return rpcD('uci','get',{config:'gwrt'});
+  }).then(function(r){
+    if(r&&r.__rpcError!==undefined)throw new Error('验证路由器设备标注失败 (uci.get '+r.__rpcError+')');
+    var vals=r&&r.values||{},stillThere=Object.keys(vals).some(function(sec){var s=vals[sec]||{},sameMac=identity.mac&&normMac(s.mac)===identity.mac,sameId=String(s.id||'')===identity.id,sameIp=identity.ip&&!s.mac&&String(s.ip||'')===identity.ip;return s['.type']==='device'&&(sameMac||sameId||sameIp);});
+    if(stillThere)throw new Error('路由器仍保留设备标注，请重试');
+  });
 }
 function gwrtSetDeviceLabel(key,label){
   if(!key)return Promise.resolve();
-  var map=gwrtDeviceAliases(),l=gwrtLabelNorm(label),had=!!(l.name||l.brand||l.type),p=Promise.resolve();
-  if(had){
-    l.section=(map[key]||{}).section||'';
-    map[key]=l;
-    if(gwrtIsMac(key))p=gwrtUciUpsertLabel(key,l);
-  }else{
-    if(gwrtIsMac(key))p=gwrtUciDeleteLabel(key);
-    delete map[key];
-  }
-  gwrtSaveDeviceAliases();
-  return p;
+  var identity=gwrtDeviceLabelIdentity(key),aliasKey=identity?identity.key:key,l=gwrtLabelNorm(label),had=!!(l.name||l.brand||l.type);
+  return (gwrtDeviceLabelLoading||gwrtLoadDeviceLabels()).then(function(){
+    var map=gwrtDeviceAliases();
+    if(had){
+      l.section=(map[aliasKey]||{}).section||'';
+      if(identity)return gwrtUciUpsertLabel(aliasKey,l);
+      map[aliasKey]=l;gwrtSaveDeviceAliases();return l;
+    }
+    if(identity)return gwrtUciDeleteLabel(aliasKey).then(function(){delete map[aliasKey];gwrtSaveDeviceAliases();});
+    delete map[aliasKey];gwrtSaveDeviceAliases();
+  });
 }
 function gwrtDeviceAliasKey(d){
   var mac=normMac(d&&d.mac||'');
-  if(mac&&mac.length===17)return mac;
+  if(gwrtIsMac(mac))return mac;
   var ip=String(d&&d.ip||'').trim();
   if(ip&&ip!=='-')return 'ip:'+ip;
   var n=cleanHost(d&&d.name).toLowerCase();
   return n?'name:'+n:'';
+}
+function gwrtDeviceAliasLookupKey(d){
+  var primary=gwrtDeviceAliasKey(d),map=gwrtDeviceAliases();
+  if(primary&&map[primary])return primary;
+  var ip=String(d&&d.ip||'').trim(),fallback=ip&&ip!=='-'?'ip:'+ip:'';
+  return fallback&&map[fallback]?fallback:primary;
 }
 function gwrtAutoDeviceName(d){
   var n=cleanHost((d&&d.auto_name)||(d&&d.raw_name)||(d&&d.name));
@@ -1261,7 +1320,7 @@ function gwrtAutoDeviceName(d){
 function gwrtApplyDeviceAlias(d){
   if(!d)return d;
   if(!d.raw_name)d.raw_name=cleanHost(d.name);
-  var key=gwrtDeviceAliasKey(d);
+  var key=gwrtDeviceAliasLookupKey(d);
   var base=gwrtAutoDeviceName(d);
   var l=key?gwrtLabelNorm(gwrtDeviceAliases()[key]):{name:'',brand:'',type:''};
   d.alias_key=key;
@@ -1278,7 +1337,7 @@ function devDisplayName(d){
 }
 function gwrtRegisterAliasDevice(d){
   gwrtApplyDeviceAlias(d);
-  var key=gwrtDeviceAliasKey(d);
+  var key=d.alias_key||gwrtDeviceAliasLookupKey(d);
   if(!key)return '';
   if(!window._gwrtAliasDevices)window._gwrtAliasDevices={};
   window._gwrtAliasDevices[key]=d;
@@ -1330,16 +1389,16 @@ function gwrtOpenDeviceLabel(key){
   gwrtCloseDeviceLabel();
   var d=(window._gwrtAliasDevices||{})[key]||{};
   var cur=gwrtLabelNorm(gwrtDeviceAliases()[key]);
-  var base=gwrtAutoDeviceName(d),mac=normMac(key),canUci=gwrtIsMac(mac);
+  var base=gwrtAutoDeviceName(d),mac=normMac(key),identity=gwrtDeviceLabelIdentity(key);
   var overlay=document.createElement('div');overlay.id='gwrtLabelOverlay';
   overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(4px);z-index:10001;display:flex;align-items:center;justify-content:center;animation:gwrtFadeIn .2s ease';
   var panel=document.createElement('div');panel.className='gwrt-settings-panel gwrt-label-panel';
-  panel.innerHTML='<div class="gwrt-sf-header"><div style="display:flex;align-items:center;gap:10px;min-width:0"><span style="font-size:20px;display:inline-flex">'+(devLogo(d.name||base,mac))+'</span><div style="min-width:0"><h3 style="margin:0;font-size:15px;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(base)+'</h3><div style="font-size:11px;color:var(--text-tertiary);font-family:var(--font-mono)">'+esc(mac||'-')+'</div></div></div><button id="gwrtLabelClose" class="gwrt-sf-close">✕</button></div>'
+  panel.innerHTML='<div class="gwrt-sf-header"><div style="display:flex;align-items:center;gap:10px;min-width:0"><span style="font-size:20px;display:inline-flex">'+(devLogo(d.name||base,identity?identity.key:mac))+'</span><div style="min-width:0"><h3 style="margin:0;font-size:15px;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(base)+'</h3><div style="font-size:11px;color:var(--text-tertiary);font-family:var(--font-mono)">'+esc(identity&&identity.mac?identity.mac:(identity?'IP '+identity.ip:'-'))+'</div></div></div><button id="gwrtLabelClose" class="gwrt-sf-close">✕</button></div>'
     +'<div class="gwrt-label-form">'
     +'<label>设备名称<input id="gwrtLabelName" type="text" maxlength="64" placeholder="'+esc(base)+'" value="'+esc(cur.name)+'"></label>'
     +'<label>品牌 / 系统<select id="gwrtLabelBrand">'+gwrtLabelOptions(gwrtBrandChoices(),cur.brand)+'</select></label>'
     +'<label>设备类型<select id="gwrtLabelType">'+gwrtLabelOptions(gwrtTypeChoices(),cur.type)+'</select></label>'
-    +'<div class="gwrt-label-note">'+(canUci?'保存到路由器（uci，重启不丢，可被 gwrt-agent 上报服务器）':'该设备无有效 MAC，仅保存在本浏览器')+'</div>'
+    +'<div class="gwrt-label-note">'+(identity&&identity.mac?'保存到路由器（按 MAC 关联，重启不丢）':(identity&&identity.ip?'保存到路由器（按 IPv4 关联；设备地址变化或被其他设备使用时需重新标注）':'该设备没有可保存的 MAC 或 IPv4，仅保存在本浏览器'))+'</div>'
     +'</div>'
     +'<div class="gwrt-sf-footer"><button id="gwrtLabelClear" class="gwrt-sf-btn gwrt-sf-btn-cancel">恢复自动</button><button id="gwrtLabelSave" class="gwrt-sf-btn gwrt-sf-btn-save"><span id="gwrtLabelSpinner" style="display:none" class="gwrt-spinner"></span><span id="gwrtLabelSaveText">保存</span></button></div>';
   overlay.appendChild(panel);document.body.appendChild(overlay);
@@ -1562,12 +1621,12 @@ function devLogo(host,mac){
   return '<span class="dev-logo dev-logo-brand-mask dev-logo-fallback"'+click+' style="--b:var(--text-tertiary)" title="'+esc(label)+'"><span class="dev-logo-mask" style="--m:url(/luci-static/gwrt/img/brands/computer.svg)"></span></span>';
 }
 function gwrtManualBrand(mac){
-  if(!gwrtIsMac(mac))return '';
-  return gwrtLabelNorm(gwrtDeviceAliases()[normMac(mac)]).brand||'';
+  var identity=gwrtDeviceLabelIdentity(mac),key=identity?identity.key:String(mac||'');
+  return gwrtLabelNorm(gwrtDeviceAliases()[key]).brand||'';
 }
 function gwrtManualType(mac){
-  if(!gwrtIsMac(mac))return '';
-  return gwrtLabelNorm(gwrtDeviceAliases()[normMac(mac)]).type||'';
+  var identity=gwrtDeviceLabelIdentity(mac),key=identity?identity.key:String(mac||'');
+  return gwrtLabelNorm(gwrtDeviceAliases()[key]).type||'';
 }
 function leaseMap(leases){
   var m={};
@@ -1757,7 +1816,7 @@ function mergeDevices(leases,bdev,bOnline,oafUsers,hostHints){
 function devViaKind(d){
   var mac=normMac(d&&d.mac), wmm=window._gwrtWifiMacMap||{};
   if((d&&d.conn)==='wifi'||(mac&&wmm[mac]))return 'wifi';
-  /* bandix 对无线客户端常把 logical_iface 报成 wired，这里用 gwrt-clients.json 的 via 纠正 */
+/* bandix 对无线客户端常把 logical_iface 报成 wired，这里用受 ACL 保护的 clients RPC 纠正 */
   var det=gwrtClientDetail(mac);
   if(det&&/^wifi/i.test(String(det.via||'')))return 'wifi';
   if((d&&d.conn)==='wired')return 'lan';
@@ -1765,7 +1824,7 @@ function devViaKind(d){
   if(d&&d.online)return 'lan';
   return '';
 }
-/* 接入方式细化：优先用 gwrt-clients.json 的 via/port（lan1..4 / WiFi 2.4G/5.2G/5.8G/6G） */
+/* 接入方式细化：优先用 clients RPC 的 via/port 和运行时网口名 */
 function gwrtClientDetail(mac){
   var key=normMac(mac);
   if(!key)return null;
@@ -1813,7 +1872,7 @@ function renderTopDevices(devs){
     else{
       el.className='top-dev-list icon-wall gwrt-devpair-icons gwrt-dev-wall-filtered';
       el.innerHTML='<span class="top-dev-filter" data-gwrt-dev-filter-clear="1" title="清除筛选">×</span>'
-        +'<span class="top-dev-icon '+(devViaKind(one[0])||'unknown')+'" data-gwrt-dev-mac="'+esc(normMac(one[0].mac))+'" title="'+esc(one[0].name||one[0].mac)+'">'+devLogo(one[0].name,one[0].mac)+'</span>'
+        +'<span class="top-dev-icon '+(devViaKind(one[0])||'unknown')+'" data-gwrt-dev-mac="'+esc(normMac(one[0].mac))+'" title="'+esc(one[0].name||one[0].mac)+'">'+devLogo(one[0].name,gwrtDeviceAliasLookupKey(one[0]))+'</span>'
         +'<span class="top-dev-filter-label" title="'+esc((filter.host||one[0].name||'')+' · 点击徽标可取消筛选')+'">'+esc(filter.host||one[0].name||'')+'</span>';
       return;
     }
@@ -1833,7 +1892,7 @@ function renderTopDevices(devs){
       var ct=(window._gwrtConnCountMap||{})[String(d.ip||'')];
       if(ct!==undefined)connCount=Number(ct)||0;
     }catch(e){}
-    return '<span class="top-dev-icon '+kind+'" data-gwrt-dev-mac="'+esc(normMac(d.mac))+'" data-gwrt-dev-count="'+connCount+'" title="'+esc(name)+(connCount?' · '+connCount+' 连接':'')+'">'+devLogo(d.name,d.mac)+(connCount?'<em class="top-dev-count">'+(connCount>99?'99+':connCount)+'</em>':'')+'</span>';
+    return '<span class="top-dev-icon '+kind+'" data-gwrt-dev-mac="'+esc(normMac(d.mac))+'" data-gwrt-dev-count="'+connCount+'" title="'+esc(name)+(connCount?' · '+connCount+' 连接':'')+'">'+devLogo(d.name,gwrtDeviceAliasLookupKey(d))+(connCount?'<em class="top-dev-count">'+(connCount>99?'99+':connCount)+'</em>':'')+'</span>';
   }).join('')+(rest?'<span class="top-dev-more" title="还有 '+rest+' 台在线设备">+'+rest+'</span>':'');
 }
 /* gwrt.js 点活跃 App 图块的设备徽标时调用：重绘图标墙（含筛选态） */
@@ -1868,7 +1927,7 @@ function renderActiveDevice(devs){
     var name=d.name||d.ip||d.mac||'unknown';
     var rank=isEqosLimited(d)?'限':(i===0?'TOP':'#'+(i+1));
     return '<div class="gwrt-active-item rank'+(i+1)+'" title="'+esc(name)+' · '+esc(via)+' · '+esc(F(d.rate||0))+'/s'+(appsTitle?' · '+esc(appsTitle):'')+'">'
-      +'<span class="gwrt-active-label">'+rank+'</span>'+devLogo(d.name,d.mac)
+      +'<span class="gwrt-active-label">'+rank+'</span>'+devLogo(d.name,gwrtDeviceAliasLookupKey(d))
       +'<span class="gwrt-active-info"><b>'+esc(name)+'</b></span>'
       +'<span class="gwrt-active-apps">'+appsHtml+'</span>'
       +'<small class="gwrt-active-rate">'+esc(via)+' · '+esc(F(d.rate||0))+'/s</small></div>';
@@ -1904,45 +1963,31 @@ function updateWan6Address(ifs){
     if(addr)S('gwrtWan6Addr',addr);
   });
 }
-var GWRT_PPE_CANDS=['wan','lan1','lan2','lan3','lan4','lan5','eth0','eth1','wlan0','wlan1'];
-function ppeDevStatus(ifn){
-  return rpcD('network.device','status',{name:ifn});
-}
-function ppePickByProbe(){
-  /* 端口拓扑尚未就绪时：按候选口逐个探测 carrier/速率，取第一个 up 的 */
-  var cands=GWRT_PPE_CANDS.slice();
-  return cands.reduce(function(chain,name){
-    return chain.then(function(){
-      if(window._gwrtPpeIf)return null;
-      return ppeDevStatus(name).then(function(r){
-        var d=(r&&r.result&&r.result[1])||r||{};
-        if(d&&d.up&&(d.carrier||Number(String(d.speed||'').replace(/F$/,''))>0))window._gwrtPpeIf=name;
-      }).catch(function(){});
-    });
-  },Promise.resolve());
-}
 function ppeUplinkIf(){
   var ports=(window._gwrtPorts||[]),states=(window._gwrtPortStates||{});
+  var configured=window._gwrtWanDevice||'';
+  if(configured&&states[configured]&&states[configured].__rpcError===undefined)return configured;
   for(var i=0;i<ports.length;i++){
     var p=ports[i]||{},dev=p.device||p.ifname||p.name||'';
-    if(!dev)continue;
+    if(!dev||p.role!=='wan')continue;
     var st=states[dev];
-    if(st===true||st===1||(typeof st==='string'&&/up/i.test(st))||
-       (st&&typeof st==='object'&&/up/i.test(String(st.state||st.status||st.link||''))))return dev;
+    if(st&&st.__rpcError===undefined)return dev;
   }
-  return window._gwrtPpeIf||'';
+  return '';
 }
 function renderPpe(){
   var row=document.getElementById('gwrtPpeRow');
   if(!row)return;
   var ifn=window._gwrtPpeIf||ppeUplinkIf();
   if(!ifn){
-    if(!window._gwrtPpeProbing){window._gwrtPpeProbing=1;ppePickByProbe().then(function(){window._gwrtPpeProbing=0;renderPpe();});}
     row.style.display='none';return;
   }
   window._gwrtPpeIf=ifn;
   rpcD('network.device','status',{name:ifn}).then(function(r){
     var d=(r&&r.result&&r.result[1])||r||{},st=d.statistics||{};
+    if(d.__rpcError!==undefined||(!d.up&&!d.carrier)){
+      row.style.display='none';window._gwrtPpePrev=null;return;
+    }
     var rx=Number(st.rx_bytes||0),tx=Number(st.tx_bytes||0);
     var sp=parseInt(String(d.speed||'').replace(/F$/,''),10)||0;   /* Mbps */
     var bps=sp>0?sp*1000000/8:0;                                   /* 字节/秒 */
@@ -2043,7 +2088,7 @@ function renderConnRank(devices){
     var rank=i===0?'TOP':'#'+(i+1);
     return '<div class="conn-rank-item rank'+(i+1)+'" title="'+esc(title)+'">'
       +'<span class="conn-rank-label">'+rank+'</span>'
-      +devLogo(d.name,d.mac)
+      +devLogo(d.name,gwrtDeviceAliasLookupKey(d))
       +'<span class="conn-rank-name">'+esc(d.name)+'</span>'
       +'<span class="conn-rank-count"><b>'+d.tcp+'/'+d.udp+'</b></span></div>';
   }).join('');
@@ -2200,28 +2245,71 @@ function ethPortEntries(ports,states,wanDevices){
   }).map(function(name){
     return {role:/^(wan|pon\d+)$/i.test(name)?'wan':'lan',device:name};
   });
-  var wans=wanDevices||window._gwrtWanDevices||{};
+  var wans=wanDevices||(typeof window!=='undefined'&&window._gwrtWanDevices)||{};
   return list.map(function(p){
     var name=p.device||p.name||p.ifname;
     if(!name)return null;
-    var isPon=/^pon\d+$/i.test(name);
-    var wanSec=wans[name]||null;
-    var role=(wanSec||/^wan\d*$/i.test(name)||/^wan$/i.test(String(p.role||'')))?'wan':'lan';
-    var label=isPon?'PON':(role==='wan'?'WAN':(/^wan\d*$/i.test(name)?'LAN':String(name).toUpperCase()));
+    var isPon=/^pon\d+$/i.test(name),wanSec=wans[name]||null;
+    var declaredRole=String(p.role||'').toLowerCase();
+    var role=wanSec||isPon||declaredRole==='wan'||((!declaredRole||declaredRole==='unknown')&&/^wan\d*$/i.test(name))?'wan':'lan';
+    var label=isPon?'PON':(role==='wan'?'WAN':String(name).toUpperCase());
     return {name:name,label:label,baseLabel:label,role:role,pon:isPon,wanSection:wanSec||undefined};
   }).filter(Boolean);
+}
+function gwrtNetDeviceName(value){
+  value=String(value||'').trim();
+  return /^[A-Za-z0-9_.:-]{1,15}$/.test(value)?value:'';
+}
+function gwrtPortDeviceAllowed(name){
+  return !!name&&!/^(ppp|tun|tap|wg|br-|lo$|docker|veth|wlan|wifi|phy|ra[xyz]?[0-9]+|apcli|wds)/i.test(name);
+}
+function gwrtEnsurePort(ports,name,role){
+  name=gwrtNetDeviceName(name);
+  if(!gwrtPortDeviceAllowed(name))return null;
+  var existing=ports.filter(function(p){return p&&p.name===name;})[0];
+  if(existing){
+    if(role==='wan'){
+      existing.role='wan';existing.label=existing.pon?'PON':'WAN';
+    }
+    return existing;
+  }
+  var isPon=/^pon\d+$/i.test(name);
+  var port={name:name,device:name,ifname:name,role:role,pon:isPon,label:isPon?'PON':(role==='wan'?'WAN':name.toUpperCase())};
+  ports.push(port);
+  return port;
+}
+function gwrtResolveWanDevice(ports,candidates){
+  var names=(candidates||[]).map(gwrtNetDeviceName).filter(gwrtPortDeviceAllowed);
+  for(var i=0;i<names.length;i++){
+    if((ports||[]).some(function(p){return p&&p.name===names[i];}))return names[i];
+    var parent=names[i].replace(/\.\d+$/,'');
+    if(parent!==names[i]&&(ports||[]).some(function(p){return p&&p.name===parent;}))return parent;
+  }
+  return names[0]||'';
+}
+function gwrtApplyWanPort(ports,name){
+  var target=gwrtEnsurePort(ports,name,'wan');
+  if(!target)return;
+  (ports||[]).forEach(function(port){
+    if(!port||port===target||port.role!=='wan')return;
+    port.role='lan';
+    port.label=port.pon?'PON':String(port.name||'LAN').toUpperCase();
+  });
+  target.role='wan';
+  target.label=target.pon?'PON':'WAN';
 }
 function bridgeExternalMemberNames(bridge,ports){
   var members=bridge&&Array.isArray(bridge['bridge-members'])?bridge['bridge-members']:[];
   var known={};(ports||[]).forEach(function(p){if(p&&p.name)known[p.name]=1;});
   return members.filter(function(name){
     name=String(name||'');
-    return name&&!known[name]&&!/^wan$|^lan\d+$|^phy|^wlan|^wifi|^br-|^lo$|^ra[xyz]?[0-9]+$|^apcli|^wds/i.test(name);
+    return name&&!known[name]&&!/^(ppp|tun|tap|wg|docker|veth|phy|wlan|wifi|br-|lo$|ra[xyz]?[0-9]+|apcli|wds)/i.test(name);
   });
 }
 function bridgeLanPortEntries(bridge,ports){
   return bridgeExternalMemberNames(bridge,ports).map(function(name){
-    return {name:name,label:'USB LAN',role:'lan',external:true};
+    var usb=/^(usb|enx|enp.*u)/i.test(name);
+    return {name:name,device:name,ifname:name,label:usb?'USB LAN':String(name).toUpperCase(),role:'lan',external:true};
   });
 }
 function wifiPortEntries(radios){
@@ -2317,6 +2405,15 @@ function gwrtMeshPeers(t){
 function gwrtMeshLinkType(up){
   var type=String(up&&up.type||'').toLowerCase();
   return /^(wifi|wireless|wlan)$/.test(type)?'wireless':(/^(wired|ethernet|lan)$/.test(type)?'wired':'unknown');
+}
+function gwrtMeshUplinkMetric(up,kind){
+  if(kind!=='wireless'||!up)return '';
+  var parts=[],tx=Number(up.tx_rate_mbps),rx=Number(up.rx_rate_mbps),signal=Number(up.rssi);
+  function rate(n){return n>=1000?(n/1000).toFixed(1).replace(/\.0$/,'')+' Gbps':Math.round(n)+' Mbps';}
+  if(tx>0)parts.push('TX '+rate(tx));
+  if(rx>0)parts.push('RX '+rate(rx));
+  if(signal<0)parts.push('信号 '+Math.round(signal)+' dBm');
+  return parts.join(' · ');
 }
 function gwrtRedrawMeshTopology(){
   if(window._gwrtPorts)renderTopology(window._gwrtPorts,window._gwrtPortStates||{},window._gwrtDevs||[],window._gwrtWifiMacMap,window._gwrtTopoBridgePorts);
@@ -2627,11 +2724,12 @@ function renderPortStrip(states,ports){
     var trendOpacity=up?Math.max(.32,Math.min(.86,.34+Math.min(1,total/trendFloor)*.34)):.10;
     portPrev[p.name]={rx:rx,tx:tx,ts:now};
     var role=p.role==="wan"?"wan":(isWifi?"wifi":"lan");
-    return '<div class="gwrt-port '+role+' '+(up?'up':'down')+'" data-gwrt-port-name="'+esc(p.name)+'" data-gwrt-port-role="'+role+'" title="'+esc(p.label)+' \u8bbe\u7f6e" role="button" tabindex="0">'
+    var rateClass=p.rateClass||'';
+    return '<div class="gwrt-port '+role+' '+rateClass+' '+(up?'up':'down')+'" data-gwrt-port-name="'+esc(p.name)+'" data-gwrt-port-role="'+role+'" title="'+esc(p.label)+' \u8bbe\u7f6e" role="button" tabindex="0">'
       +'<span class="gwrt-port-wave" style="--wave-opacity:'+trendOpacity.toFixed(2)+'"><svg class="gwrt-port-trend" viewBox="0 0 100 38" preserveAspectRatio="none" aria-hidden="true"><polyline points="'+trendPts+'"/></svg></span>'
       +'<div class="gwrt-port-top"><span class="gwrt-port-title"><span class="gwrt-port-dot"></span><span class="gwrt-port-name">'+esc(p.label)+'</span>'+(isWifi?'':'<span class="gwrt-port-netspeed">'+esc(sp)+'</span>')+'</span>'
       +'<span class="gwrt-port-gear">\u2699</span></div>'
-      +'<div class="gwrt-port-speedrow">'+(isWifi?'<span class="gwrt-port-speed">'+esc(sp)+'</span>':'')+'<span class="gwrt-port-vol" title="\u672c\u6b21\u8fd0\u884c\u7d2f\u8ba1\u6d41\u91cf \u2193 '+esc(F(rx))+' / \u2191 '+esc(F(tx))+'"><span>\u03a3\u2193 '+esc(F(rx))+'</span><span>\u03a3\u2191 '+esc(F(tx))+'</span></span></div>'
+      +'<div class="gwrt-port-speedrow">'+(isWifi?'<span class="gwrt-port-speed">'+esc(sp)+'</span>'+(Number(p.maxRateKbps)>0?'<span class="gwrt-port-wifi-rate" title="\u5df2\u8fde\u63a5\u8bbe\u5907\u7684\u6700\u9ad8\u534f\u5546\u901f\u7387">'+Math.round(Number(p.maxRateKbps)/1000)+' Mbps</span>':''):'')+'<span class="gwrt-port-vol" title="\u672c\u6b21\u8fd0\u884c\u7d2f\u8ba1\u6d41\u91cf \u2193 '+esc(F(rx))+' / \u2191 '+esc(F(tx))+'"><span>\u03a3\u2193 '+esc(F(rx))+'</span><span>\u03a3\u2191 '+esc(F(tx))+'</span></span></div>'
       +'<span class="gwrt-port-traffic" title="'+esc(fmtSpeed(drx))+' / '+esc(fmtSpeed(dtx))+'"><span class="gwrt-port-rate"><span>\u2193 '+esc(fmtSpeed(drx))+'</span><span>\u2191 '+esc(fmtSpeed(dtx))+'</span></span></span>'
       +'</div>';
   }
@@ -2653,6 +2751,7 @@ function renderPortStrip(states,ports){
   /* 多速率口标签：按 DTS/PHY 真实能力（link-supported 最大值）标注，无 2.5G+ 的口不贴；
      能力一旦测到就粘住（_gwrtRateLabels），rpc 偶发缺数不闪标签 */
   window._gwrtRateLabels=window._gwrtRateLabels||{};
+  window._gwrtRateClasses=window._gwrtRateClasses||{};
   function portMaxRateTag(st){
     var sup=st&&st['link-supported'];
     if(!sup||!sup.length)return '';
@@ -2665,21 +2764,14 @@ function renderPortStrip(states,ports){
   }
   wanPorts.concat(lanOnly).forEach(function(p){
     var tag=portMaxRateTag(states[p.name]||{});
-    if(tag){p.label=(p.role==='wan'?'WAN*':'LAN*')+tag;window._gwrtRateLabels[p.name]=p.label;}
+    if(tag){p.label=(p.role==='wan'?'WAN*':'LAN*')+tag;window._gwrtRateLabels[p.name]=p.label;window._gwrtRateClasses[p.name]='rate-'+tag.toLowerCase().replace('.','');}
     else if(window._gwrtRateLabels[p.name]){p.label=window._gwrtRateLabels[p.name];}
+    p.rateClass=window._gwrtRateClasses[p.name]||'';
   });
   ponPorts.forEach(function(p){html+=ponCardHtml(p,states[p.name]||{});});
   wanPorts.forEach(function(p,i){html+=phtml(p,i);});
-  if(lanOnly.length){
-    html+='<div class="gwrt-port-group group-lan">';
-    lanOnly.forEach(function(p,i){html+=phtml(p,(isSs01?0:wanPorts.length)+i);});
-    html+='</div>';
-  }
-  if(wifiOnly.length){
-    html+='<div class="gwrt-port-group group-wifi">';
-    wifiOnly.forEach(function(p,i){html+=phtml(p,wanPorts.length+lanOnly.length+i);});
-    html+='</div>';
-  }
+  lanOnly.forEach(function(p,i){html+=phtml(p,(isSs01?0:wanPorts.length)+i);});
+  wifiOnly.forEach(function(p,i){html+=phtml(p,wanPorts.length+lanOnly.length+i);});
   el.innerHTML=html;
   window._gwrtPorts=ponPorts.concat(wanPorts).concat(lanOnly).concat(wifiOnly);
   window._gwrtStripLanOrder=lanOnly.map(function(p){return p.name;});
@@ -2692,19 +2784,32 @@ function refreshPorts(){
   return Promise.all([
     rpcCached('builtinPorts',60000,'luci','getBuiltinEthernetPorts'),
     rpcCached('wirelessDevices',15000,'luci-rpc','getWirelessDevices'),
-    rpcCached('lanBridgeStatus',15000,'network.device','status',{name:'br-lan'})
+    rpcCached('lanStatus',15000,'network.interface','status',{interface:'lan'}),
+    rpcCached('wanStatus',15000,'network.interface','status',{interface:'wan'}),
+    rpcCached('lanDeviceConfig',60000,'uci','get',{config:'network',section:'lan',option:'device'}),
+    rpcCached('wanDeviceConfig',60000,'uci','get',{config:'network',section:'wan',option:'device'})
   ]).then(function(r){
-    var eth=ethPortEntries(r[0],null,window._gwrtWanDevices);
-    var ports=eth.concat(bridgeLanPortEntries(r[2],eth),wifiPortEntries(r[1]));
+    var eth=ethPortEntries(r[0]);
+    var lanInfo=r[2]||{},wanInfo=r[3]||{};
+    var lanDevice=gwrtNetDeviceName(lanInfo.l3_device)||gwrtNetDeviceName(lanInfo.device)||gwrtNetDeviceName(r[4]&&r[4].value)||'br-lan';
+    var wanDevice=gwrtResolveWanDevice(eth,[wanInfo.device,wanInfo.l3_device,r[5]&&r[5].value]);
+    window._gwrtLanBridgeDevice=lanDevice;
+    window._gwrtWanDevice=wanDevice;
+    if(wanDevice)gwrtApplyWanPort(eth,wanDevice);
+    if(!/^br-/i.test(lanDevice))gwrtEnsurePort(eth,lanDevice,'lan');
+    return rpcCached('lanBridgeStatus:'+lanDevice,15000,'network.device','status',{name:lanDevice}).then(function(bridge){
+    var ports=eth.concat(bridgeLanPortEntries(bridge,eth),wifiPortEntries(r[1]));
     var hasPon=ports.some(function(p){return p.pon;});
+
     var wifiMacMap={},staMap={};
     return Promise.all(ports.map(function(p){
       if(p.role!=='wifi')return null;
       var names=p.ifnames&&p.ifnames.length?p.ifnames:[p.name];
       var pk=(p.ifnames&&p.ifnames[0])||p.name;
+      p.maxRateKbps=0;
       return Promise.all(names.map(function(name){return assocList(name);})).then(function(lists){
         var seen={};p.clients=0;
-        lists.forEach(function(list){(list||[]).forEach(function(sta){var k=String(sta.mac||sta.bssid||sta.station||JSON.stringify(sta));if(!seen[k]){seen[k]=1;p.clients++;}var mac=normMac(sta.mac||'');if(mac){wifiMacMap[mac]=pk;staMap[mac]=gwrtStaInfo(sta);}});});
+        lists.forEach(function(list){(list||[]).forEach(function(sta){var k=String(sta.mac||sta.bssid||sta.station||JSON.stringify(sta));if(!seen[k]){seen[k]=1;p.clients++;}var info=gwrtStaInfo(sta),mac=normMac(sta.mac||'');if(info)p.maxRateKbps=Math.max(p.maxRateKbps,Number(info.rx_rate)||0,Number(info.tx_rate)||0);if(mac){wifiMacMap[mac]=pk;staMap[mac]=info;}});});
       });
     })).then(function(){
       window._gwrtWifiMacMap=wifiMacMap;
@@ -2721,10 +2826,11 @@ function refreshPorts(){
         if(window._gwrtDhcpArgs){var _da=window._gwrtDhcpArgs;renderDhcp(_da.leases,_da.bdev,_da.bOnline,_da.oafUsers,_da.hostHints);}
       });
     });
+    });
   });
 }
 
-/* 端口映射直接从 gwrtClientsMap 推导，避免重复拉取同一份 clients.json */
+/* 端口映射直接从 gwrtClientsMap 推导，避免重复拉取客户端状态 */
 function topoBridgePorts(){
   return gwrtClientsMap().then(function(map){
     var next={};
@@ -2739,7 +2845,9 @@ function gwrtClientsMap(){
   var now=Date.now(),c=gwrtClientsCache;
   if(c.time&&now-c.time<5000)return Promise.resolve(c.map);
   if(c.pending)return c.pending;
-  c.pending=fetch('/gwrt-clients.json?ts='+now,{cache:'no-store'}).then(function(r){return r.json();}).then(function(info){
+  c.pending=rpcCached('gwrtClientsDump',5000,'file','exec',{command:'/usr/libexec/gwrt-clients-dump',params:[]}).then(function(r){
+    var info={};
+    try{info=JSON.parse(r&&r.stdout||'{}');}catch(e){}
     var next={};
     (info&&info.clients||[]).forEach(function(item){
       var mac=normMac(item&&item.mac);
@@ -2783,7 +2891,7 @@ function topoSignalText(d){
 function topoDevIcon(d){
   gwrtApplyDeviceAlias(d);
   var name=devDisplayName(d);
-  return '<span class="topo-dev-icon topo-device" title="'+esc(name)+'">'+devLogo(name,d.mac)+topoSignalText(d)+'</span>';
+  return '<span class="topo-dev-icon topo-device" title="'+esc(name)+'">'+devLogo(name,gwrtDeviceAliasLookupKey(d))+topoSignalText(d)+'</span>';
 }
 /* 中层设备三级识别：人工标注 > 主机名特征 > uplink 被引用；无网管交换机/无 IP 纯 AP 被动不可见，只能判交换机 */
 function topoInfraKind(kids){
@@ -2975,12 +3083,14 @@ function renderTopology(ports,states,devs,wifiMacMap,bridgePorts){
     if(ancestors.indexOf(id)>=0||ancestors.length>8)return '';
     var kind=upstream?gwrtMeshLinkType(meshSelfNode&&meshSelfNode.uplink):(n._gwrtMeshLink||gwrtMeshLinkType(n.uplink));
     var name=n.custom_name||n.name||n.mac||'Mesh AP',clients=meshClients[id]||[],children=upstream?[]:(meshByParent[id]||[]);
+    var uplink=upstream?(meshSelfNode&&meshSelfNode.uplink):n.uplink,linkMetric=gwrtMeshUplinkMetric(uplink,kind);
     var via=kind==='wireless'?'无线回传':(kind==='wired'?'有线回传':'回传待确认');
-    var title='已认证 Mesh '+(n.role==='cap'?'主AP':'子AP')+' · '+name+' · '+via+(n.ip?' · '+n.ip:'')+(n.uplink&&n.uplink.ssid?' · '+n.uplink.ssid:'');
+    var title='已认证 Mesh '+(n.role==='cap'?'主AP':'子AP')+' · '+name+' · '+via+(n.ip?' · '+n.ip:'')+(uplink&&uplink.ssid?' · '+uplink.ssid:'')+(linkMetric?' · '+linkMetric:'');
     var h='<div class="gwrt-mesh-ap-branch" data-mesh-id="'+esc(id)+'" data-mesh-link="'+kind+'">'+(upstream?'':meshConn(kind));
     h+='<div class="gwrt-mesh-ap-node" title="'+esc(title)+'"><span class="gwrt-mesh-ap-icon '+kind+'">'+TOPO_SVG.ap+'</span>'
       +'<span class="gwrt-mesh-ap-name">'+esc(name)+'</span><span class="gwrt-mesh-ap-sub">'+(n.role==='cap'?'主AP · ':'')+via+'</span>'
-      +(n.ip?'<span class="gwrt-mesh-ap-sub">'+esc(n.ip)+'</span>':'')+'</div>';
+      +(n.ip?'<span class="gwrt-mesh-ap-sub">'+esc(n.ip)+'</span>':'')
+      +(linkMetric?'<span class="gwrt-mesh-ap-link-stats">'+esc(linkMetric)+'</span>':'')+'</div>';
     if(children.length){h+='<div class="gwrt-mesh-ap-children">';children.forEach(function(child){h+=meshNodeHtml(child,ancestors.concat([id]),false);});h+='</div>';}
     if(clients.length&&!upstream){
       h+=connV+'<div class="gwrt-mesh-client-row">';
@@ -3180,7 +3290,15 @@ function dhcpIpHtml(d){
 /* iwinfo assoclist 条目 → 归一化的无线站点信息（signal/协商速率/累计字节） */
 function gwrtStaInfo(sta){
   if(!sta||typeof sta!=='object')return null;
-  function rv(o,alt){if(o&&typeof o==='object'){var r=Number(o.rate);if(r>0)return r;}var v=Number(o);if(v>0)return v;return Number(alt)||0;}
+  function rv(o,alt){
+    if(o&&typeof o==='object'){
+      var r=Number(o.rate);if(r>0)return r;
+      r=Number(o.bitrate_raw);if(r>0)return r*100;
+      r=Number(o.bitrate);if(r>0)return r*1000;
+    }
+    var v=Number(o);if(v>0)return v;
+    return Number(alt)||0;
+  }
   return {
     signal:Number(sta.signal)||0,
     signal_avg:Number(sta.signal_avg)||0,
@@ -3253,7 +3371,7 @@ function renderDhcp(leases,bdev,bOnline,oafUsers,hostHints){
     var cs=devConnectSec(d);
     var connT=cs>=0?fmtDur(cs):'-';
     var actionKey=devKey(d),canWake=/^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/.test(normMac(mac)),canLimit=gwrtIpLiteral(d.ip),limited=isEqosLimited(d),blacklistMac=gwrtBlacklistMac(mac),canBlacklist=gwrtMacBlacklistReady&&!!blacklistMac,blacklisted=canBlacklist&&!!gwrtMacBlacklistSections[blacklistMac];
-    return '<tr class="'+(d.online?'is-online':'is-offline')+'"><td '+TD+'><span class="dev-host-cell">'+devLogo(name,d.mac)+' '+hostNameBtn+'</span></td>'
+    return '<tr class="'+(d.online?'is-online':'is-offline')+'"><td '+TD+'><span class="dev-host-cell">'+devLogo(name,gwrtDeviceAliasLookupKey(d))+' '+hostNameBtn+'</span></td>'
       +'<td '+TD+'>'+status+'</td>'
       +'<td '+TD+'>'+dhcpIpHtml(d)+'</td>'
       +'<td '+TD+'><span class="gwrt-dhcp-mac" title="'+esc(d.mac||'-')+'">'+esc(shortMac(d.mac))+'</span></td>'
@@ -4401,6 +4519,28 @@ function gwrtSetOverviewMenuOpen(open){
   head.classList.toggle('open',open);
   head.setAttribute('aria-expanded',open?'true':'false');
 }
+function gwrtSetupMenuCardLinks(){
+  Array.prototype.forEach.call(document.querySelectorAll('.dashboard-grid [data-gwrt-menu-target]'),function(card){
+    if(card._gwrtMenuCardBound)return;
+    card._gwrtMenuCardBound=true;
+    function openMenu(){
+      var group=card.getAttribute('data-gwrt-menu-target');
+      gwrtSetOverviewMenuOpen(true);
+      gwrtSelectHomeMenu(group);
+      var shell=document.getElementById('gwrtHomeMenus');
+      if(shell&&shell.scrollIntoView)shell.scrollIntoView({behavior:'smooth',block:'nearest'});
+    }
+    card.addEventListener('click',function(event){
+      var target=event.target&&event.target.nodeType===3?event.target.parentNode:event.target;
+      if(target&&target.closest&&target.closest('a,button,input,select,textarea,[data-gwrt-alias-key],[data-gwrt-dev-filter-clear],.gwrt-coremark-run,.app-chip,.top-dev-icon'))return;
+      openMenu();
+    });
+    card.addEventListener('keydown',function(event){
+      if(event.target!==card||(event.key!=='Enter'&&event.key!==' '))return;
+      event.preventDefault();openMenu();
+    });
+  });
+}
 function gwrtSetupHomeMenus(){
   var head=document.getElementById('gwrtSecOverviewHead');
   if(head&&!head._gwrtMenuBound){
@@ -4418,6 +4558,7 @@ function gwrtSetupHomeMenus(){
     });
   }
   var tabs=Array.prototype.slice.call(document.querySelectorAll('#gwrtHomeMenuTabs [data-gwrt-menu]'));
+  gwrtSetupMenuCardLinks();
   tabs.forEach(function(tab,index){
     if(tab._gwrtMenuBound)return;
     tab._gwrtMenuBound=true;
@@ -4532,7 +4673,7 @@ window.gwrtContLocalIcon=gwrtContLocalIcon;
 function gwrtContLetter(name,up){
   var ch=String(name||'?').charAt(0).toUpperCase();
   var bg=up?'#2563eb':'#6b7280';
-  return '<svg viewBox="0 0 24 24" class="gwrt-cont-letter"><circle cx="12" cy="12" r="12" fill="'+bg+'"/><text x="12" y="16.5" text-anchor="middle" font-size="13" font-weight="700" fill="#fff" font-family="sans-serif">'+ch+'</text></svg>';
+  return '<svg viewBox="0 0 24 24" class="gwrt-cont-letter"><circle cx="12" cy="12" r="12" fill="'+bg+'"/><text x="12" y="16.5" text-anchor="middle" font-size="13" font-weight="700" fill="#fff" font-family="sans-serif">'+esc(ch)+'</text></svg>';
 }
 function gwrtContImgFail(img){
   var name=img.getAttribute('data-name')||'?';

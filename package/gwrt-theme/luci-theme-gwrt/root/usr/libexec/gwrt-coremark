@@ -1,15 +1,21 @@
 #!/bin/sh
 
-pidfile=/tmp/gwrt-coremark.pid
+runtime_dir=$(/usr/libexec/gwrt-runtime-dir) || exit 1
+pidfile=$runtime_dir/coremark.pid
+logfile=$runtime_dir/coremark.log
 
 running() {
 	[ -s "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null
 }
 
-if [ "$1" = status ]; then
-	running && echo running || echo idle
-	exit 0
-fi
+case "${1:-}" in
+	status)
+		running && echo running || echo idle
+		exit 0
+		;;
+	start) ;;
+	*) exit 1 ;;
+esac
 
 if running; then
 	echo running
@@ -19,6 +25,6 @@ fi
 (
 	trap 'rm -f "$pidfile"' EXIT
 	/etc/coremark.sh
-) >/tmp/gwrt-coremark.log 2>&1 &
+) >"$logfile" 2>&1 &
 echo $! > "$pidfile"
 echo started

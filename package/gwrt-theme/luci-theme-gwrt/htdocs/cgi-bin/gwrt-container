@@ -94,16 +94,6 @@ form_value() {
 	url_decode "$(form_raw "$1")"
 }
 
-valid_session() {
-	local gwrt_sid="$1"
-
-	case "$gwrt_sid" in
-		''|*[!A-Za-z0-9]*) return 1 ;;
-	esac
-
-	ubus call session get "{ \"ubus_rpc_session\": \"$gwrt_sid\" }" >/dev/null 2>&1
-}
-
 detect_engine() {
 	if [ -x /usr/bin/podman ]; then
 		GWRT_ENGINE=podman
@@ -786,12 +776,17 @@ apply_settings() {
 }
 
 GWRT_SID=$(url_decode "$(query_raw sid)")
-valid_session "$GWRT_SID" || api_error 'A valid LuCI session is required.'
+. /usr/share/gwrt/cgi-auth.sh
+GWRT_PERMISSION=read
+[ "${REQUEST_METHOD:-GET}" != POST ] || GWRT_PERMISSION=write
+gwrt_cgi_authorize "$GWRT_SID" luci-theme-gwrt-containers "$GWRT_PERMISSION" || {
+	printf 'Status: 403 Forbidden\r\n'
+	api_error 'Container runtime access is not permitted for this LuCI session.'
+}
 detect_engine || api_error 'No supported container runtime is installed.'
 
 if [ "${REQUEST_METHOD:-GET}" = POST ]; then
-	# uhttpd does not consistently export custom request headers to CGI. The
-	# authenticated LuCI session ID above is therefore the mutation guard.
+	# The explicit container ACL permission above is the mutation guard.
 	case "${CONTENT_LENGTH:-0}" in
 		''|*[!0-9]*) api_error 'Invalid request body.' ;;
 	esac

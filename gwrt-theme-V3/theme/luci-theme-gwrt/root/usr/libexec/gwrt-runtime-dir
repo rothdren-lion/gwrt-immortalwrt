@@ -1,0 +1,17 @@
+#!/bin/sh
+
+set -eu
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+runtime_dir=/tmp/gwrt-theme
+
+if [ ! -e "$runtime_dir" ] && [ ! -L "$runtime_dir" ]; then
+	(umask 077; mkdir "$runtime_dir") 2>/dev/null || true
+fi
+
+[ -d "$runtime_dir" ] && [ ! -L "$runtime_dir" ] || exit 1
+owner=$(stat -c '%u' "$runtime_dir" 2>/dev/null) || exit 1
+[ "$owner" = 0 ] || exit 1
+chmod 700 "$runtime_dir" || exit 1
+
+printf '%s\n' "$runtime_dir"

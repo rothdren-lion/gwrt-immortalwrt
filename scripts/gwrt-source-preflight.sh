@@ -52,6 +52,11 @@ sh scripts/tests/test-gwrt-aria2-uci-defaults.sh
 python3 scripts/tests/test-gwrt-select-models.py
 sh scripts/tests/test-gwrt-socinfo.sh
 python3 scripts/tests/test-gwrt-collect-firmware.py
+node scripts/tests/test-gwrt-theme-security-ports.js
+node scripts/tests/test-gwrt-device-label-persistence.js
+GWRT_TEST_THEME=package/gwrt-theme/luci-theme-gwrt node scripts/tests/test-gwrt-theme-security-ports.js
+GWRT_TEST_THEME=package/gwrt-theme/luci-theme-gwrt node scripts/tests/test-gwrt-device-label-persistence.js
+python3 scripts/tests/test-gwrt-clients.py
 
 helper=gwrt-theme-V3/theme/luci-theme-gwrt/root/usr/libexec/gwrt-apk-autoinstall
 if [ -f scripts/tests/test-gwrt-apk-autoinstall.sh ]; then

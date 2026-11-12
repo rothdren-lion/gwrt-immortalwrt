@@ -2,11 +2,11 @@
 
 set -u
 
-WORKDIR="/tmp/gwrt-ota"
-MANIFEST="$WORKDIR/manifest.json"
-PACKAGE="$WORKDIR/update.tar.gz"
-IMAGE="$WORKDIR/sysupgrade.bin"
-LIST="$WORKDIR/package.list"
+WORKDIR=
+MANIFEST=
+PACKAGE=
+IMAGE=
+LIST=
 DEFAULT_MANIFEST_URL="https://raw.githubusercontent.com/rothdren-lion/gwrt-ota/main/gwrt-ota/stable/gwrt-ota.json"
 DEFAULT_MANIFEST_BASE="${DEFAULT_MANIFEST_URL%/*}"
 FETCHED_MANIFEST_URL=""
@@ -440,7 +440,7 @@ queue_sysupgrade() {
 	cat > "$runner" <<EOF
 #!/bin/sh
 sleep 3
-exec /sbin/sysupgrade$opts "$image" >>/tmp/gwrt-ota-sysupgrade.log 2>&1
+exec /sbin/sysupgrade$opts "$image" >>"$GWRT_RUNTIME_DIR/ota-sysupgrade.log" 2>&1
 EOF
 	chmod 700 "$runner" || return 1
 	"$runner" >/dev/null 2>&1 &
@@ -534,6 +534,14 @@ apply_update() {
 		"$(printf '%s' "$backup" | json_escape)" \
 		"${reboot:-false}"
 }
+
+GWRT_RUNTIME_DIR=$(/usr/libexec/gwrt-runtime-dir 2>/dev/null) \
+	|| fail "runtime_dir" "Cannot create a private runtime directory"
+WORKDIR="$GWRT_RUNTIME_DIR/ota"
+MANIFEST="$WORKDIR/manifest.json"
+PACKAGE="$WORKDIR/update.tar.gz"
+IMAGE="$WORKDIR/sysupgrade.bin"
+LIST="$WORKDIR/package.list"
 
 cleanup_retired_theme_files
 

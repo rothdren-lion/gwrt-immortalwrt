@@ -348,6 +348,18 @@ function detect_self() {
 // 无线回程检测：优先看本插件托管的 STA 接口，其次看其它已关联的 STA。
 // 仅当 STA 真实关联（iw link 显示 Connected）才算无线上行，避免把
 // "配置了但没连上" 的接口误报成回程。
+function iw_rate_mbps(link, direction) {
+	let m = direction == "tx"
+		? match(link, /tx bitrate:\s*([0-9.]+)\s*([GMK])?Bit\/s/i)
+		: match(link, /rx bitrate:\s*([0-9.]+)\s*([GMK])?Bit\/s/i);
+	if (!m) return null;
+	let value = json(m[1]);
+	let unit = lc(m[2] ?? "m");
+	if (unit == "g") value *= 1000;
+	else if (unit == "k") value /= 1000;
+	return int(value + 0.5);
+}
+
 function wireless_uplink() {
 	let ws = ubusc.call("network.wireless", "status") ?? {};
 	let fallback = null;
@@ -363,6 +375,8 @@ function wireless_uplink() {
 				ssid: ifc.config?.ssid ?? null,
 				bssid: m ? lc(m[1]) : null,
 				rssi: s ? int(s[1]) : null,
+				tx_rate_mbps: iw_rate_mbps(link, "tx"),
+				rx_rate_mbps: iw_rate_mbps(link, "rx"),
 			};
 			if (ifc.section == BACKHAUL_SECTION) return info;
 			if (!fallback) fallback = info;
@@ -382,7 +396,8 @@ function detect_uplink() {
 	// 本插件托管的无线回程已关联时，回程类型以它为准（即使物理上还有网线）
 	if (wl && (wl.port == BACKHAUL_SECTION || current_backhaul_cfg().enabled))
 		return { type: "wireless", port: wl.port, gw, ssid: wl.ssid,
-		         bssid: wl.bssid, rssi: wl.rssi };
+		         bssid: wl.bssid, rssi: wl.rssi,
+		         tx_rate_mbps: wl.tx_rate_mbps, rx_rate_mbps: wl.rx_rate_mbps };
 	return { type: wireless ? "wireless" : "wired", port: dev, gw };
 }
 

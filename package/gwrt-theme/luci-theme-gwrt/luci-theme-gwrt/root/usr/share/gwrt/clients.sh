@@ -1,4 +1,5 @@
 #!/bin/sh
+umask 077
 # GWRT clients tracker — 持久化接入设备状态
 #
 # 用法:
@@ -8,7 +9,7 @@
 #   clients.sh dump        # 输出当前 JSON (供前端 ubus 调用 / 调试)
 #
 # 数据存档: /etc/gwrt/clients.json
-# 内存运行档: /tmp/gwrt-clients.json (高频更新避免伤 flash)
+# 内存运行档: /tmp/gwrt-theme/clients.json (高频更新避免伤 flash)
 #
 # JSON 格式:
 # {
@@ -22,8 +23,12 @@
 . /lib/functions.sh 2>/dev/null
 
 PERSIST=/etc/gwrt/clients.json
-RUNTIME=/tmp/gwrt-clients.json
-WWWLINK=/www/gwrt-clients.json   # uhttpd 暴露给前端 fetch
+WWWLINK=/www/gwrt-clients.json
+if [ -L "$WWWLINK" ] || { [ -e "$WWWLINK" ] && [ ! -d "$WWWLINK" ]; }; then
+	rm -f "$WWWLINK"
+fi
+RUNTIME_DIR=$(/usr/libexec/gwrt-runtime-dir) || exit 1
+RUNTIME=$RUNTIME_DIR/clients.json
 PERSIST_DIR=/etc/gwrt
 FLUSH_INTERVAL=300   # 5min flush to flash
 OFFLINE_RETENTION=86400 # 24h since last actual observation
@@ -31,6 +36,17 @@ MERGER=/usr/share/gwrt/clients-merge.awk
 SCAN_INTERVAL=10     # 10s scan tick for current client status
 
 mkdir -p "$PERSIST_DIR"
+
+resolve_lan_device() {
+	local dev
+	dev=$(ubus call network.interface status '{"interface":"lan"}' 2>/dev/null |
+		jsonfilter -e '@.l3_device' 2>/dev/null | head -n 1)
+	[ -n "$dev" ] || dev=$(uci -q get network.lan.device 2>/dev/null)
+	case "$dev" in
+		''|*[!A-Za-z0-9_.:-]*) dev=br-lan ;;
+	esac
+	printf '%s\n' "$dev"
+}
 
 # 把 RUNTIME 不存在/损坏时从 PERSIST 恢复 (重启场景)
 ensure_runtime() {
@@ -46,12 +62,13 @@ ensure_runtime() {
 # 先探测 LAN 桥上的 STALE 邻居，再用邻居状态与 WiFi assoclist 判断在线。
 # STALE 只表示近期未确认，不能直接当作在线；探测让仍在线的设备回到活跃状态。
 probe_stale_neighbors() {
-	local addr pid pids=""
-	for addr in $(ip -4 neigh show dev br-lan nud stale 2>/dev/null | awk '{print $1}' | head -n 32); do
+	local addr pid pids="" lan_dev
+	lan_dev=$(resolve_lan_device)
+	for addr in $(ip -4 neigh show dev "$lan_dev" nud stale 2>/dev/null | awk '{print $1}' | head -n 32); do
 		ping -4 -q -c 1 -W 1 "$addr" >/dev/null 2>&1 &
 		pids="$pids $!"
 	done
-	for addr in $(ip -6 neigh show dev br-lan nud stale 2>/dev/null | awk '{print $1}' | head -n 32); do
+	for addr in $(ip -6 neigh show dev "$lan_dev" nud stale 2>/dev/null | awk '{print $1}' | head -n 32); do
 		ping -6 -q -c 1 -W 1 "$addr" >/dev/null 2>&1 &
 		pids="$pids $!"
 	done
@@ -67,9 +84,11 @@ probe_stale_neighbors() {
 # 旧实现用 `iwinfo "$phy" info|assoclist`，命令不存在导致 WiFi 段静默全失败，
 # 无线客户端只能被 ARP 分支兜底标成 wired —— 这就是 via 列看不到 WiFi 的根因。
 collect_active() {
+	local lan_dev
+	lan_dev=$(resolve_lan_device)
 	probe_stale_neighbors
 	# 只检查 LAN 桥；STALE 已主动探测，等设备回应或进入 FAILED。
-	ip neigh show dev br-lan 2>/dev/null | awk '
+	ip neigh show dev "$lan_dev" 2>/dev/null | awk '
 		/lladdr/ && /(REACHABLE|DELAY|PROBE)/ && !/FAILED/ {
 			ip=$1; mac=""; for(i=1;i<=NF;i++) if($i=="lladdr") mac=$(i+1)
 			if (mac && ip !~ /^(fe80|ff)/) print tolower(mac)"|"ip"|wired"
@@ -112,7 +131,8 @@ collect_active() {
 # === WAN 信息采集 (ISP 检测 / 光猫 / 上级路由) ===
 collect_wan_info() {
 	local def_route gateway iface wan_ip wan_type is_private gw_reachable
-	local isp="未知" is_combo="false"
+	local isp="未知" is_combo="false" lan_dev
+	lan_dev=$(resolve_lan_device)
 	def_route=$(ip route show default 2>/dev/null)
 	# `ip route` emits both "default via GW dev IF" and
 	# "default dev IF" (common for PPPoE).  Fixed field positions make the
@@ -191,7 +211,7 @@ collect_wan_info() {
 	# ── 桥接成员 (物理 LAN 口 + WiFi radio) ──
 	local bridge_members="[]"
 	local br_json
-	br_json=$(ubus call network.device status '{"name":"br-lan"}' 2>/dev/null)
+	br_json=$(ubus call network.device status "{\"name\":\"$lan_dev\"}" 2>/dev/null)
 	if [ -n "$br_json" ]; then
 		bridge_members=$(echo "$br_json" | jsonfilter -e '@["bridge-members"]' 2>/dev/null)
 		[ -z "$bridge_members" ] && bridge_members="[]"
@@ -201,12 +221,12 @@ collect_wan_info() {
 		"$wan_type" "${wan_ip:-}" "${gateway:-}" "$gw_reachable" "$is_private" "$isp" "$is_combo" "$bridge_members"
 }
 
-# === 端口指纹（后台异步探测，结果缓存到 /tmp/gwrt-portfp.list: mac|os） ===
+# === 端口指纹（后台异步探测，结果缓存在私有运行目录: mac|os） ===
 # 用途：DHCP option 指纹拿不到时，用设备开放端口推断系统（如 fnOS 的 5666/5667）。
 # 设计：探测在后台跑（每个 MAC 只探一次并缓存），不阻塞 30s 扫描节拍。
 probe_ports_async() {
 	local active="$1"
-	local cache=/tmp/gwrt-portfp.list out=/tmp/gwrt-portfp.lock
+	local cache="$RUNTIME_DIR/portfp.list" out="$RUNTIME_DIR/portfp.lock"
 	[ -f "$cache" ] || : > "$cache"
 	if [ -f "$out" ]; then
 		# A killed probe must not disable fingerprinting forever.  Normal
@@ -259,28 +279,29 @@ do_scan() {
 
 	# DHCP 指纹 (option 60/55, dnsmasq dhcp-script 写入): mac|os|vendor|options
 	local fp_data=""
-	[ -r /tmp/gwrt-dhcp-fp.list ] && fp_data=$(cat /tmp/gwrt-dhcp-fp.list)
+	[ -r "$RUNTIME_DIR/dhcp-fp.list" ] && fp_data=$(cat "$RUNTIME_DIR/dhcp-fp.list")
 
 	# 端口指纹（fnOS 5666/5667）：异步探测 + 缓存，只补 DHCP 未识别的
 	probe_ports_async "$active_list"
 	local portfp_data=""
-	[ -r /tmp/gwrt-portfp.list ] && portfp_data=$(cat /tmp/gwrt-portfp.list)
+	[ -r "$RUNTIME_DIR/portfp.list" ] && portfp_data=$(cat "$RUNTIME_DIR/portfp.list")
 	local fp_clean fp_combined
 	fp_clean=$(printf '%s\n' "$fp_data" | grep -v '|unknown|')
 	# 端口在前、DHCP 在后：同 MAC 时 DHCP 覆盖端口推断
 	fp_combined=$(printf '%s\n%s\n' "$portfp_data" "$fp_clean")
 
 	# ── 桥端口映射 (mac → 物理端口名) ──
-	local bridge_port_data=""
-	if command -v brctl >/dev/null 2>&1 && [ -d /sys/class/net/br-lan/brif ]; then
+	local bridge_port_data="" lan_dev
+	lan_dev=$(resolve_lan_device)
+	if command -v brctl >/dev/null 2>&1 && [ -d "/sys/class/net/$lan_dev/brif" ]; then
 		# 端口编号(hex)→ decimal → 接口名 (用 shell 转换)
 		local pmap_dec=""
-		for f in /sys/class/net/br-lan/brif/*; do
+		for f in "/sys/class/net/$lan_dev/brif/"*; do
 			local iface=$(basename "$f")
 			local pn=$(cat "$f/port_no" 2>/dev/null)
 			[ -n "$pn" ] && pn_dec=$((pn)) 2>/dev/null && pmap_dec="${pmap_dec}${pn_dec}|${iface}\n"
 		done
-		bridge_port_data=$(brctl showmacs br-lan 2>/dev/null | awk -v pm="$pmap_dec" '
+		bridge_port_data=$(brctl showmacs "$lan_dev" 2>/dev/null | awk -v pm="$pmap_dec" '
 			BEGIN {
 				n = split(pm, plines, /\n/)
 				for (i = 1; i <= n; i++) {
@@ -303,20 +324,17 @@ do_scan() {
 		-f "$MERGER") || return 1
 	[ -n "$merged" ] || return 1
 
-	# 写 RUNTIME
+		# 写 RUNTIME
 	echo "$merged" > "$RUNTIME.$$"
 	mv "$RUNTIME.$$" "$RUNTIME"
-
-	# 暴露给 uhttpd 让前端 fetch (/gwrt-clients.json)
-	[ -L "$WWWLINK" ] || ln -sf "$RUNTIME" "$WWWLINK" 2>/dev/null
 }
 
 # === flush 模式: 把 RUNTIME 写到 PERSIST (5分钟一次,有 diff 才写) ===
 do_flush() {
 	[ ! -s "$RUNTIME" ] && return
-	# 用 mtime 判断: 上次 flush 时间记录在 /tmp/gwrt-clients.flushed
+	# 用 mtime 判断: 上次 flush 时间记录在私有运行目录
 	local last_flush=0
-	[ -r /tmp/gwrt-clients.flushed ] && last_flush=$(cat /tmp/gwrt-clients.flushed)
+	[ -r "$RUNTIME_DIR/clients.flushed" ] && last_flush=$(cat "$RUNTIME_DIR/clients.flushed")
 	local now=$(date +%s)
 	local gap=$((now - last_flush))
 	[ "$gap" -lt "$FLUSH_INTERVAL" ] && return
@@ -328,7 +346,7 @@ do_flush() {
 	psum=$(sed 's/"updated":[0-9]*,//' "$PERSIST" 2>/dev/null | sha256sum | awk '{print $1}')
 	if [ "$rsum" != "$psum" ]; then
 		cp "$RUNTIME" "$PERSIST"
-		echo "$now" > /tmp/gwrt-clients.flushed
+		echo "$now" > "$RUNTIME_DIR/clients.flushed"
 	fi
 }
 

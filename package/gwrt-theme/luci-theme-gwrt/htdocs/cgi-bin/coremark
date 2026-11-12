@@ -1,12 +1,23 @@
 #!/bin/sh
-echo 'Content-Type: application/json'
-echo ''
-case "${QUERY_STRING}" in
-  status)
-    /usr/libexec/gwrt-coremark status
-    ;;
-  *)
-    /usr/libexec/gwrt-coremark > /dev/null 2>&1
-    echo '{"status":"started"}'
-    ;;
+# Legacy endpoint; the dashboard now invokes CoreMark through authenticated RPC.
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+sid=$(printf '%s' "${QUERY_STRING:-}" | tr '&' '\n' | sed -n 's/^sid=//p' | head -n 1)
+case "&${QUERY_STRING:-}&" in
+	*'&action=status&'*|*'&status&'*) action=status; permission=read ;;
+	*) action=start; permission=write ;;
+esac
+. /usr/share/gwrt/cgi-auth.sh
+gwrt_cgi_authorize "$sid" luci-theme-gwrt "$permission" || {
+	printf 'Status: 403 Forbidden\r\nContent-Type: application/json\r\nCache-Control: no-store\r\n\r\n{"error":"Permission denied"}\n'
+	exit 0
+}
+if [ "$action" = start ] && [ "${REQUEST_METHOD:-GET}" != POST ]; then
+	printf 'Status: 405 Method Not Allowed\r\nAllow: POST\r\nContent-Type: application/json\r\n\r\n{"error":"POST required"}\n'
+	exit 0
+fi
+printf 'Content-Type: application/json\r\nCache-Control: no-store\r\n\r\n'
+result=$(/usr/libexec/gwrt-coremark "$action" 2>/dev/null)
+case "$result" in
+	running|started|idle) printf '{"stdout":"%s"}\n' "$result" ;;
+	*) printf '{"error":"CoreMark unavailable"}\n' ;;
 esac

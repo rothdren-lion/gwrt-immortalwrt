@@ -726,25 +726,32 @@ body::before{content:"";position:fixed;inset:0;z-index:20000;pointer-events:none
 .gwrt-mesh-legend i{display:inline-block;width:11px;height:11px;border:1px solid #fff;border-radius:50%;margin-left:4px;box-sizing:border-box}
 .gwrt-mesh-legend i.wireless{border-style:dashed}
 
-/* GWRT 2026-11-10: port strip adapts to actual port count, cards share width */
-.gwrt-port-strip{display:flex;flex-wrap:nowrap;align-items:stretch;gap:6px;width:100%;min-width:0}
-.gwrt-port-strip>.gwrt-port,.gwrt-port-group .gwrt-port,.gwrt-port.pon{flex:1 1 0!important;min-width:0!important;max-width:none!important}
-.gwrt-port-group{display:flex;flex-wrap:nowrap;gap:6px;flex:1 1 0;min-width:0}
-@media(max-width:1240px){
-  .gwrt-port-strip-wrap{overflow-x:auto}
-  .gwrt-port-strip{width:100%;min-width:0}
-  .gwrt-port-group{flex:1 1 0}
-  .gwrt-port-group .gwrt-port,.gwrt-port.wan,.gwrt-port.pon{flex:1 1 0!important;min-width:96px!important}
-}
-@media(max-width:640px){
-  .gwrt-port-strip{flex-wrap:wrap}
-  .gwrt-port-group{flex:1 1 100%;flex-wrap:wrap}
-  .gwrt-port-group .gwrt-port,.gwrt-port.pon{flex:1 1 calc(50% - 6px)!important;min-width:118px!important}
-}
 
-/* PON card: same family as LAN, slightly wider when optics info is present (2026-11-11) */
-.gwrt-port.pon{flex:1.2 1 0!important;min-width:150px!important;max-width:none!important}
+/* GWRT dashboard navigation and responsive per-interface cards */
+.gwrt-menu-card-link{cursor:pointer}
+.gwrt-menu-card-link:hover{border-color:color-mix(in srgb,var(--accent-primary) 48%,var(--border-primary));box-shadow:0 4px 14px color-mix(in srgb,var(--accent-primary) 10%,transparent)}
+.gwrt-menu-card-link:focus-visible{outline:2px solid var(--accent-primary);outline-offset:2px}
+.gwrt-port-strip-wrap{overflow:visible!important}
+.gwrt-port-strip{display:grid!important;grid-template-columns:repeat(auto-fit,minmax(min(100%,168px),1fr));width:100%!important;min-width:0!important;gap:8px!important;align-items:stretch}
+.gwrt-port{width:100%!important;max-width:none!important;min-width:0!important;min-height:90px;flex:none!important;padding:9px 10px!important}
+.gwrt-port.wan{min-height:96px;padding:11px 12px!important;border-width:3px!important}
+.gwrt-port-group{display:contents!important}
+.gwrt-port-group .gwrt-port{border:1px solid var(--border-primary)!important;border-radius:var(--radius-md)!important;background:var(--bg-card)!important}
+.gwrt-port-group.group-lan .gwrt-port{border-color:color-mix(in srgb,var(--accent-secondary) 45%,var(--border-primary))!important}
+.gwrt-port-group.group-wifi .gwrt-port{border-color:color-mix(in srgb,var(--accent-purple) 45%,var(--border-primary))!important}
+.gwrt-port::before,.gwrt-port::after{content:"";position:absolute;pointer-events:none;border:1px solid transparent;border-radius:calc(var(--radius-md) - 3px);z-index:1}
+.gwrt-port > :not(.gwrt-port-wave){z-index:2!important}
+.gwrt-port.rate-25g::before{inset:8px;border-color:#3b82f6}
+.gwrt-port.rate-5g::before{inset:8px;border-color:#ef4444}
+.gwrt-port.rate-10g::before{inset:7px;border-color:#ef4444}
+.gwrt-port.rate-10g::after{inset:12px;border-color:#ef4444}
+.gwrt-port-speedrow{flex-wrap:wrap;gap:4px}
+.gwrt-port-speedrow .gwrt-port-vol{flex:1 1 100%;width:100%;gap:8px}
+.gwrt-port-wifi-rate{flex:0 0 auto;margin-left:auto;color:var(--accent-cyan);font:600 .61rem var(--font-mono);white-space:nowrap}
+.gwrt-mesh-ap-link-stats{max-width:100%;font-size:.5rem;line-height:1.2;text-align:center;color:var(--accent-cyan);white-space:normal;overflow-wrap:anywhere}
+.gwrt-port-strip > .gwrt-port.wan{transform:scale(1.02);z-index:1}
+
+/* Keep optical telemetry readable in the same responsive grid. */
 .gwrt-port.pon .gwrt-pon-optics{font-size:9.5px;gap:6px}
 .gwrt-port.pon .gwrt-pon-meta{font-size:9.5px;gap:6px}
 .gwrt-port.pon .gwrt-pon-state{font-size:9px}
-@media(max-width:640px){.gwrt-port.pon{flex:1 1 calc(50% - 6px)!important;min-width:130px!important}}

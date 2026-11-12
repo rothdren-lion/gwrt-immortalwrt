@@ -9,22 +9,29 @@
     "gwrt",
     "network",
     "system",
-    "wireless"
+    "wireless",
+    "pon_wan"
    ],
    "file": {
     "/usr/libexec/syslog-wrapper": [
      "exec"
     ],
-    "/usr/libexec/gwrt-ota": [
+    "/usr/libexec/gwrt-ota status": [
      "exec"
     ],
-    "/usr/libexec/gwrt-lan-alias": [
+    "/usr/libexec/gwrt-ota check": [
      "exec"
     ],
     "/usr/libexec/gwrt-conntrack": [
      "exec"
     ],
-    "/bin/cat": [
+    "/bin/cat /proc/stat": [
+     "exec"
+    ],
+    "/bin/cat /sys/kernel/debug/clk/clk_summary": [
+     "exec"
+    ],
+    "/bin/cat /sys/class/thermal/thermal_zone0/temp": [
      "exec"
     ],
     "/sys/devices/soc0/machine": [
@@ -35,9 +42,6 @@
     ],
     "/etc/coremark.sh": [
      "read"
-    ],
-    "/usr/libexec/gwrt-coremark": [
-     "exec"
     ],
     "/proc/cpuinfo": [
      "read"
@@ -63,21 +67,6 @@
     "/bin/df": [
      "exec"
     ],
-    "/etc/init.d/eqos": [
-     "exec"
-    ],
-    "/etc/init.d/firewall": [
-     "exec"
-    ],
-    "/sbin/fw4": [
-     "exec"
-    ],
-    "/usr/sbin/conntrack": [
-     "exec"
-    ],
-    "/etc/init.d/sysntpd": [
-     "exec"
-    ],
     "/usr/libexec/gwrt-wan6-address": [
      "exec"
     ],
@@ -97,6 +86,15 @@
      "read"
     ],
     "/usr/libexec/gwrt-socinfo": [
+     "exec"
+    ],
+    "/usr/libexec/gwrt-clients-dump": [
+     "exec"
+    ],
+    "/usr/libexec/gwrt-coremark status": [
+     "exec"
+    ],
+    "/usr/sbin/ponctl --device pon0 status --json": [
      "exec"
     ]
    },
@@ -188,16 +186,38 @@
     "firewall",
     "gwrt",
     "network",
-    "wireless"
+    "wireless",
+    "pon_wan"
    ],
    "file": {
-    "/etc/init.d/eqos": [
+    "/usr/libexec/gwrt-coremark start": [
      "exec"
     ],
-    "/etc/init.d/firewall": [
+    "/usr/libexec/gwrt-lan-alias": [
      "exec"
     ],
-    "/usr/sbin/conntrack": [
+    "/usr/libexec/gwrt-ota apply": [
+     "exec"
+    ],
+    "/etc/init.d/eqos reload": [
+     "exec"
+    ],
+    "/etc/init.d/eqos stop": [
+     "exec"
+    ],
+    "/etc/init.d/firewall reload": [
+     "exec"
+    ],
+    "/usr/sbin/conntrack -D -s *": [
+     "exec"
+    ],
+    "/usr/sbin/conntrack -D -d *": [
+     "exec"
+    ],
+    "/etc/init.d/sysntpd restart": [
+     "exec"
+    ],
+    "/usr/libexec/pon-wan-apply apply": [
      "exec"
     ]
    },

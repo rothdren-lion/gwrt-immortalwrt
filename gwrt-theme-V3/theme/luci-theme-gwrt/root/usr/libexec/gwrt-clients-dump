@@ -1,0 +1,15 @@
+#!/bin/sh
+# Read-only dashboard export. Access is granted only through rpcd's
+# authenticated file.exec ACL; never place client data under /www or public /tmp.
+runtime_dir=$(/usr/libexec/gwrt-runtime-dir 2>/dev/null) || {
+	printf '%s\n' '{"updated":0,"clients":[]}'
+	exit 0
+}
+state=$runtime_dir/clients.json
+
+if [ -f "$state" ] && [ ! -L "$state" ] && [ -r "$state" ] \
+	&& jsonfilter -i "$state" -e '@.clients' >/dev/null 2>&1; then
+	cat "$state"
+else
+	printf '%s\n' '{"updated":0,"clients":[]}'
+fi

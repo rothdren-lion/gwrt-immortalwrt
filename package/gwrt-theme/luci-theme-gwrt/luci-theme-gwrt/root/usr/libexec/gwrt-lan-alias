@@ -2,13 +2,20 @@
 
 set -u
 
-DEVICE="br-lan"
+DEVICE=""
 LABEL="br-lan:gwrt"
 IP=""
 CIDR=""
 NETWORK=""
 BROADCAST=""
 PREFIX=""
+
+DEVICE=$(ubus call network.interface status '{"interface":"lan"}' 2>/dev/null |
+	jsonfilter -e '@.l3_device' 2>/dev/null | head -n 1)
+[ -n "$DEVICE" ] || DEVICE=$(uci -q get network.lan.device 2>/dev/null)
+case "$DEVICE" in
+	''|*[!A-Za-z0-9_.:-]*) DEVICE=br-lan ;;
+esac
 
 json_escape() {
 	sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g' | tr -d '\r'
