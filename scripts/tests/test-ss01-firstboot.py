@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -156,7 +157,12 @@ fi
                GWRT_SS01_WIFI_LOCK=str(base / 'var/lock/gwrt-ss01-wifi'),
                GWRT_SS01_WAIT_INTERVAL='0.05', GWRT_SS01_WAIT_ATTEMPTS='300')
     if BUSYBOX:
-        (bindir / 'flock').symlink_to(BUSYBOX)
+        applets = subprocess.run([BUSYBOX, '--list'], check=True, text=True,
+                                 capture_output=True).stdout.splitlines()
+        if 'flock' in applets:
+            (bindir / 'flock').symlink_to(BUSYBOX)
+        elif not shutil.which('flock', path=env['PATH']):
+            raise RuntimeError('the first-boot test requires a host flock command')
     (base / 'uci.json').write_text('{}')
     (base / 'calls').write_text('')
 
