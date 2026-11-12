@@ -6,9 +6,18 @@
 APKDIR=/usr/share/gwrt/apk
 MARK=/etc/gwrt/wifiroam-apk.done
 LOG=/tmp/gwrt-wifiroam-apk.log
+BOARD="$(cat /tmp/sysinfo/board_name 2>/dev/null)"
 
-[ -d "$APKDIR" ] || exit 0
+if [ "$BOARD" = 'jdcloud,re-ss-01' ] && [ "${GWRT_SS01_FIRSTBOOT_WORKER:-0}" != 1 ]; then
+	printf '%s\n' "$$" > /tmp/gwrt-ss01-uci-defaults.pid
+	exit 1
+fi
+
 [ -e "$MARK" ] && exit 0
+if [ ! -d "$APKDIR" ]; then
+	[ "$BOARD" = 'jdcloud,re-ss-01' ] && exit 1
+	exit 0
+fi
 
 # 等 apk 数据库就绪
 i=0
@@ -35,12 +44,13 @@ while [ $i -lt 15 ] && [ ! -d /lib/apk/db ]; do sleep 1; i=$((i+1)); done
 # 记录结果；用 apk 数据库核对，而不是 grep 日志里的告警/重复安装提示
 # （apk add 对已装包会打 "already installed"/world 之类的字眼，旧逻辑永判失败
 #   → 每次开机重装一遍、预置包也永不删除）
-if apk info wifiroam >/dev/null 2>&1 && apk info luci-app-wifiroam >/dev/null 2>&1; then
-	mkdir -p /etc/gwrt
-	echo "ok $(date)" > "$MARK"
+if apk info wifiroam >/dev/null 2>&1 && apk info luci-app-wifiroam >/dev/null 2>&1 && \
+   { [ "$BOARD" != 'jdcloud,re-ss-01' ] || apk info luci-i18n-wifiroam-zh-cn >/dev/null 2>&1; }; then
+	mkdir -p /etc/gwrt && echo "ok $(date)" > "$MARK" || exit 1
 	rm -rf "$APKDIR"
 else
 	logger -t gwrt-apk "preset APK install incomplete, see $LOG"
+	[ "$BOARD" = 'jdcloud,re-ss-01' ] && exit 1
 fi
 
 exit 0

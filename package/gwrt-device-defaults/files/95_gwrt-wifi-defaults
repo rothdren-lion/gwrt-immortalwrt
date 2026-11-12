@@ -7,23 +7,45 @@
 # 用户自己改过的 SSID/密码不会被覆盖。
 
 DEF_KEY="12345678"
+BOARD="$(cat /tmp/sysinfo/board_name 2>/dev/null)"
 
-[ -f /etc/config/wireless ] || exit 0
+if [ "$BOARD" = 'jdcloud,re-ss-01' ]; then
+	# S10boot sources uci-defaults in a subshell; $$ is the S10 shell PID.
+	# The calibration worker waits for that shell to finish before retrying.
+	if [ "${GWRT_SS01_FIRSTBOOT_WORKER:-0}" != 1 ]; then
+		printf '%s\n' "$$" > /tmp/gwrt-ss01-uci-defaults.pid
+		exit 1
+	fi
+
+	[ -e /sys/class/ieee80211/phy0 ] && [ -e /sys/class/ieee80211/phy1 ] || exit 1
+	[ -f /etc/config/wireless ] || exit 1
+	has_2g=0
+	has_5g=0
+	for radio in $(uci -q show wireless | sed -n 's/^wireless\.\([^.]*\)=wifi-device$/\1/p'); do
+		case "$(uci -q get "wireless.$radio.band")" in
+			2g) has_2g=1 ;;
+			5g) has_5g=1 ;;
+		esac
+	done
+	[ "$has_2g" = 1 ] && [ "$has_5g" = 1 ] || exit 1
+else
+	[ -f /etc/config/wireless ] || exit 0
+fi
 
 fix_radio() {
 	local radio="$1"
 	uci -q get "wireless.$radio" >/dev/null 2>&1 || return 0
-	uci -q set "wireless.$radio.disabled=0"
+	uci -q set "wireless.$radio.disabled=0" || return 1
 
 	local sec
 	sec="$(uci -q show wireless | sed -n "s/^wireless\.\([^.]*\)\.device='$radio'.*/\1/p" | grep -v '^default_' | head -n1)"
 	[ -n "$sec" ] || sec="default_$radio"
 
 	if ! uci -q get "wireless.$sec" >/dev/null 2>&1; then
-		uci -q set "wireless.$sec=wifi-iface"
-		uci -q set "wireless.$sec.device=$radio"
-		uci -q set "wireless.$sec.mode=ap"
-		uci -q set "wireless.$sec.network=lan"
+		uci -q set "wireless.$sec=wifi-iface" || return 1
+		uci -q set "wireless.$sec.device=$radio" || return 1
+		uci -q set "wireless.$sec.mode=ap" || return 1
+		uci -q set "wireless.$sec.network=lan" || return 1
 	fi
 
 	local enc key
@@ -32,38 +54,56 @@ fix_radio() {
 	case "$enc" in
 		*"'"*)
 			# 之前误写成带引号的值（如 'psk2+ccmp'），修回来
-			uci -q set "wireless.$sec.encryption=psk2+ccmp"
-			[ -n "$key" ] || uci -q set "wireless.$sec.key=$DEF_KEY"
+			uci -q set "wireless.$sec.encryption=psk2+ccmp" || return 1
+			[ -n "$key" ] || uci -q set "wireless.$sec.key=$DEF_KEY" || return 1
 			;;
 		none|"")
 			if [ -z "$key" ]; then
-				uci -q set "wireless.$sec.encryption=psk2+ccmp"
-				uci -q set "wireless.$sec.key=$DEF_KEY"
+				uci -q set "wireless.$sec.encryption=psk2+ccmp" || return 1
+				uci -q set "wireless.$sec.key=$DEF_KEY" || return 1
 			fi
 			;;
 	esac
-	uci -q set "wireless.$sec.disabled=0"
+	uci -q set "wireless.$sec.disabled=0" || return 1
 
-	# 5G：硬件支持 VHT/HE 160MHz，默认开 160（36 信道 36-64 整段）
+	# 5G 频段策略（按机型，2026-11-12）：
+	#   SS-01 只有 IPQ6018 集成 5G，必须走 5.8G（ch149+），不能开 160MHz
+	#   （160MHz 必然跨 DFS，ath11k 的 start_dfs_cac() 返回 -1 会让 5G 掉线）。
+	#   CS-02 另有 QCN9074 5.2G，由 hotplug hook 固定 ch36，这里只管集成 5G。
 	case "$(uci -q get "wireless.$radio.band")" in
 		5g)
-			uci -q set "wireless.$radio.htmode=HE160"
-			uci -q set "wireless.$radio.channel=36"
+			case "$BOARD" in
+			jdcloud,re-ss-01)
+				uci -q set "wireless.$radio.htmode=HE80" || return 1
+				uci -q set "wireless.$radio.channel=149" || return 1
+				;;
+			*)
+				uci -q set "wireless.$radio.htmode=HE160" || return 1
+				uci -q set "wireless.$radio.channel=36" || return 1
+				;;
+			esac
 			;;
 	esac
 	# 区域码（160MHz / DFS 需要）
-	uci -q set "wireless.$radio.country=CN"
+	uci -q set "wireless.$radio.country=CN" || return 1
 }
 
 for r in $(uci -q show wireless | sed -n 's/^wireless\.\([^.]*\)=wifi-device$/\1/p'); do
-	fix_radio "$r"
+	fix_radio "$r" || exit 1
 done
 
-uci -q commit wireless
+uci -q commit wireless || exit 1
 
 # SSID 命名（GWRT_<频段>_<MAC后4>）
-if [ -x /usr/libexec/gwrt-ssid-name ]; then
-	/usr/libexec/gwrt-ssid-name --reload
+if [ "$BOARD" = 'jdcloud,re-ss-01' ]; then
+	if [ -x /usr/libexec/gwrt-ssid-name ]; then
+		/usr/libexec/gwrt-ssid-name || exit 1
+	fi
+	# Channel/encryption may have changed even when all SSIDs were custom.
+	# Always reload, and retain the defaults for retry if netifd is not ready.
+	wifi reload >/dev/null 2>&1 || exit 1
+elif [ -x /usr/libexec/gwrt-ssid-name ]; then
+	/usr/libexec/gwrt-ssid-name --reload || exit 1
 else
 	wifi reload >/dev/null 2>&1 || true
 fi

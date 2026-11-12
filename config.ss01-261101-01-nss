@@ -1799,7 +1799,7 @@ CONFIG_FSTOOLS_UBIFS_EXTROOT=y
 # CONFIG_FSTOOLS_OVL_MOUNT_COMPRESS_ZLIB is not set
 CONFIG_PACKAGE_fwtool=y
 CONFIG_PACKAGE_getrandom=y
-# CONFIG_PACKAGE_gwrt-device-defaults is not set
+CONFIG_PACKAGE_gwrt-device-defaults=y
 CONFIG_PACKAGE_jsonfilter=y
 CONFIG_PACKAGE_libatomic=y
 CONFIG_PACKAGE_libc=y
@@ -8507,8 +8507,8 @@ CONFIG_FWUPD_PLUGIN_MODEMMANAGER=y
 # CONFIG_PACKAGE_gpsd-utils is not set
 # CONFIG_PACKAGE_grep is not set
 CONFIG_PACKAGE_gwrt-agent=y
-# CONFIG_PACKAGE_gwrt-mesh-apmode is not set
-# CONFIG_PACKAGE_gwrt-mesh-led is not set
+CONFIG_PACKAGE_gwrt-mesh-apmode=y
+CONFIG_PACKAGE_gwrt-mesh-led=y
 # CONFIG_PACKAGE_hamlib is not set
 # CONFIG_PACKAGE_haserl is not set
 # CONFIG_PACKAGE_hashdeep is not set

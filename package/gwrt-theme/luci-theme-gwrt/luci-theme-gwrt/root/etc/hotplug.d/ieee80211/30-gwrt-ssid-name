@@ -18,6 +18,13 @@
 
 [ "$ACTION" = "add" ] || exit 0
 
+# SS-01 first-boot defaults name both radios after wifi detection finishes.
+# Avoid a concurrent UCI wireless commit until that script has completed.
+if [ "$(cat /tmp/sysinfo/board_name 2>/dev/null)" = 'jdcloud,re-ss-01' ] && \
+   [ -f /etc/uci-defaults/95_gwrt-wifi-defaults ]; then
+	exit 0
+fi
+
 [ -x /sbin/wifi ] || exit 0
 
 . /lib/functions/gwrt-wireless.sh

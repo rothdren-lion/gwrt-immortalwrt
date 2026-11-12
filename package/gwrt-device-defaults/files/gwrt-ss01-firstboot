@@ -1,0 +1,61 @@
+#!/bin/sh
+# Retry the SS-01 first-boot chain after S10boot has finished its UCI commit.
+
+DEFAULTS_DIR="${GWRT_SS01_DEFAULTS_DIR:-/etc/uci-defaults}"
+PID_FILE="${GWRT_SS01_PID_FILE:-/tmp/gwrt-ss01-uci-defaults.pid}"
+WAIT_INTERVAL="${GWRT_SS01_WAIT_INTERVAL:-5}"
+WAIT_ATTEMPTS="${GWRT_SS01_WAIT_ATTEMPTS:-72}"
+WIFI_LOCK="${GWRT_SS01_WIFI_LOCK:-/var/lock/gwrt-ss01-wifi}"
+
+log() { logger -t gwrt-ss01-firstboot "$@"; }
+
+i=0
+while [ "$i" -lt "$WAIT_ATTEMPTS" ]; do
+	if [ -r "$PID_FILE" ]; then
+		read -r boot_pid < "$PID_FILE"
+		case "$boot_pid" in
+			''|*[!0-9]*) ;;
+			*) if ! kill -0 "$boot_pid" 2>/dev/null; then break; fi ;;
+		esac
+	fi
+	sleep "$WAIT_INTERVAL"
+	i=$((i + 1))
+done
+if [ "$i" -ge "$WAIT_ATTEMPTS" ]; then
+	log 'S10boot did not finish; leaving defaults for the next boot'
+	exit 1
+fi
+
+i=0
+while [ "$i" -lt "$WAIT_ATTEMPTS" ]; do
+	complete=1
+	for name in 95_gwrt-wifi-defaults 96_gwrt-preset-apk 97_gwrt-wifiroam-defaults; do
+		script="$DEFAULTS_DIR/$name"
+		[ -f "$script" ] || continue
+		if [ "$name" = 95_gwrt-wifi-defaults ]; then
+			# 10-wifi-detect uses the same lock while generating radio sections.
+			( flock -n 9 && GWRT_SS01_FIRSTBOOT_WORKER=1 "$script" ) 9>"$WIFI_LOCK"
+			result=$?
+		else
+			GWRT_SS01_FIRSTBOOT_WORKER=1 "$script"
+			result=$?
+		fi
+		if [ "$result" = 0 ]; then
+			if ! rm -f "$script"; then
+				log "cannot remove completed $name; leaving remaining defaults for next boot"
+				exit 1
+			fi
+		else
+			complete=0
+			break
+		fi
+	done
+	if [ "$complete" = 1 ]; then
+		log 'wireless and mesh first-boot defaults completed'
+		exit 0
+	fi
+	sleep "$WAIT_INTERVAL"
+	i=$((i + 1))
+done
+log "first-boot defaults still waiting at $name; will retry on the next boot"
+exit 1

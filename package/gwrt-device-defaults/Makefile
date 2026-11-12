@@ -15,6 +15,7 @@ define Package/gwrt-device-defaults
   SECTION:=base
   CATEGORY:=Base system
   TITLE:=GWRT XINGLOO AX3000 first-boot defaults
+  DEPENDS:=+jshn
   PKGARCH:=all
 endef
 
@@ -41,6 +42,7 @@ define Package/gwrt-device-defaults/install
 	$(INSTALL_BIN) ./files/98_gwrt-agent-defaults $(1)/etc/uci-defaults/98_gwrt-agent-defaults
 	$(INSTALL_BIN) ./files/99_gwrt-data-part $(1)/etc/uci-defaults/99_gwrt-data-part
 	$(INSTALL_BIN) ./files/gwrt-ssid-name $(1)/usr/libexec/gwrt-ssid-name
+	$(INSTALL_BIN) ./files/gwrt-ss01-firstboot $(1)/usr/libexec/gwrt-ss01-firstboot
 	$(INSTALL_DATA) ./files/apk/luci-app-wifiroam-*.apk ./files/apk/luci-i18n-wifiroam-*.apk ./files/apk/wifiroam-*.apk $(1)/usr/share/gwrt/apk/
 ifneq ($(findstring aarch64,$(ARCH)),)
 	$(INSTALL_DATA) ./files/apk/ucode-mod-socket*.apk $(1)/usr/share/gwrt/apk/

@@ -8,11 +8,26 @@
 # - 顺便保证本机漫游配置（k/v/r + FT）已写入 wireless：
 #   守护进程只在 set_roam 时写 wireless，重启后不会自己应用
 
+. /lib/functions.sh
+. /usr/share/libubox/jshn.sh
+
 log() { logger -t wifiroam-autopair "$@"; }
 
-json_escape() {
-	printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+# UCI's CLI joins list items with spaces; use the config API to retain each
+# SSID exactly. Older installations may store a single SSID as an option.
+for_each_roam_ssid() {
+	local callback="$1" length value
+	config_get length roam ssids_LENGTH 0
+	if [ "$length" -gt 0 ]; then
+		config_list_foreach roam ssids "$callback"
+	else
+		config_get value roam ssids
+		[ -z "$value" ] || "$callback" "$value"
+	fi
 }
+
+match_roam_ssid() { [ "$1" = "$current_ssid" ] && selected=1; }
+add_roam_ssid() { json_add_string '' "$1"; }
 
 wait_ubus() {
 	i=0
@@ -26,24 +41,34 @@ wait_ubus() {
 
 apply_roam() {
 	[ "$(uci -q get wifiroam.roam.enabled)" = "1" ] || return 0
-	ssids="$(uci -q get wifiroam.roam.ssids)"
-	[ -n "$ssids" ] || return 0
+	config_load wifiroam || return 1
 
 	need=0
 	for i in $(uci -q show wireless | sed -n 's/^wireless\.\([^.]*\)=wifi-iface$/\1/p'); do
 		[ "$(uci -q get "wireless.$i.mode")" = ap ] || continue
-		s="$(uci -q get "wireless.$i.ssid")"
-		case " $ssids " in *" $s "*) ;; *) continue ;; esac
+		current_ssid="$(uci -q get "wireless.$i.ssid")"
+		[ -n "$current_ssid" ] || continue
+		selected=0
+		for_each_roam_ssid match_roam_ssid
+		[ "$selected" = 1 ] || continue
 		[ "$(uci -q get "wireless.$i.ieee80211r")" = "1" ] || need=1
 	done
 	[ "$need" = 1 ] || return 0
 
-	json=""
-	for s in $ssids; do
-		json="$json\"$(json_escape "$s")\","
-	done
-	json="[${json%,}]"
-	ubus call wifiroam set_roam "{\"enabled\":true,\"ssids\":$json,\"r_fast\":true,\"ft_mode\":\"simple\",\"ft_over_ds\":true,\"k_neighbor\":true,\"k_beacon\":true,\"v_bss_transition\":true,\"rssi_profile\":\"balanced\",\"rssi_threshold\":-70}" >/dev/null 2>&1 \
+	json_init
+	json_add_boolean enabled 1
+	json_add_array ssids
+	for_each_roam_ssid add_roam_ssid
+	json_close_array
+	json_add_boolean r_fast 1
+	json_add_string ft_mode simple
+	json_add_boolean ft_over_ds 1
+	json_add_boolean k_neighbor 1
+	json_add_boolean k_beacon 1
+	json_add_boolean v_bss_transition 1
+	json_add_string rssi_profile balanced
+	json_add_int rssi_threshold -70
+	ubus call wifiroam set_roam "$(json_dump)" >/dev/null 2>&1 \
 		&& log "roam config applied"
 }
 

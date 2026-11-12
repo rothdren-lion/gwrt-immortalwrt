@@ -161,11 +161,24 @@ wifi_bootstrap() {
 	log "wifi bootstrap done"
 }
 
+wifi_setup() {
+	if [ "$(cat /tmp/sysinfo/board_name 2>/dev/null)" = 'jdcloud,re-ss-01' ] && \
+	   [ -x /usr/libexec/gwrt-ss01-firstboot ]; then
+		for script in 95_gwrt-wifi-defaults 96_gwrt-preset-apk 97_gwrt-wifiroam-defaults; do
+			if [ -f "/etc/uci-defaults/$script" ]; then
+				/usr/libexec/gwrt-ss01-firstboot
+				return $?
+			fi
+		done
+	fi
+	wifi_bootstrap
+}
+
 start() {
 	# 已经有了：直接进无线自举（注意：不能把这种“已存在”也当成刚提取，
 	# 否则会无限重启——2026-10-29 在真机上踩过）
 	if [ -s "$CAL" ]; then
-		( wifi_bootstrap ) >/dev/null 2>&1 &
+		( wifi_setup ) >/dev/null 2>&1 &
 		return 0
 	fi
 
@@ -174,7 +187,7 @@ start() {
 		# 防死循环：补过一次还没生效就不再重启（比如 overlay 写不进去）
 		if [ -e "$REBOOT_MARKER" ]; then
 			log "caldata still missing after one reboot, not rebooting again"
-			( wifi_bootstrap ) >/dev/null 2>&1 &
+			( wifi_setup ) >/dev/null 2>&1 &
 			return 0
 		fi
 		log "caldata was missing at probe time; waiting for persistent overlay before reboot"
@@ -183,7 +196,7 @@ start() {
 	fi
 
 	log "caldata unavailable (no 0:ART partition?), skip"
-	( wifi_bootstrap ) >/dev/null 2>&1 &
+	( wifi_setup ) >/dev/null 2>&1 &
 }
 
 boot() { start; }

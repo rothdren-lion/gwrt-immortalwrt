@@ -49,11 +49,12 @@ for iface in $(uci -q show wireless | sed -n 's/^wireless\.\([^.]*\)=wifi-iface$
 	is_default_ssid "$cur" || continue
 	new="GWRT_${label}_${mac4}"
 	[ "$cur" = "$new" ] && continue
-	uci -q set "wireless.$iface.ssid=$new" && changed=1
+	uci -q set "wireless.$iface.ssid=$new" || exit 1
+	changed=1
 done
 
 if [ "$changed" = "1" ]; then
-	uci -q commit wireless
+	uci -q commit wireless || exit 1
 	logger -t gwrt-ssid "SSID -> GWRT_<band>_$mac4"
 	[ "$1" = "--reload" ] && wifi reload >/dev/null 2>&1
 fi

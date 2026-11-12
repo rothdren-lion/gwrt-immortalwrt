@@ -1,6 +1,13 @@
 #!/bin/sh
 
 [ "${ACTION}" = "add" ] && [ -f /etc/board.json ] && {
-	/sbin/wifi config
+	if [ "$(cat /tmp/sysinfo/board_name 2>/dev/null)" = 'jdcloud,re-ss-01' ] && \
+	   [ -f /etc/uci-defaults/95_gwrt-wifi-defaults ]; then
+		# Serialize radio generation with the SS-01 deferred first-boot defaults.
+		mkdir -p /var/lock || exit 1
+		( flock -x 9 && /sbin/wifi config ) 9>/var/lock/gwrt-ss01-wifi
+	else
+		/sbin/wifi config
+	fi
 	ubus call network.wireless retry
 }

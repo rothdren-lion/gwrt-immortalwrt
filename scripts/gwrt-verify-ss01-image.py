@@ -131,9 +131,52 @@ def main():
             print('PASS packaged file:', hashlib.sha256(content).hexdigest(), installed)
         require(b'qca-nss-dp' in read_file('etc/modules.d/31-qca-nss-dp'), 'missing dataplane autoload')
         listing = subprocess.check_output([str(unsquashfs), '-ll', str(rootfs)], text=True)
+        manifests = list(args.target.glob('*.manifest'))
         require(re.search(r'/qca-nss-dp\.ko(?:\s|$|\.)', listing), 'missing dataplane module')
         require(re.search(r'/qca-ssdk\.ko(?:\s|$|\.)', listing), 'missing SSDK module')
-        manifests = list(args.target.glob('*.manifest'))
+        # SS-01 must keep the GWRT mesh stack; the NSS-only seed regression shipped
+        # only gwrt-agent and silently dropped pairing / AP mode / first-boot defaults.
+        mesh_files = {
+            'etc/uci-defaults/95_gwrt-wifi-defaults': 'first-boot wireless defaults',
+            'etc/uci-defaults/96_gwrt-preset-apk': 'offline mesh installer',
+            'etc/uci-defaults/97_gwrt-wifiroam-defaults': 'wifiroam defaults',
+            'usr/libexec/gwrt-ss01-firstboot': 'SS-01 deferred first-boot worker',
+            'etc/init.d/gwrt-wifiroam-autopair': 'wifiroam autopair service',
+            'usr/libexec/gwrt-wifiroam-autopair': 'wifiroam autopair daemon',
+            'usr/share/gwrt/wifiroam/wifiroamd.uc': 'wifiroam daemon',
+            'usr/libexec/gwrt-mesh-apmode': 'mesh AP-mode helper',
+            'usr/libexec/gwrt-mesh-led': 'mesh LED helper',
+            'usr/libexec/gwrt-mesh-pair': 'mesh pairing helper',
+        }
+        for installed, label in mesh_files.items():
+            require(re.search(r'/' + re.escape(installed) + r'\s*$', listing, re.M),
+                    'missing ' + label + ': ' + installed)
+        for prefix in ('wifiroam-', 'luci-app-wifiroam-', 'luci-i18n-wifiroam-'):
+            require(re.search(r'/usr/share/gwrt/apk/' + prefix + r'[^/\s]*\.apk\s*$', listing, re.M),
+                    'missing offline mesh APK: ' + prefix)
+        # Assert the packaged scripts match the sources tested before the build.
+        firstboot_sources = {
+            'etc/uci-defaults/95_gwrt-wifi-defaults': 'package/gwrt-device-defaults/files/95_gwrt-wifi-defaults',
+            'etc/uci-defaults/96_gwrt-preset-apk': 'package/gwrt-device-defaults/files/96_gwrt-preset-apk',
+            'etc/uci-defaults/97_gwrt-wifiroam-defaults': 'package/gwrt-device-defaults/files/97_gwrt-wifiroam-defaults',
+            'usr/libexec/gwrt-ssid-name': 'package/gwrt-device-defaults/files/gwrt-ssid-name',
+            'usr/libexec/gwrt-ss01-firstboot': 'package/gwrt-device-defaults/files/gwrt-ss01-firstboot',
+            'usr/libexec/gwrt-wifiroam-autopair': 'package/gwrt-device-defaults/files/gwrt-wifiroam-autopair',
+            'etc/hotplug.d/ieee80211/10-wifi-detect': 'package/network/config/wifi-scripts/files/etc/hotplug.d/ieee80211/10-wifi-detect',
+            'etc/hotplug.d/ieee80211/30-gwrt-ssid-name': 'gwrt-theme-V3/theme/luci-theme-gwrt/root/etc/hotplug.d/ieee80211/30-gwrt-ssid-name',
+            'etc/init.d/gwrt-caldata': 'target/linux/qualcommax/ipq60xx/base-files/etc/init.d/gwrt-caldata',
+        }
+        for installed, source in firstboot_sources.items():
+            require(read_file(installed) == (ROOT / source).read_bytes(),
+                    'packaged first-boot script differs: ' + installed)
+        for section in ('gwrt-mesh-apmode', 'gwrt-mesh-led'):
+            require(re.search(r'/etc/init\.d/' + section + r'\s*$', listing, re.M),
+                    'missing mesh init: ' + section)
+        manifest_text = '\n'.join(p.read_text() for p in manifests)
+        for package in ('gwrt-agent', 'gwrt-device-defaults', 'gwrt-mesh-apmode', 'gwrt-mesh-led'):
+            require(re.search(r'^' + package + r'\s+-\s+', manifest_text, re.M),
+                    'missing mesh package in manifest: ' + package)
+        print('PASS SS-01 packaged mesh stack and first-boot defaults')
         require(any(re.search(r'^luci-theme-gwrt\s+-\s+1\.0-r114\s*$', p.read_text(), re.M)
                     for p in manifests), 'wrong theme package release')
         print('PASS SS-01 packaged theme r114 and Ethernet modules')

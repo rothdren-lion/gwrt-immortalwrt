@@ -188,6 +188,13 @@ jobs:
         if: inputs.device == 'ss01'
         run: sh scripts/tests/test-gwrt-caldata-reboot.sh
 
+      - name: Test SS-01 mesh preset
+        if: inputs.device == 'ss01'
+        run: |
+          sh scripts/tests/test-ss01-mesh-preset.sh
+          python3 scripts/tests/test-ss01-firstboot.py
+          python3 scripts/tests/test-gwrt-wifiroam-autopair.py
+
       - name: Build firmware
         id: build_firmware
         shell: bash

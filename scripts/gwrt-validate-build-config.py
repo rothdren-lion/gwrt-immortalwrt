@@ -49,7 +49,9 @@ def requirements(device):
         forbidden |= {'ath11k-firmware-ipq6018', 'ath11k-firmware-qcn9074'}
     elif device == 'jdcloud_re-ss-01':
         required |= ahb | {'ath11k-firmware-ipq6018-ddwrt', 'ipq-wifi-jdcloud_re-ss-01',
-                           'kmod-qca-nss-dp', 'kmod-qca-ssdk'}
+                           'kmod-qca-nss-dp', 'kmod-qca-ssdk',
+                           'gwrt-device-defaults', 'gwrt-mesh-apmode', 'gwrt-mesh-led',
+                           'gwrt-agent'}
         forbidden |= pci | {'ipq-wifi-jdcloud_re-cs-02', 'luci-app-athena-led'}
     elif device in ('jdcloud_re-cs-06', 'xiaomi_be6500'):
         required |= ath12k | {'ipq-wifi-' + device}
@@ -73,6 +75,9 @@ for device in devices:
     check_packages(packages, required, forbidden if len(devices) == 1 else (), 'config/' + device)
 
 if 'jdcloud_re-ss-01' in devices:
+    flock_option = 'BUSYBOX_CONFIG_FLOCK' if values.get('BUSYBOX_CUSTOM') == 'y' else 'BUSYBOX_DEFAULT_FLOCK'
+    if values.get(flock_option) != 'y' and 'flock' not in packages:
+        fail('SS-01 deferred wireless defaults require the flock applet or package')
     dts = (ROOT / 'target/linux/qualcommax/dts/ipq6000-re-ss-01.dts').read_text()
     if '#include "ipq6018-ess-nss.dtsi"' not in dts:
         fail('SS-01 requires the NSS/SSDK Ethernet DTS, matching kmod-qca-nss-dp')
