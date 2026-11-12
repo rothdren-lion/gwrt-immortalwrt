@@ -36,13 +36,23 @@ Chrome/Playwright 的卡片菜单、响应式端口/色环与 Mesh UI 回归通�
 
 ## 推送与构建
 
-本次准备推送私有仓 `rothdren-lion/gwrt-immortalwrt` 的 master，再触发
-`gwrt-build.yml` 的 SS-01 `261113-01`；实际提交、运行链接与状态随后追加。
+功能提交 `ce91005eed1dd92a411e69fecbaf6934996e97a6` 已更新私有仓
+`rothdren-lion/gwrt-immortalwrt` 的 master。普通 Git HTTPS 推送连续卡住并超时，
+改用 GitHub Git Data API 上传相同 tree/commit，并校验 SHA 与本地完全一致；
+引用更新使用 `force=false`，未改写历史。
+
+已触发 `gwrt-build.yml`：SS-01 `261113-01`、model=`jdcloud_re-ss-01`、
+images=`flashable`、release=`false`，运行
+[43262429011](https://github.com/rothdren-lion/gwrt-immortalwrt/actions/runs/43262429011)。
+触发提交为 `ce91005e`；目前已受理，构建结果待跟进。
 仅触发构建，不发布 Release，不刷机或重启。
 
 ## 回滚与限制
 
-NAS 同步前备份 `/tmp/gwrt-theme-github-sync-261113-before.tar.gz`，包含主题
+NAS 同步前备份 `/tmp/gwrt-theme-github-sync-261113-before.tar.gz`，SHA-256
+`9d8a77cc343b0b796514b83028850493eb1b0ff7cb0849b0764657d8ebf40bd6`，包含主题
 规范源/包副本、受影响的 defaults/验证脚本和 AGENTS。GitHub 可通过 revert
 本次功能提交恢复代码，保留后续工作。
 实机网口、Wi-Fi 协商数据、无线 Mesh 和路由器重启后设备标签仍需实机确认。
+
+NAS 规范源及两份主题副本已同步，`integrate --check --no-config` 通过。
