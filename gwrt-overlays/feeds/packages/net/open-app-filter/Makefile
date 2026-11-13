@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=open-app-filter
-PKG_RELEASE:=4
+PKG_RELEASE:=5
 
 PKG_SOURCE_URL:=https://github.com/destan19/OpenAppFilter.git
 PKG_SOURCE_PROTO:=git
@@ -31,12 +31,12 @@ endef
 define Package/appfilter
   SECTION:=net
   CATEGORY:=Network
-  DEPENDS:=+libblobmsg-json +libjson-c +libpthread +libubox +libubus +libuci +libuci-lua +lua +kmod-oaf +libsqlite3
+  DEPENDS:=+libblobmsg-json +libjson-c +libpthread +libubox +libubus +libuci +libuci-lua +lua +kmod-oaf +libcurl +libsqlite3
   TITLE:=App filter userspace module
 endef
 
 MAKE_PATH:=open-app-filter/src
-MAKE_VARS+= LIBS="-lm -lpthread -lubox -luci -lubus -ljson-c -lblobmsg_json -lsqlite3"
+MAKE_VARS+= LIBS="-lm -lpthread -lubox -luci -lubus -ljson-c -lblobmsg_json -lcurl -lsqlite3"
 
 define Build/Prepare
 	$(call Build/Prepare/Default)

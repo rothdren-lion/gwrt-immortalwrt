@@ -10,6 +10,7 @@
 hash and installs it at `/etc/fwxd/feature.bin`. No account key or router UCI
 configuration is included.
 
-GWRT excludes the online updater from the daemon and removes its API and LuCI
-controls. The bundled database loads locally; custom application rules remain
-available. Updating this bundled version requires an explicit source change.
+The bundled database loads locally without a subscription key. The online updater,
+API and LuCI controls remain available. New installations start with an empty
+subscription key; users may enter and save their own key to request updates.
+Existing router settings and custom application rules are preserved on upgrade.

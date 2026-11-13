@@ -23,6 +23,10 @@ find . -type f | LC_ALL=C sort | while IFS= read -r file; do
 	esac
 done
 
+# Earlier GWRT overlays disabled the online feature updater. The copy above
+# cannot remove a withdrawn patch from an existing feed checkout.
+rm -f "$top/feeds/packages/net/open-app-filter/patches/101-disable-online-feature-updates.patch"
+
 # python-dotenv selects the setuptools PEP 517 backend. Its Makefile does not
 # declare python-setuptools/host, so a parallel world build can reach it before
 # setuptools is staged and fail with "Cannot import 'setuptools.build_meta'".
