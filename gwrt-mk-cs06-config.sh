@@ -28,7 +28,7 @@ SRC=${SRC:-$TOP/config.cs02-gwrt2-261021-04}
 VER=${VER:-261026-01}
 ARG1=${1:-}
 case "$ARG1" in
-	"") OUT=$TOP/config.cs06-$VER ;;
+	"") OUT=${OUT:-$TOP/config.cs06-$VER} ;;
 	*/)  OUT=$ARG1/config.cs06-$VER ;;
 	*)   if [ -d "$ARG1" ]; then OUT=$ARG1/config.cs06-$VER; else OUT=$ARG1; fi ;;
 esac
@@ -89,6 +89,20 @@ done
 sed -i "s|^# CONFIG_PACKAGE_MAC80211_DEBUGFS is not set\$|CONFIG_PACKAGE_MAC80211_DEBUGFS=y|" "$OUT"
 grep -q "^CONFIG_PACKAGE_MAC80211_DEBUGFS=y\$" "$OUT" || \
 	echo "CONFIG_PACKAGE_MAC80211_DEBUGFS=y" >> "$OUT"
+
+# --- GWRT mesh 组网（所有机型必备）---
+for p in gwrt-device-defaults gwrt-mesh-led gwrt-mesh-apmode gwrt-agent; do
+	grep -q "^CONFIG_PACKAGE_${p}=y$" "$OUT" && continue
+	sed -i "/^# CONFIG_PACKAGE_${p} is not set$/d" "$OUT"
+	echo "CONFIG_PACKAGE_${p}=y" >> "$OUT"
+done
+
+# --- GWRT 广告拦截（电视 + 国内通用, 纯文本规则库）---
+for p in gwrt-tv-adblock luci-app-gwrt-tvadblock; do
+	grep -q "^CONFIG_PACKAGE_${p}=y$" "$OUT" && continue
+	sed -i "/^# CONFIG_PACKAGE_${p} is not set$/d" "$OUT"
+	echo "CONFIG_PACKAGE_${p}=y" >> "$OUT"
+done
 
 echo "==> generated: $OUT"
 echo "    base: $(basename "$SRC")  VER: $VER"
