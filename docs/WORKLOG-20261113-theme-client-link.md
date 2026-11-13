@@ -52,6 +52,6 @@ tar -xzf /tmp/gwrt-theme-r116-before-client-link.tgz -C /
 
 源码提交可通过 Git revert 回滚；NSS 修改可单独 revert。持久证据与备份保存在 `/home/godsun/build/gwrt-theme-r116-validation-20261113/`（0700），包含原主题备份、热更新包、串口日志、iperf JSON 和浏览器截图，SHA-256 清单在该目录 `sha256sums`。
 
-## 6. 待办
+## 6. 推送与构建状态
 
-提交 `eda276cb6a74835ef9658b34a038263414289870` 已按原提交 SHA 推送到私有仓 `rothdren-lion/gwrt-immortalwrt` master。GitHub Actions SS-01 `261113-02`（`release=false`）运行 `43350331850` 已启动，链接：https://github.com/rothdren-lion/gwrt-immortalwrt/actions/runs/43350331850。最后检查时 runner 仍在释放磁盘，尚未进入源码预检。完成后还需确认镜像内包含 `gwrt-runtime-dir`/clients collector/NSS cleanup 修改及 `KERNEL_SIZE=12288k`。无线实际速率仍待有在线 WiFi 终端时复核。
+提交 `eda276cb6a74835ef9658b34a038263414289870` 已按原提交 SHA 推送到私有仓 `rothdren-lion/gwrt-immortalwrt` master。GitHub Actions SS-01 `261113-02`（`release=false`）运行 `43350331850` 已启动，链接：https://github.com/rothdren-lion/gwrt-immortalwrt/actions/runs/43350331850。截至 UTC 2026-11-13 02:15:22，配置生成/源码预检、校准保护和 Mesh 专项检查均通过，已进入 Build firmware；尚无本轮成品。完成后还需确认镜像内包含 `gwrt-runtime-dir`/clients collector/NSS cleanup 修改及 `KERNEL_SIZE=12288k`。无线实际速率仍待有在线 WiFi 终端时复核。
