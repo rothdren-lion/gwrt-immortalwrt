@@ -45,7 +45,8 @@
 
 ## 交付与验证边界
 
-证据位于 `/home/godsun/build/gwrt-ss01-261113-04/`。本记录写入时云端任务尚待触发，
-无新固件成品。后续必须记录真实运行编号，等待构建和镜像审计成功，下载并核验哈希后
+证据位于 `/home/godsun/build/gwrt-ss01-261113-04/`。源码 `8584a2c1` 已推送 GitHub
+master，已触发 [运行 43445745283](https://github.com/rothdren-lion/gwrt-immortalwrt/actions/runs/43445745283)，
+仅 SS-01 `261113-04`、release=false；当前尚无成品。等待构建和镜像审计成功，下载并核验哈希后
 归档到 `/home/godsun/build/gwrt-releases/` 对应 SS-01 目录，使用带 12M 的交付文件名。
 WAN DHCP、LAN/WAN 并发及反复插拔仍需用户刷入后验证，不以源码回归代替实机结论。
