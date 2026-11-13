@@ -4933,9 +4933,7 @@ static const struct dsa_switch_ops yt921x_dsa_switch_ops = {
 	/* acl */
 	.cls_flower_del		= yt921x_dsa_cls_flower_del,
 	.cls_flower_add		= yt921x_dsa_cls_flower_add,
-	/* hsr */
-	.port_hsr_leave		= dsa_port_simple_hsr_leave,
-	.port_hsr_join		= dsa_port_simple_hsr_join,
+	/* hsr: dsa_port_simple_hsr_* helpers are 6.19-only, not in 6.18 */
 	/* mirror */
 	.port_mirror_del	= yt921x_dsa_port_mirror_del,
 	.port_mirror_add	= yt921x_dsa_port_mirror_add,

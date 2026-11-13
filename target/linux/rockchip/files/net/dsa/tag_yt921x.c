@@ -29,7 +29,7 @@
 #include <linux/etherdevice.h>
 
 #include "tag.h"
-#include "port_fnos.h"
+/* port_fnos.h is a 6.19 helper; the fallback below provides dsa_xmit_port_mask */
 
 #ifndef dsa_xmit_port_mask
 static inline unsigned long dsa_xmit_port_mask(const struct sk_buff *skb, const struct net_device *dev)
