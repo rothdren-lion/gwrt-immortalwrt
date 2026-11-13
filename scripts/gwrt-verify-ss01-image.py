@@ -127,6 +127,8 @@ def main():
         checks[template + 'admin_status/index_gwrt.ut'] = 'root/' + template + 'admin_status/index_gwrt.ut'
         for name in ('gwrt-runtime-dir', 'gwrt-clients-dump', 'gwrt-coremark', 'gwrt-ota'):
             checks['usr/libexec/' + name] = 'root/usr/libexec/' + name
+        for name in ('clients.sh', 'clients-merge.awk'):
+            checks['usr/share/gwrt/' + name] = 'root/usr/share/gwrt/' + name
         checks['usr/share/rpcd/acl.d/luci-theme-gwrt.json'] = 'root/usr/share/rpcd/acl.d/luci-theme-gwrt.json'
         for installed, source in checks.items():
             content = read_file(installed)
@@ -181,9 +183,9 @@ def main():
             require(re.search(r'^' + package + r'\s+-\s+', manifest_text, re.M),
                     'missing mesh package in manifest: ' + package)
         print('PASS SS-01 packaged mesh stack and first-boot defaults')
-        require(any(re.search(r'^luci-theme-gwrt\s+-\s+1\.0-r115\s*$', p.read_text(), re.M)
+        require(any(re.search(r'^luci-theme-gwrt\s+-\s+1\.0-r116\s*$', p.read_text(), re.M)
                     for p in manifests), 'wrong theme package release')
-        print('PASS SS-01 packaged theme r115 and Ethernet modules')
+        print('PASS SS-01 packaged theme r116 and Ethernet modules')
 
 
 if __name__ == '__main__':

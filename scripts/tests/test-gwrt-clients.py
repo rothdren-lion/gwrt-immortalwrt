@@ -2,6 +2,7 @@
 """Exercise client presence, lease reuse and offline expiry with BusyBox awk."""
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -26,7 +27,7 @@ def client(mac=MAC, **updates):
 
 
 class ClientsTest(unittest.TestCase):
-    def merge(self, rows=(), active="", dhcp="", now=NOW, updated=NOW - 30):
+    def merge(self, rows=(), active="", dhcp="", ports="", now=NOW, updated=NOW - 30):
         results = []
         engines = [["awk"]]
         if shutil.which("busybox"):
@@ -37,7 +38,8 @@ class ClientsTest(unittest.TestCase):
             for engine in engines:
                 args = engine + ["-v", f"state_file={state}", "-v", f"now={now}",
                                  "-v", "retention=86400", "-v", f"active={active}",
-                                 "-v", f"dhcp={dhcp}", "-v", 'wan_json={"type":"pppoe"}',
+                                 "-v", f"dhcp={dhcp}", "-v", f"port_data={ports}",
+                                 "-v", 'wan_json={"type":"pppoe"}',
                                  "-f", str(MERGER)]
                 result = json.loads(subprocess.check_output(args, text=True))
                 self.assertEqual(result["offline_retention"], 86400)
@@ -118,6 +120,48 @@ class ClientsTest(unittest.TestCase):
         result = self.merge([row], updated=NOW - 86399)
         self.assertEqual(result[MAC]["last_seen"], NOW - 86399)
         self.assertEqual(self.merge(result.values(), now=NOW + 1), {})
+
+    def test_current_lan_port_replaces_previous_port(self):
+        result = self.merge([client(via="wired", port="lan1")],
+                            active=f"{MAC}|192.168.9.100|wired", ports=f"{MAC}|lan2")[MAC]
+        self.assertEqual(result["port"], "lan2")
+
+    def test_wifi_association_overrides_stale_fdb(self):
+        result = self.merge([client(via="wired", port="lan2")],
+                            active=f"{MAC}|192.168.9.100|wired\n{MAC}|-|wifi24g|-53|phy1-ap0",
+                            ports=f"{MAC}|lan2")[MAC]
+        self.assertEqual((result["via"], result["port"], result["signal"]),
+                         ("wifi24g", "phy1-ap0", "-53"))
+
+    def test_current_association_replaces_previous_radio(self):
+        result = self.merge([client()], active=f"{MAC}|-|wifi6g|-58|phy2-ap0")[MAC]
+        self.assertEqual((result["via"], result["port"]), ("wifi6g", "phy2-ap0"))
+
+    def test_live_device_without_fdb_does_not_reuse_old_port(self):
+        result = self.merge([client()], active=f"{MAC}|192.168.9.100|wired")[MAC]
+        self.assertEqual(result["port"], "")
+
+    def test_offline_device_keeps_last_observed_port(self):
+        result = self.merge([client()], ports=f"{MAC}|lan3")[MAC]
+        self.assertEqual(result["port"], "phy0-ap0")
+
+    def test_assoc_collector_pairs_each_mac_signal_and_interface(self):
+        source = MERGER.with_name("clients.sh").read_text()
+        code = re.search(r'awk -v t="\$tag" -v iface="\$phy" \'(.*?)\'\n\tdone', source, re.S)
+        self.assertIsNotNone(code)
+        station_json = json.dumps({"results": [
+            {"mac": MAC.upper(), "signal": -48, "rx": {"rate": 2401000}},
+            {"mac": OTHER, "signal": -72},
+            {"mac": "invalid", "signal": -10},
+        ]}, indent="\t")
+        engines = [["awk"]]
+        if shutil.which("busybox"):
+            engines.append(["busybox", "awk"])
+        for engine in engines:
+            result = subprocess.check_output(engine + ["-v", "t=wifi5gh", "-v", "iface=phy0-ap0",
+                                                        code[1]], input=station_json, text=True)
+            self.assertEqual(result.splitlines(), [f"{MAC}|-|wifi5gh|-48|phy0-ap0",
+                                                   f"{OTHER}|-|wifi5gh|-72|phy0-ap0"])
 
 
 if __name__ == "__main__":

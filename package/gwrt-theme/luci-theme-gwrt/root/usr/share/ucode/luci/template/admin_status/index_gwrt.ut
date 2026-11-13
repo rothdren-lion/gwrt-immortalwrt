@@ -1815,9 +1815,14 @@ function mergeDevices(leases,bdev,bOnline,oafUsers,hostHints){
 }
 function devViaKind(d){
   var mac=normMac(d&&d.mac), wmm=window._gwrtWifiMacMap||{};
-  if((d&&d.conn)==='wifi'||(mac&&wmm[mac]))return 'wifi';
+  if(mac&&wmm[mac])return 'wifi';
 /* bandix 对无线客户端常把 logical_iface 报成 wired，这里用受 ACL 保护的 clients RPC 纠正 */
   var det=gwrtClientDetail(mac);
+  if(det&&det.online===true&&gwrtClientTrackerFresh()){
+    if(/^wifi/i.test(String(det.via||'')))return 'wifi';
+    if(det.via==='wired')return 'lan';
+  }
+  if((d&&d.conn)==='wifi')return 'wifi';
   if(det&&/^wifi/i.test(String(det.via||'')))return 'wifi';
   if((d&&d.conn)==='wired')return 'lan';
   if(det&&/^lan\d+$/i.test(String(det.port||'')))return 'lan';
@@ -1831,20 +1836,24 @@ function gwrtClientDetail(mac){
   var c=(gwrtClientsCache&&gwrtClientsCache.map&&gwrtClientsCache.map[key])||null;
   return c;
 }
+function gwrtClientPortName(d){
+  var mac=normMac(d&&d.mac),c=gwrtClientDetail(mac);
+  return String((window._gwrtWifiMacMap||{})[mac]||(c?c.port:(window._gwrtTopoBridgePorts||{})[mac])||'');
+}
 function devViaLabel(d){
-  var c=gwrtClientDetail(d&&d.mac);
-  if(c){
-    var via=String(c.via||''), port=String(c.port||'');
-    if(via==='wifi24g')return 'WiFi 2.4G';
-    if(via==='wifi5gl')return 'WiFi 5.2G';
-    if(via==='wifi5gh')return 'WiFi 5.8G';
-    if(via==='wifi6g')return 'WiFi 6G';
-    if(/^wifi/.test(via))return 'WiFi';
-    if(/^lan\d+$/i.test(port))return port.toUpperCase();
-    if(via==='wired')return 'LAN';
+  var kind=devViaKind(d),c=gwrtClientDetail(d&&d.mac),name=gwrtClientPortName(d);
+  var port=(window._gwrtPorts||[]).filter(function(p){return p&&p.role===(kind==='wifi'?'wifi':'lan')&&(p.name===name||(p.ifnames||[]).indexOf(name)>=0);})[0];
+  if(kind==='wifi'){
+    if(port&&/^(2\.4|5\.2|5\.8|5|6)G$/.test(port.band||''))return 'WiFi '+port.band;
+    var bands={wifi24g:'2.4G',wifi5gl:'5.2G',wifi5gh:'5.8G',wifi6g:'6G'};
+    return bands[c&&c.via]?'WiFi '+bands[c.via]:'WiFi';
   }
-  var k=devViaKind(d);
-  return k==='wifi'?'WiFi':(k==='lan'?'LAN':(d&&d.conn?d.conn:'-'));
+  if(kind==='lan'){
+    if(/^lan\d+$/i.test(name))return name.toUpperCase();
+    if(port)return String(port.label||port.name).replace(/\*(?:2\.5|5|10)G$/,'');
+    return 'LAN';
+  }
+  return '-';
 }
 function renderDeviceSummary(devs){
   var el=document.getElementById('gwrtDevicesSub');
@@ -2341,7 +2350,7 @@ function wifiPortEntries(radios){
       else if(rkey==='radio2') band='5.2G';
       else band=radioIsPcie(radio)?'5.2G':'5.8G';
     }
-    if(isSs01Board()&&String(cfg.band||'').toLowerCase()==='5g')band='5.8G';
+    if(isSs01Board()&&String(cfg.band||'').toLowerCase()==='5g'&&!freq&&!ch)band='5.8G';
     return {
       name:ifnames[0]||(riw.phy||rkey),
       ifnames:ifnames,
@@ -2768,10 +2777,16 @@ function renderPortStrip(states,ports){
     else if(window._gwrtRateLabels[p.name]){p.label=window._gwrtRateLabels[p.name];}
     p.rateClass=window._gwrtRateClasses[p.name]||'';
   });
-  ponPorts.forEach(function(p){html+=ponCardHtml(p,states[p.name]||{});});
-  wanPorts.forEach(function(p,i){html+=phtml(p,i);});
-  lanOnly.forEach(function(p,i){html+=phtml(p,(isSs01?0:wanPorts.length)+i);});
-  wifiOnly.forEach(function(p,i){html+=phtml(p,wanPorts.length+lanOnly.length+i);});
+  function portGroup(role,items,weight){
+    if(!items.length)return '';
+    return '<div class="gwrt-port-group group-'+role+'" role="group" aria-label="'+role.toUpperCase()+'" style="--gwrt-port-count:'+items.length+';--gwrt-group-weight:'+(items.length*weight)+'">'
+      +items.map(function(p,i){return p.pon?ponCardHtml(p,states[p.name]||{}):phtml(p,i);}).join('')+'</div>';
+  }
+  html+=portGroup('wan',ponPorts.concat(wanPorts),1.12);
+  html+=portGroup('lan',lanOnly,1);
+  html+=portGroup('wifi',wifiOnly,1);
+  el.classList.toggle('is-compact',ports.length<=4);
+  el.style.setProperty('--gwrt-strip-max',(ports.length*168+24)+'px');
   el.innerHTML=html;
   window._gwrtPorts=ponPorts.concat(wanPorts).concat(lanOnly).concat(wifiOnly);
   window._gwrtStripLanOrder=lanOnly.map(function(p){return p.name;});
@@ -3315,27 +3330,29 @@ function gwrtStaInfo(sta){
 function gwrtSigLevel(dbm){if(!(dbm<0))return 0;if(dbm>=-55)return 4;if(dbm>=-65)return 3;if(dbm>=-75)return 2;return 1;}
 function fmtLinkRate(kbps){if(kbps>=1000000)return(kbps/1000000).toFixed(1).replace(/\.0$/,'')+'G';if(kbps>=1000)return Math.round(kbps/1000)+'M';return Math.round(kbps)+'k';}
 function gwrtWifiSta(mac){return(window._gwrtWifiStaMap||{})[normMac(mac)]||null;}
-/* 接入设备「信号」列：无线显示信号格+dBm+协商速率，有线显示占位符 */
+function gwrtLinkRateMbps(kbps){
+  var rate=Number(kbps);
+  return isFinite(rate)&&rate>0?String(Math.round(rate/100)/10)+' Mbps':'—';
+}
+/* 接入设备「信号」列：当前网口/站点协商速率，无线下方显示信号。 */
 function signalCellHtml(d){
   var mac=normMac(d&&d.mac),sta=gwrtWifiSta(mac),detail=gwrtClientDetail(mac);
-  var isWifi=devViaKind(d)==='wifi'||/^wifi/i.test(String((detail&&detail.via)||''));
+  if(!d||!d.online)return '<span class="gwrt-client-link-rate is-unknown">—</span>';
+  var isWifi=devViaKind(d)==='wifi';
   if(!isWifi){
-    var port=detail&&detail.port?String(detail.port).toUpperCase():'';
-    // lan1/2/3 已是大写
-    if(port)return '<span class="gwrt-via-lan">'+port+'</span>';
-    return '<span class="gwrt-via-lan gwrt-via-lan-unknown">—</span>';
+    var state=(window._gwrtPortStates||{})[gwrtClientPortName(d)]||{};
+    var linked=state.carrier===true||state.carrier===1||state.carrier==='1';
+    var speed=String(state.speed||'').match(/^(\d+(?:\.\d+)?)(?:[FH])?$/i);
+    var label=gwrtLinkRateMbps(linked&&speed?Number(speed[1])*1000:0);
+    return '<span class="gwrt-client-link-rate gwrt-via-lan" title="网口协商速率">'+label+'</span>';
   }
-  var via=String((detail&&detail.via)||'');
-  var band='WiFi';
-  if(via==='wifi24g')band='2.4G';
-  else if(via==='wifi5gl')band='5.2G';
-  else if(via==='wifi5gh')band='5.8G';
-  else if(via==='wifi6g')band='6G';
-  var port2=detail&&detail.port?String(detail.port):'';
   var sig=sta&&sta.signal<0?sta.signal:(detail&&detail.signal!==undefined&&detail.signal!==''?Number(detail.signal):NaN);
+  if(!(sig<0)&&Number(d.signal)<0)sig=Number(d.signal);
   var sigTxt=!(sig<0)?'—':(sig+' dBm');
   var sigCls=!(sig<0)?'gwrt-sig-none':(sig>=-55?'gwrt-sig-good':(sig>=-65?'gwrt-sig-mid':(sig>=-75?'gwrt-sig-weak':'gwrt-sig-bad')));
-  var out='<div class="gwrt-wifi-cell"><span class="gwrt-wifi-band">'+band+'</span><span class="gwrt-wifi-sig '+sigCls+'" title="信号强度 '+(sig<0?sig:'—')+' dBm">'+sigTxt+'</span></div>';
+  var rx=Number(sta&&sta.rx_rate)||0,tx=Number(sta&&sta.tx_rate)||0;
+  var title='当前协商速率：接收 '+gwrtLinkRateMbps(rx)+' / 发送 '+gwrtLinkRateMbps(tx);
+  var out='<div class="gwrt-wifi-cell"><span class="gwrt-client-link-rate" title="'+esc(title)+'">'+gwrtLinkRateMbps(Math.max(rx,tx))+'</span><span class="gwrt-wifi-sig '+sigCls+'" title="信号强度 '+(sig<0?sig:'—')+' dBm">'+sigTxt+'</span></div>';
   return out;
 }
 /* 实时速率：上下行分开；只有合计值时退化为单值 */
@@ -3365,7 +3382,7 @@ function renderDhcp(leases,bdev,bOnline,oafUsers,hostHints){
   var rows=devs.map(function(d){
     var status=d.online?'<span class="gwrt-client-status is-online"><i></i>在线</span>':'<span class="gwrt-client-status is-offline"><i></i>离线</span>';
     var vk=devViaKind(d),vl=devViaLabel(d);
-    var via=vk==='wifi'?'<span style="color:var(--accent-purple)">WiFi</span>':(vk==='lan'?'<span style="color:var(--accent-cyan)">LAN</span>':esc(vl));
+    var via=vk==='wifi'?'<span style="color:var(--accent-purple)">'+esc(vl)+'</span>':(vk==='lan'?'<span style="color:var(--accent-cyan)">'+esc(vl)+'</span>':esc(vl));
     var name=devDisplayName(d),hostNameBtn=gwrtAliasHostNameButton(d);
     var mac=d.mac||'';
     var cs=devConnectSec(d);
@@ -4322,11 +4339,12 @@ function gwrtCleanFrame(f,isHarbor){
   try{
     var d=f.contentDocument;
     if(!d)return;
+    if(d.body){d.body.classList.add('gwrt-embedded');d.body.classList.toggle('gwrt-embedded-harbor',!!isHarbor);}
     var st=d.getElementById('gwrt-noside-style');
     if(!st){
       st=d.createElement('style');
       st.id='gwrt-noside-style';
-      st.textContent='.luci-navbar,.darkMask,footer.mobile-hide{display:none!important}#mainmenu,.main-left{display:none!important}.main > .main-right{margin-left:0!important}.showSide{display:none!important}.cbi-page-actions{display:none!important}';
+      st.textContent='.luci-navbar,.darkMask,footer.mobile-hide{display:none!important}#mainmenu,.main-left{display:none!important}.main > .main-right{margin-left:0!important;width:100%!important;padding-top:0!important}.showSide{display:none!important}';
       (d.head||d.documentElement).appendChild(st);
     }
     if(isHarbor){

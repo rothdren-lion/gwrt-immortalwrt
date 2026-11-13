@@ -231,6 +231,9 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          nss_init=$(find build_dir -path '*/qca-nss-drv-*/nss_init.c' -print -quit)
+          test -n "$nss_init"
+          python3 scripts/tests/test-gwrt-nss-symbol-cleanup.py "$nss_init" | tee logs/ss01-nss-cleanup-test.log
           python3 scripts/gwrt-verify-ss01-image.py bin/targets/qualcommax/ipq60xx | tee logs/ss01-image-audit.log
 
       - name: Save SS-01 verification records
@@ -240,6 +243,7 @@ jobs:
           name: gwrt-ss01-${{ env.VER }}-verification
           path: |
             logs/ss01-image-audit.log
+            logs/ss01-nss-cleanup-test.log
             bin/targets/qualcommax/ipq60xx/*.manifest
             bin/targets/qualcommax/ipq60xx/profiles.json
             bin/targets/qualcommax/ipq60xx/sha256sums

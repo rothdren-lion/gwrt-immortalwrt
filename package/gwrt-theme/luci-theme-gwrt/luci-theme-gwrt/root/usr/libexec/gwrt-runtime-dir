@@ -10,7 +10,9 @@ if [ ! -e "$runtime_dir" ] && [ ! -L "$runtime_dir" ]; then
 fi
 
 [ -d "$runtime_dir" ] && [ ! -L "$runtime_dir" ] || exit 1
-owner=$(stat -c '%u' "$runtime_dir" 2>/dev/null) || exit 1
+# OpenWrt's minimal BusyBox does not always provide stat. Numeric ls output
+# keeps the ownership check independent of usernames and optional applets.
+owner=$(LC_ALL=C ls -nd "$runtime_dir" 2>/dev/null | awk 'NR == 1 {print $3}') || exit 1
 [ "$owner" = 0 ] || exit 1
 chmod 700 "$runtime_dir" || exit 1
 

@@ -77,6 +77,7 @@ BEGIN {
 		}
 		if (!(mac in a_via) || a[3] ~ /^wifi/) a_via[mac] = a[3]
 		if (a[4] != "") a_sig[mac] = a[4]
+		if (a[3] ~ /^wifi/ && a[5] ~ /^[a-zA-Z0-9_.:-]+$/) a_port[mac] = a[5]
 	}
 	for (mac in active_mac) {
 		ip = (mac in a_ip) ? a_ip[mac] : ((mac in d_ip) ? d_ip[mac] : e_ip[mac])
@@ -117,7 +118,9 @@ BEGIN {
 		gsub(/[\\"]/, "", host)
 		gsub(/[[:cntrl:]]/, "", host)
 		via = online ? a_via[mac] : e_via[mac]
-		port = (mac in port_of) ? port_of[mac] : e_port[mac]
+		# A current association wins over a stale bridge FDB. A live wired
+		# device without a current FDB must not inherit its previous WiFi port.
+		port = online ? ((mac in a_port) ? a_port[mac] : port_of[mac]) : e_port[mac]
 		os = (mac in f_os) ? f_os[mac] : e_os[mac]
 		if (!first_entry) printf(",")
 		first_entry = 0

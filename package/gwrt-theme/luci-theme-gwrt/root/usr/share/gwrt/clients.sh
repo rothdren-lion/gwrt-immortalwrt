@@ -113,17 +113,16 @@ collect_active() {
 			case "$phy" in *phy2*|*phy3*) tag="wifi5gh" ;; esac
 		fi
 
-		ubus call iwinfo assoclist "{\"device\":\"$phy\"}" 2>/dev/null | awk -v t="$tag" '
+		ubus call iwinfo assoclist "{\"device\":\"$phy\"}" 2>/dev/null | awk -v t="$tag" -v iface="$phy" '
 			# 注意：ubus JSON 里 "mac" 与 "signal" 分处两行，不能在同一行内取值，
 			# 否则 signal 永远为空。用下标数组按条目配对，END 再输出。
 			$1 == "\"mac\":"    { v=$2; gsub(/[",]/, "", v); n++; mac[n]=tolower(v) }
 			$1 == "\"signal\":" { v=$2; gsub(/[",]/, "", v); sig[n]=v }
 			END {
 				for (i = 1; i <= n; i++)
-					if (mac[i] ~ /^[0-9a-f][0-9a-f](:[0-9a-f][0-9a-f]){5}$/)
-						# 必须保持 4 段 mac|ip|via|sig（ip 用 - 占位），
-						# 合并阶段按 mac|ip|via|sig 解析，缺一段会整体错位
-						print mac[i]"|-|"t"|"sig[i]
+					if (length(mac[i]) == 17 && mac[i] ~ /^[0-9a-f][0-9a-f](:[0-9a-f][0-9a-f])+$/)
+						# ip 用 - 占位，最后一段保留当前关联接口，优先于旧 FDB。
+						print mac[i]"|-|"t"|"sig[i]"|"iface
 			}'
 	done
 }

@@ -1,0 +1,57 @@
+# WORKLOG 2026-11-13 — 接入设备端口与实时协商速率
+
+## 1. 任务背景
+
+用户要求首页“接入设备”直接显示实际接入位置（LAN1/LAN2 或 WiFi 2.4G、5.2G、5.8G、6G），并在“信号”列显示当前有线握手速率或无线实际协商速率及 dBm 信号。此前实机 `gwrt-clients` 服务持续退出，导致端口/频段数据缺失。
+
+## 2. 根因与修改
+
+- 固件 BusyBox 未编译 `stat`，`gwrt-runtime-dir` 因 `stat -c '%u'` 失败退出，`gwrt-clients` 随后进入 procd crash loop。保留目录必须是 root、拒绝符号链接、强制 0700 的校验，改为解析 `ls -nd` 的数字 UID。
+- WiFi 采集继续使用 `ubus iwinfo`，并把当前 hostapd 接口名作为第 5 个字段传给合并器；合并器优先当前 WiFi 关联接口，避免沿用旧 bridge FDB/历史端口。
+- 首页模板按实时端口和关联站点映射输出：
+  - “接入”：LAN1/LAN2…或 WiFi 2.4G/5.2G/5.8G/6G；当前无线接口频段优先，旧 tracker 数据只作回退。
+  - “信号”：有线读取当前 `network.device status` 的 carrier/speed，显示如 `1000 Mbps`；无线取当前 `iwinfo assoclist` 的 rx/tx 协商速率较大值，下面显示 `-48 dBm`，不使用理论能力或流量速率；离线设备不显示过期速率。
+- 保留之前的 WAN/LAN/WIFI 分组、少口居中、DTS/PHY 2.5G/5G/10G 内圈、弹窗和软件包页面紧凑布局。
+- NSS 驱动保留补丁 `021-fix-symbol-only-module-cleanup.patch`：没有 `nss-common` 时仅导出符号的模块不创建 workqueue，卸载直接返回，避免 `destroy_workqueue(NULL)` panic。补丁对上游源码 dry-run 通过；提取实际 init/cleanup 函数的宿主 C harness 覆盖普通与 point-offload 配置的 9 种生命周期，补丁前可复现空工作队列清理断言，补丁后全部通过。驱动包 release 18→19，尚未随本轮镜像刷入。
+
+## 3. 实机部署与验证
+
+设备：SS-01，`192.168.3.3`，`261113-01`，Linux 6.18.62。部署前备份：
+
+- 实机 `/tmp/gwrt-theme-r116-before-client-link.tgz`；本地副本 `/tmp/gwrt-ss01-r116-before-client-link.tgz`（更新前 r116 文件）
+- `/tmp/gwrt-theme-r116-client-link-live.tgz`（本轮热更新包）
+
+执行 `gwrt-runtime-dir` 和 `/etc/init.d/gwrt-clients restart` 后：
+
+- `ubus service list` 显示 `gwrt-clients` running=true，`gwrt-clients-dump` 返回更新中的 clients JSON。
+- 浏览器实际刷新首页通过：PC `192.168.3.179` 显示 `LAN1`，信号列显示 `1000 Mbps`；刷新后仍保持，页面无 JavaScript 错误。
+- 当前实机没有在线 WiFi 终端，因此没有无线速率的现场样本；`iwinfo` 频率识别与 UI 测试覆盖 2.4/5.2/5.8/6G、`2401 Mbps`/`1201 Mbps`、dBm、离线和缺失数据。
+- 此前同一轮串口诊断确认网口 TX 卡死：ARP 请求进入 lan1，内核生成应答，但 TX 计数和 EDMA TX 完成中断不再增长。接口 down/up 无效。在尝试通过卸载 NSS 模块恢复时，`qca_nss_drv` 的 `nss_data_plane_destroy_delay_work` → `destroy_workqueue(NULL)` 触发 panic 并自动重启。重启后网络恢复，短时 iperf（上传约 932 Mbps、下载约 841 Mbps）和 5 次 ping 无丢包；触发 TX 卡死的根因尚未查明，不能宣称永久修复。此后没有再次卸载驱动、主动重启或刷机。
+
+## 4. 自动化验证
+
+通过：
+
+- `sh scripts/gwrt-source-preflight.sh`
+- `python3 scripts/tests/test-gwrt-clients.py`（18 项）
+- `python3 scripts/tests/test-gwrt-runtime-dir.py`（6 项）
+- `node scripts/tests/test-gwrt-client-link-ui.js`
+- 端口响应式/色圈/点击、弹窗软件包、卡片菜单、Mesh UI 浏览器回归
+- 本地 Chrome 实机页面检查与刷新
+- `git diff --check`
+- NSS cleanup 补丁对上游 `nss_init.c` 的 `patch --dry-run`、实际 init/cleanup 的 9 个宿主 C harness 场景及补丁前失败复现
+
+## 5. 回滚
+
+主题热更新可在设备执行：
+
+```sh
+tar -xzf /tmp/gwrt-theme-r116-before-client-link.tgz -C /
+/etc/init.d/gwrt-clients restart
+```
+
+源码提交可通过 Git revert 回滚；NSS 修改可单独 revert。持久证据与备份保存在 `/home/godsun/build/gwrt-theme-r116-validation-20261113/`（0700），包含原主题备份、热更新包、串口日志、iperf JSON 和浏览器截图，SHA-256 清单在该目录 `sha256sums`。
+
+## 6. 待办
+
+提交后按已有授权推送 GitHub，触发 SS-01 `261113-02`、`release=false` 构建；构建产物需按 SS-01 12MiB HLOS 布局（现有 `KERNEL_SIZE=12288k`）审计。无线实际速率仍待有在线 WiFi 终端时复核。

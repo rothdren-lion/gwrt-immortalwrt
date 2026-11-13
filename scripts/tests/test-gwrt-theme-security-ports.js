@@ -103,7 +103,8 @@ assert(template.includes("Math.round(Number(p.maxRateKbps)/1000)+' Mbps"), 'Wi-F
 assert.match(template, /p\.maxRateKbps=Math\.max\(p\.maxRateKbps,Number\(info\.rx_rate\)\|\|0,Number\(info\.tx_rate\)\|\|0\)/, 'Wi-Fi cards aggregate the fastest associated client per radio');
 assert.match(template, /data-gwrt-menu-target="service"/, 'dashboard cards expose menu shortcuts');
 assert.match(template, /gwrtSetupMenuCardLinks\(\)/, 'dashboard card shortcuts are wired');
-assert.match(css, /grid-template-columns:repeat\(auto-fit,minmax\(min\(100%,168px\),1fr\)\)/, 'port cards resize into an even responsive grid');
+assert.match(template, /portGroup\('lan',lanOnly,1\)/, 'physical LAN ports stay in one group');
+assert.match(template, /portGroup\('wifi',wifiOnly,1\)/, 'wireless radios stay in their own group');
 assert.match(css, /\.gwrt-port\.rate-25g::before\{inset:8px;border-color:#3b82f6\}/, '2.5G ports get an inset blue ring');
 assert.match(css, /\.gwrt-port\.rate-5g::before\{inset:8px;border-color:#ef4444\}/, '5G ports get an inset red ring');
 assert.match(css, /\.gwrt-port\.rate-10g::after\{inset:12px;border-color:#ef4444\}/, '10G ports get two separated red rings');

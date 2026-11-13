@@ -57,6 +57,8 @@ node scripts/tests/test-gwrt-device-label-persistence.js
 GWRT_TEST_THEME=package/gwrt-theme/luci-theme-gwrt node scripts/tests/test-gwrt-theme-security-ports.js
 GWRT_TEST_THEME=package/gwrt-theme/luci-theme-gwrt node scripts/tests/test-gwrt-device-label-persistence.js
 python3 scripts/tests/test-gwrt-clients.py
+python3 scripts/tests/test-gwrt-runtime-dir.py
+node scripts/tests/test-gwrt-client-link-ui.js
 
 helper=gwrt-theme-V3/theme/luci-theme-gwrt/root/usr/libexec/gwrt-apk-autoinstall
 if [ -f scripts/tests/test-gwrt-apk-autoinstall.sh ]; then

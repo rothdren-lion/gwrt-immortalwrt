@@ -80,7 +80,7 @@
 	</script>
 
 	<!-- Main Stylesheet -->
-	<link rel="stylesheet" href="/luci-static/gwrt/css/cascade.css?v=20261113r115">
+	<link rel="stylesheet" href="/luci-static/gwrt/css/cascade.css?v=20261113r116">
 
 	<!-- Stylesheets -->
 	{% if (node?.css): %}
@@ -98,7 +98,7 @@
 </head>
 
 <body
-	class="lang_{{ dispatcher.lang }} {% if (ctx.authsession): %}logged-in{% endif %}"
+	class="lang_{{ dispatcher.lang }} {% if (ctx.authsession): %}logged-in{% endif %}{% if (_clean): %} gwrt-embedded{% endif %}"
 	data-page="{{ entityencode(join('-', ctx.request_path), true) }}">
 
 	<div class="main">
