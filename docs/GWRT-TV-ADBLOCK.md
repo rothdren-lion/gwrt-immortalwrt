@@ -31,10 +31,12 @@ package/gwrt-tv-adblock/
 
 - 规则文件：`/usr/share/gwrt-tv-adblock/tv-ads-core.conf`（核心档）、
   `tv-ads-extended.conf`（激进档）
-- init：`/etc/init.d/gwrt-tv-adblock`（START=18，在 dnsmasq 之前把
-  `conffile` 写进 `dhcp.@dnsmasq[0]`，开机无需额外重启 dnsmasq）
+- init：`/etc/init.d/gwrt-tv-adblock`（START=18，把规则以
+  `# --- gwrt-tv-adblock begin/end ---` 标记块写入 `/etc/dnsmasq.conf`；
+  该文件被 OpenWrt dnsmasq init 以 `--conf-file=` 兜底加载，开机无需额外重启 dnsmasq）
 - CLI：`/usr/libexec/gwrt-tv-adblock status|core|extended|off`
-- 配置：`/etc/config/gwrt-tv-adblock` 的 `config.mode` = off/core/extended
+- 配置：`/etc/config/gwrt-tv-adblock` 的 `config.mode` = off/core/extended，
+  `config.custom_block` / `config.custom_allow` = 自定义拦截/放行域名列表
 
 ```sh
 /usr/libexec/gwrt-tv-adblock core        # 核心档（默认，无副作用）
@@ -42,6 +44,31 @@ package/gwrt-tv-adblock/
 /usr/libexec/gwrt-tv-adblock off
 /usr/libexec/gwrt-tv-adblock status      # 查看模式/条数/实测拦截结果
 ```
+
+### 2.1 集成方式：/etc/dnsmasq.conf 标记块（v2）
+
+早期版本尝试过两条 uci 路线，都被设备固件否决，最终以标记块直写：
+
+| 路线 | 为什么不行 |
+|---|---|
+| uci `dhcp.@dnsmasq[0].conffile` | 部分固件 dnsmasq init 不支持该选项（实测不生成 `conf-file=`） |
+| uci `confdir` + 生成 `/tmp/dnsmasq*.d/*.conf` | 目录名随匿名节名变化（`/tmp/dnsmasq.cfg01411c.d`），且位于 /tmp 开机重建，本服务 START=18 先于 dnsmasq 运行时目录尚不存在 |
+
+现行方案：init 每次应用先用 awk 剥掉旧标记块，再按当前模式把
+core（+extended）/ 自定义规则重写进 `/etc/dnsmasq.conf`，`stop()` 只剥不写。
+该文件是 dnsmasq init 的第 949 行兜底 `--conf-file=` 加载项，不受节名/时序影响。
+
+自定义规则生成在块内：`custom_block` → `address=/d/`（NXDOMAIN），
+`custom_allow` → `server=/d/`（转发正常 DNS）。dnsmasq 按最长后缀匹配，
+`server=` 放行条目可覆盖更宽的 `address=` 拦截条目，用于救误拦。
+
+> **验证陷阱**：busybox nslookup 对 NXDOMAIN/空应答也可能返回 0，
+> 判断是否拦截必须检查应答内容里有没有真实 Address
+> （CLI/页面已按此实现），不能只看返回码。
+
+> **uci 陷阱（部分固件）**：`del_list` 对不存在的条目也返回 0（不能当
+> 循环条件），且没有 `remove` 命令——所以旧 uci conffile 的清理是
+> 「读列表→过滤→delete 整项→重加」，不做循环判断。
 
 ## 3. 两档语义
 

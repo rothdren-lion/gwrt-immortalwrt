@@ -1,4 +1,4 @@
--- GWRT 电视广告拦截: dnsmasq 域名层, 三档模式
+-- GWRT 电视广告拦截: dnsmasq 域名层, 三档模式 + 用户自定义拦截/放行
 local sys = require "luci.sys"
 
 local function count_rules(path)
@@ -18,6 +18,35 @@ o:value("core",     translate("核心档（推荐）"))
 o:value("extended", translate("激进档（有副作用）"))
 o.description = translate("核心档：开机广告与视频App广告域名，无副作用。激进档：额外拦截各品牌应用商店/系统升级/语音助手/投屏服务，相应功能会失效。")
 
+-- 用户自定义拦截域名
+local function filter_domains(self, value)
+	if value == nil then return nil end
+	local src = (type(value) == "table") and value or { value }
+	local out = {}
+	for _, raw in ipairs(src) do
+		local d = tostring(raw):lower():gsub("^%s+", ""):gsub("%s+$", ""):gsub("^%.+", "")
+		if d ~= "" then
+			if not d:match("^([a-z0-9]([a-z0-9%-]*)?%.)+[a-z][a-z0-9%-]*$") then
+				return nil
+			end
+			out[#out+1] = d
+		end
+	end
+	return out
+end
+
+cb = s:option(DynamicList, "custom_block", translate("自定义拦截域名"))
+cb.description = translate("额外拦截的域名，每条一个（不带 http://），如 ads.example.com。保存后自动挂到 dnsmasq 并重启。")
+function cb.validate(self, value)
+	return filter_domains(self, value)
+end
+
+ca = s:option(DynamicList, "custom_allow", translate("自定义放行域名（白名单）"))
+ca.description = translate("若发现内置规则误拦了正常服务（如某App打不开），把对应域名加在这里：dnsmasq 最长匹配优先，放行条目会覆盖内置拦截并转发到正常 DNS。")
+function ca.validate(self, value)
+	return filter_domains(self, value)
+end
+
 d = s:option(DummyValue, "_status", translate("当前状态"))
 d.rawhtml = true
 function d.cfgvalue(self, section)
@@ -31,9 +60,12 @@ function d.cfgvalue(self, section)
 		html[#html+1] = string.format("<div>激进档规则：<b>%d</b> 条域名</div>",
 			count_rules("/usr/share/gwrt-tv-adblock/tv-ads-extended.conf"))
 	end
+	local bl = m.uci:get_list("gwrt-tv-adblock", "config", "custom_block") or {}
+	local al = m.uci:get_list("gwrt-tv-adblock", "config", "custom_allow") or {}
+	html[#html+1] = string.format("<div>自定义：拦截 <b>%d</b> 条 / 放行 <b>%d</b> 条</div>", #bl, #al)
 	local function test(dom)
-		local out = sys.exec("nslookup " .. dom .. " 127.0.0.1 >/dev/null 2>&1 && echo OK || echo BLOCKED")
-		return out:match("OK") and "未拦截" or "已拦截"
+		local out = sys.exec("nslookup " .. dom .. " 127.0.0.1 2>&1 | grep -E '^Address' | grep -v '127.0.0.1'")
+		return (out:match("%S") == nil) and "已拦截" or "未拦截"
 	end
 	html[#html+1] = string.format(
 		"<div>验证：api.ad.xiaomi.com（小米开机广告）<b>%s</b>；ads.huan.tv（长虹广告）<b>%s</b></div>",

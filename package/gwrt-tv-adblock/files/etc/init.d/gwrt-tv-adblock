@@ -1,58 +1,107 @@
 #!/bin/sh /etc/rc.common
-# GWRT TV adblock: 按模式(off/core/extended)把规则文件挂到 dnsmasq
-# 规则本体只读, 不复制不生成; 开机在 dnsmasq 之前把 conffile 写进 uci
-# (START=18 < dnsmasq START=19), 因此 start() 不需要重启 dnsmasq.
+# GWRT TV adblock: 以标记块方式把拦截规则直接写入 /etc/dnsmasq.conf
+#
+# 为什么不用 uci conffile / confdir:
+#  - 部分固件的 dnsmasq init 不支持 uci "conffile" 选项
+#  - confdir 路径随匿名节名变化 (/tmp/dnsmasq.cfg01411c.d), 且位于 /tmp 开机重建,
+#    本服务(START=18)先于 dnsmasq(START=19)运行时目录还不存在
+# /etc/dnsmasq.conf 被所有 OpenWrt dnsmasq init 以 --conf-file= 兜底加载,
+# 直接写标记块最稳; 每次应用先剥掉旧块再按当前模式重写, 重复执行安全
 
+START=18
+
+CFG=gwrt-tv-adblock
+DNSCONF=/etc/dnsmasq.conf
 CORE=/usr/share/gwrt-tv-adblock/tv-ads-core.conf
 EXT=/usr/share/gwrt-tv-adblock/tv-ads-extended.conf
-CFG=gwrt-tv-adblock
+BEGIN="# --- gwrt-tv-adblock begin ---"
+END="# --- gwrt-tv-adblock end ---"
+LEGACY_TMP=/tmp/dnsmasq.dnsmasq.d/gwrt-tv-ads.conf
 
 get_mode() {
 	uci -q get ${CFG}.config.mode 2>/dev/null || echo core
 }
 
-ensure_dhcp() {
-	uci -q get dhcp.@dnsmasq[0] >/dev/null 2>&1 || uci -q add dhcp dnsmasq
+# 剥掉旧标记块, 保留块外内容
+strip_block() {
+	[ -f "$DNSCONF" ] || { : > "$DNSCONF"; return 0; }
+	awk -v b="$BEGIN" -v e="$END" '
+		$0 == b { inblk = 1; next }
+		$0 == e { inblk = 0; next }
+		!inblk { print }
+	' "$DNSCONF" > "${DNSCONF}.new" && mv "${DNSCONF}.new" "$DNSCONF"
 }
 
-# 删干净自己加过的 conffile (重复执行也安全)
-del_lists() {
-	while uci -q del_list dhcp.@dnsmasq[0].conffile="$CORE"; do :; done
-	while uci -q del_list dhcp.@dnsmasq[0].conffile="$EXT"; do :; done
+gen_custom() {
+	local d
+	for d in $(uci -q get ${CFG}.config.custom_block 2>/dev/null); do
+		echo "address=/$d/"
+	done
+	for d in $(uci -q get ${CFG}.config.custom_allow 2>/dev/null); do
+		echo "server=/$d/"
+	done
+}
+
+# 一次性清理早期版本遗留: uci conffile 列表 + /tmp 旧生成文件
+# (uci del_list 对不存在条目也返回0, 不能用失败判断做循环; 部分固件无 remove 命令)
+cleanup_legacy() {
+	uci -q get dhcp.@dnsmasq[0].conffile >/dev/null 2>&1 || {
+		rm -f "$LEGACY_TMP"
+		rmdir /tmp/dnsmasq.dnsmasq.d 2>/dev/null
+		return 0
+	}
+	local cur out=""
+	for cur in $(uci -q get dhcp.@dnsmasq[0].conffile 2>/dev/null); do
+		case "$cur" in
+			/usr/share/gwrt-tv-adblock/*|/etc/gwrt-tv-adblock/*) ;;
+			*) out="$out $cur" ;;
+		esac
+	done
+	uci -q delete dhcp.@dnsmasq[0].conffile 2>/dev/null
+	if [ -n "$out" ]; then
+		for cur in $out; do
+			uci add_list dhcp.@dnsmasq[0].conffile="$cur"
+		done
+	fi
+	uci commit dhcp
+	rm -f "$LEGACY_TMP"
+	rmdir /tmp/dnsmasq.dnsmasq.d 2>/dev/null
 }
 
 apply_mode() {
-	ensure_dhcp || return 1
-	del_lists
 	local mode
 	mode="$(get_mode)"
+	cleanup_legacy
+	strip_block
 	case "$mode" in
 		extended)
-			uci add_list dhcp.@dnsmasq[0].conffile="$CORE"
-			uci add_list dhcp.@dnsmasq[0].conffile="$EXT"
+			{ echo "$BEGIN"; cat "$CORE"; cat "$EXT"; gen_custom; echo "$END"; } >> "$DNSCONF"
 			;;
 		off)
-			: ;;
+			# 旧块已剥除即为关闭
+			;;
 		*)
-			mode=core
-			uci add_list dhcp.@dnsmasq[0].conffile="$CORE"
+			{ echo "$BEGIN"; cat "$CORE"; gen_custom; echo "$END"; } >> "$DNSCONF"
 			;;
 	esac
-	uci commit dhcp
+	sync
 }
 
 start() {
+	# START=18, 先于 dnsmasq(START=19) 写好规则, 开机无需重启 dnsmasq
 	apply_mode
 }
 
 stop() {
-	ensure_dhcp
-	del_lists
-	uci commit dhcp
+	strip_block
+	sync
+	# 本服务不拥有 dnsmasq; 仅当其在运行时让它重读配置
+	pgrep dnsmasq >/dev/null 2>&1 && /etc/init.d/dnsmasq restart 2>/dev/null
+	return 0
 }
 
-# 运行期切模式: CLI/LuCI 调用, 需要重启 dnsmasq 生效
+# 运行期切模式/改自定义: CLI 与 LuCI 调用
 reload() {
-	apply_mode || return 1
+	apply_mode
 	/etc/init.d/dnsmasq restart
 }

@@ -28,8 +28,9 @@ LuCI 开关，家里设备为小米/创维/TCL/长虹。**本轮仅源码，未�
    - 主包 Makefile（conffiles 含 /etc/config/gwrt-tv-adblock）
    - `files/usr/share/gwrt-tv-adblock/tv-ads-core.conf`（218 域名，去重后）
      与 `tv-ads-extended.conf`（115 域名）
-   - `files/etc/init.d/gwrt-tv-adblock`（START=18，按模式挂 dnsmasq
-     conffile，boot 期不重启 dnsmasq；reload 才重启）
+   - `files/etc/init.d/gwrt-tv-adblock`（START=18，按模式把规则挂进
+     dnsmasq；v2 起改为 /etc/dnsmasq.conf 标记块，见 §7.1；
+     boot 期不重启 dnsmasq，reload 才重启）
    - `files/usr/libexec/gwrt-tv-adblock`（status|core|extended|off，
      status 含 nslookup 实测两条广告域）
    - `files/etc/uci-defaults/90_gwrt-tv-adblock`（建配置/enable/start）
@@ -74,6 +75,62 @@ AGENTS.md 仅加代码地图行与日志索引行（该文件另有用户在途�
 - 贴片广告如需拦截，走 OAF/DPI 或内容源侧方案（另行评估）
 - 数据可定期重跑合并脚本更新（来源活跃：AWAvenue 月更）
 - LuCI 页面为经典 cbi 风格，若后续主题 r118 需要首页卡片入口可再加
+
+## 7. 部署到 192.168.9.9（RE-CS-02 GWRT2，手工安装，不涉及固件构建）
+
+用户要求在 `192.168.9.9` 直接部署看效果。设备为经典 Lua LuCI（非 client JS），
+dnsmasq 2.93、busybox pgrep 无 `-c`、dropbear 无 sftp-server（须 `scp -O`）。
+
+### 7.1 安装与踩坑
+
+1. 9 个文件经 `scp -O` 传至对应路径（规则/init/CLI/config/uci-defaults/
+   controller/model/ACL），首次验证即出现两次故障：
+   - **uci 陷阱实锤**：该设备 `del_list` 对不存在条目返回 0，原
+     `while uci del_list` 写法死循环，超时 SSH 在设备留下卡死进程
+     （ash/uci-defaults/rc.common），已杀。清理改为
+     「读列表→过滤→delete 整项→重加」。
+   - **conffile 方案失败**：`dhcp.@dnsmasq[0].conffile` 挂载成功
+     （/etc/config/dhcp 30 行 + uci show 均在），但该固件 dnsmasq init
+     不支持 conffile 选项，生成配置里没有 `conf-file=`，拦截无效。
+2. **confdir 方案失败**：init 认 `confdir`，默认
+   `/tmp/dnsmasq${cfg:+.$cfg}.d`。匿名节名 uci get `@dnsmasq[0]` 推导不出
+   （生成 `cfg01411c` 带后缀变体），首次部署生成到错误路径
+   `/tmp/dnsmasq.dnsmasq.d/gwrt-tv-ads.conf`；且 /tmp 目录开机重建、
+   本服务 START=18 早于 dnsmasq START=19 时目录不存在。弃用。
+3. **最终方案（v2，已生效）**：规则以
+   `# --- gwrt-tv-adblock begin/end ---` 标记块直写 `/etc/dnsmasq.conf`
+   （设备 init 942-949 行：`/etc/dnsmasq.conf` 始终被 `--conf-file=`
+   兜底加载，不受节名/时序影响）。init 每次 apply 先 awk 剥旧块再重写，
+   `stop()` 只剥；一次性清理旧 uci conffile 与 /tmp 残留。
+   部署前原始文件已备份
+   `/root/gwrt-backups/20261113-tv-adblock/dnsmasq.conf.pre-block`。
+4. **验证逻辑修正**：busybox nslookup 对空应答也可能 rc=0，
+   CLI/LuCI 的拦截判定改为检查应答 Address 内容（非 127.0.0.1 行为空）。
+
+### 7.2 生效验证（2026-11-13 14:09）
+
+- `/etc/dnsmasq.conf` 标记块 38–278 行，`grep -c '^address=/'` = 218
+- 七个广告域（小米 api.ad.xiaomi.com / sdkconfig.ad.xiaomi.com、
+  长虹 ads.huan.tv / ad.hpplay.cn、TCL ads.api.my7v.com、
+  创维 active.tc.skysrt.com、GITV t7z.cupid.ptqy.gitv.tv）
+  经 127.0.0.1 nslookup 应答均无真实 Address = 已拦截
+- 正常 DNS：www.baidu.com / www.qq.com 均正常解析（A+AAAA）
+- dnsmasq 重启正常（PID 26938，53 端口监听），logread 显示
+  "using 217 more local addresses" 规则加载成功
+- **daed PID 10929 / oafd PID 3579 未变**，与部署前基线一致
+- LuCI：rpcd 已重启 + 清 /tmp/luci-indexcache*，controller/model
+  lua loadfile 通过，`tvadblock` 已注册进 indexcache；
+  未登录 curl 返回 403 登录页壳（非 500），等待用户登录实测页面
+- gwrt 主题 menu-gwrt.js 走 `ui.menu.load()` 动态菜单（读 indexcache），
+  非静态列表，新菜单项（网络 → 电视广告拦截）会自动出现
+- CLI status：mode core / 218 domains / custom 0+0 / 两测试域已拦截
+
+### 7.3 回滚
+
+`/root/gwrt-backups/20261113-tv-adblock/rollback.sh` 已更新：先 awk 剥
+`/etc/dnsmasq.conf` 标记块 → 恢复 dhcp.conf.pre → 重启 dnsmasq →
+disable 并删除全部服务/页面/规则文件 → 清 indexcache + rpcd 重启。
+备份含 dhcp.conf.pre / dhcp.conf.135246 / dnsmasq.conf.pre-block。
 
 ## 6. 环境备注
 

@@ -11,6 +11,13 @@ count_rules() {
 	grep -c '^address=/' "$1" 2>/dev/null || echo 0
 }
 
+# 判定是否被拦: 看有没有非 127.0.0.1 的应答地址(NXDOMAIN/空应答都算拦截)
+check_blocked() {
+	local out
+	out=$(nslookup "$1" 127.0.0.1 2>&1 | grep -E "^Address" | grep -v "127.0.0.1")
+	[ -z "$out" ]
+}
+
 get_mode() {
 	uci -q get gwrt-tv-adblock.config.mode 2>/dev/null || echo core
 }
@@ -22,14 +29,18 @@ do_status() {
 	if [ "$mode" != off ]; then
 		echo "core: $(count_rules "$CORE") domains"
 		[ "$mode" = extended ] && echo "extended: $(count_rules "$EXT") domains"
+		local cb ca
+		cb=$(uci -q get gwrt-tv-adblock.config.custom_block 2>/dev/null)
+		ca=$(uci -q get gwrt-tv-adblock.config.custom_allow 2>/dev/null)
+		echo "custom: $(echo $cb | wc -w) block / $(echo $ca | wc -w) allow"
 	fi
 	# 用本机 dnsmasq 验证两个典型广告域名是否已拦
 	local d
 	for d in api.ad.xiaomi.com ads.huan.tv; do
-		if nslookup "$d" 127.0.0.1 >/dev/null 2>&1; then
-			echo "test: $d 未拦截"
-		else
+		if check_blocked "$d"; then
 			echo "test: $d 已拦截"
+		else
+			echo "test: $d 未拦截"
 		fi
 	done
 }
