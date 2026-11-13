@@ -43,6 +43,10 @@ radio_packages = {p for p in packages if p.startswith(('kmod-ath11k', 'ath11k-fi
 
 def requirements(device):
     required, forbidden = set(), set()
+    if values.get('EMMC_SUPPORT') == 'y' and 'gwrt-device-defaults' in packages:
+        required.add('sgdisk')
+    if board == 'airoha' and 'emmc' in device:
+        required.add('sgdisk')
     if device in ('jdcloud_re-cs-02', 'jdcloud_re-cs-02-gwrt2'):
         required |= ahb | {'kmod-ath11k-pci', 'ath11k-firmware-ipq6018-ddwrt',
                            'ath11k-firmware-qcn9074-ddwrt', 'ipq-wifi-jdcloud_re-cs-02'}
@@ -51,8 +55,9 @@ def requirements(device):
         required |= ahb | {'ath11k-firmware-ipq6018-ddwrt', 'ipq-wifi-jdcloud_re-ss-01',
                            'kmod-qca-nss-dp', 'kmod-qca-ssdk',
                            'gwrt-device-defaults', 'gwrt-mesh-apmode', 'gwrt-mesh-led',
-                           'gwrt-agent'}
-        forbidden |= pci | {'ipq-wifi-jdcloud_re-cs-02', 'luci-app-athena-led'}
+                           'gwrt-agent', 'daed', 'luci-app-daed', 'luci-i18n-daed-zh-cn'}
+        forbidden |= pci | {'ipq-wifi-jdcloud_re-cs-02', 'luci-app-athena-led',
+                            'luci-app-homeproxy', 'luci-i18n-homeproxy-zh-cn'}
     elif device in ('jdcloud_re-cs-06', 'xiaomi_be6500'):
         required |= ath12k | {'ipq-wifi-' + device}
         forbidden |= ahb - {'wpad-openssl'}
@@ -126,7 +131,7 @@ if args.preset in ('cs02', 'cs02-gwrt2'):
 if 'daed' in packages:
     check_packages(packages, {'kmod-sched-bpf', 'kmod-xdp-sockets-diag'}, (), 'daed')
     if values.get('aarch64') != 'y':
-        fail('the selected prebuilt daed binary requires aarch64')
+        fail('the selected daed runtime build requires aarch64')
     if values.get('KERNEL_DEBUG_INFO_BTF') != 'y' and 'vmlinux-btf' not in packages:
         fail('daed needs kernel BTF or vmlinux-btf')
 

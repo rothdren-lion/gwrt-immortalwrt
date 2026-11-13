@@ -15,7 +15,7 @@ define Package/gwrt-device-defaults
   SECTION:=base
   CATEGORY:=Base system
   TITLE:=GWRT XINGLOO AX3000 first-boot defaults
-  DEPENDS:=+jshn
+  DEPENDS:=+jshn +EMMC_SUPPORT:sgdisk
   PKGARCH:=all
 endef
 

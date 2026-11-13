@@ -8,7 +8,7 @@ AIROHA_USB_STORAGE_PACKAGES := \
 # eMMC boards keep the full MMC stack and get the storage tooling that makes
 # the eMMC volume usable as a data disk (partitioning, formatting, mounting).
 AIROHA_EMMC_STORAGE_PACKAGES := \
-  mmc-utils parted dosfstools f2fs-tools \
+  mmc-utils parted sgdisk dosfstools f2fs-tools \
   kmod-fs-ext4 kmod-fs-vfat kmod-fs-exfat
 
 loadaddr-$(CONFIG_TARGET_airoha_an7581) := 0x80200000

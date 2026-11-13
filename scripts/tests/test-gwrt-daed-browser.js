@@ -7,11 +7,13 @@ const { spawn } = require('node:child_process');
 const { chromium } = require('playwright');
 
 const binary = process.env.DAED_TEST_BINARY;
-if (!binary) throw new Error('Set DAED_TEST_BINARY to the verified official daed v2.1.1 binary');
+if (!binary) throw new Error('Set DAED_TEST_BINARY to the daed runtime binary');
 
 (async () => {
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'gwrt-daed-test-'));
-  const daemon = spawn(binary, ['run', '--api-only', '--listen', '127.0.0.1:19240', '--config', work], { stdio: 'ignore' });
+  const args = ['run', '--api-only', '--listen', '127.0.0.1:19240', '--config', work];
+  const runner = process.env.DAED_TEST_RUNNER;
+  const daemon = spawn(runner || binary, runner ? [binary, ...args] : args, { stdio: 'ignore' });
   let browser, server;
   try {
     let ready = false;
@@ -24,7 +26,12 @@ if (!binary) throw new Error('Set DAED_TEST_BINARY to the verified official daed
         await new Promise(resolve => setTimeout(resolve, 100));
       }
     }
-    assert(ready, 'isolated official DAED API starts');
+    assert(ready, 'isolated DAED API starts');
+    const frontend = await fetch('http://127.0.0.1:19240/').then(r => r.text());
+    assert.match(frontend, /<title>daed<\/title>/, 'embedded frontend is served');
+    const asset = frontend.match(/<script[^>]+src="([^"]+)"/);
+    assert(asset, 'embedded frontend entry script exists');
+    assert.equal((await fetch(new URL(asset[1], 'http://127.0.0.1:19240/'))).status, 200);
     const username = 'gwrt-browser-test';
     const password = 'Isolated123-' + Math.random().toString(36).slice(2);
     const created = await fetch('http://127.0.0.1:19240/graphql', {

@@ -59,6 +59,11 @@ def verify_dtb(kernel):
     nodes = fdt_nodes(blobs[0])
     require(nodes['/'].get('model') == b'JDCloud RE-SS-01\0', 'wrong DTB model')
     require(b'jdcloud,re-ss-01' in nodes['/'].get('compatible', b'').split(b'\0'), 'wrong DTB compatible')
+    gcc = [node for node in nodes.values()
+           if b'qcom,gcc-ipq6018' in node.get('compatible', b'').split(b'\0')]
+    require(len(gcc) == 1 and gcc[0].get('clock-names') == b'xo\0sleep_clk\0',
+            'GCC must use SSDK dynamic UNIPHY parents without fixed clock inputs')
+    require(len(gcc[0].get('clocks', b'')) == 8, 'GCC must retain only XO/sleep phandles')
     for compatible in (b'qcom,ess-switch-ipq60xx', b'qcom,edma'):
         matches = [node for node in nodes.values()
                    if compatible in node.get('compatible', b'').split(b'\0') and enabled(node)]
@@ -101,7 +106,7 @@ def main():
         block = re.search(r'^define Device/jdcloud_re-ss-01\n(.*?)^endef',
                           (ROOT / 'target/linux/qualcommax/image/ipq60xx.mk').read_text(), re.M | re.S).group(1)
         size = re.search(r'KERNEL_SIZE\s*:=\s*(\d+)k', block)
-        require(size is not None, 'missing explicit SS-01 kernel layout')
+        require(size is not None and size.group(1) == '12288', 'SS-01 must retain its physical 12M HLOS layout')
         limit = int(size.group(1)) * 1024
         require(len(kernel) <= limit, 'kernel exceeds HLOS layout')
         with selected['factory'].open('rb') as factory:
@@ -179,6 +184,22 @@ def main():
             require(re.search(r'/etc/init\.d/' + section + r'\s*$', listing, re.M),
                     'missing mesh init: ' + section)
         manifest_text = '\n'.join(p.read_text() for p in manifests)
+        runtime_version = b'daed-4d6a433_wing-dc50308_core-5db27a0-gwrt-runtime1'
+        require(read_file('usr/share/daed/gwrt-runtime-version').strip() == runtime_version,
+                'wrong daed runtime repair marker')
+        daemon = read_file('usr/bin/daed')
+        require(daemon[:6] == b'\x7fELF\x02\x01' and struct.unpack_from('<H', daemon, 18)[0] == 183,
+                'daed must be an aarch64 ELF executable')
+        require(runtime_version in daemon, 'daed executable does not contain the runtime repair version')
+        require(re.search(r'^daed\s+-\s+2\.1\.1-r3\s*$', manifest_text, re.M),
+                'wrong daed package release')
+        for package in ('luci-app-daed', 'luci-i18n-daed-zh-cn', 'sgdisk'):
+            require(re.search(r'^' + package + r'\s+-\s+', manifest_text, re.M),
+                    'missing SS-01 package: ' + package)
+        require(not re.search(r'^luci-(?:app-homeproxy|i18n-homeproxy-\S+)\s+-', manifest_text, re.M),
+                'HomeProxy must be replaced by daed')
+        require(not re.search(r'/etc/init\.d/homeproxy\s*$', listing, re.M), 'HomeProxy init script is still packaged')
+        print('PASS SS-01 daed runtime1, HomeProxy replacement and sgdisk')
         for package in ('gwrt-agent', 'gwrt-device-defaults', 'gwrt-mesh-apmode', 'gwrt-mesh-led'):
             require(re.search(r'^' + package + r'\s+-\s+', manifest_text, re.M),
                     'missing mesh package in manifest: ' + package)

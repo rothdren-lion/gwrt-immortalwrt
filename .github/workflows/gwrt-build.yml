@@ -234,6 +234,9 @@ jobs:
           nss_init=$(find build_dir -path '*/qca-nss-drv-*/nss_init.c' -print -quit)
           test -n "$nss_init"
           python3 scripts/tests/test-gwrt-nss-symbol-cleanup.py "$nss_init" | tee logs/ss01-nss-cleanup-test.log
+          kernel_dir=$(find build_dir -type d -name 'linux-6.18.*' -print -quit)
+          test -n "$kernel_dir"
+          python3 scripts/tests/test-gwrt-ipq6018-uniphy-clocks.py "$kernel_dir" | tee logs/ss01-uniphy-clocks-test.log
           python3 scripts/gwrt-verify-ss01-image.py bin/targets/qualcommax/ipq60xx | tee logs/ss01-image-audit.log
 
       - name: Save SS-01 verification records
@@ -244,6 +247,7 @@ jobs:
           path: |
             logs/ss01-image-audit.log
             logs/ss01-nss-cleanup-test.log
+            logs/ss01-uniphy-clocks-test.log
             bin/targets/qualcommax/ipq60xx/*.manifest
             bin/targets/qualcommax/ipq60xx/profiles.json
             bin/targets/qualcommax/ipq60xx/sha256sums

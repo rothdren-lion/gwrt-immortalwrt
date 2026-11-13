@@ -15,7 +15,7 @@ go_cmd=${GWRT_GO:-go}
 clang_cmd=${BPF_CLANG:-clang}
 strip_cmd=${BPF_STRIP:-llvm-strip}
 
-for required in dae/runtime.go dae-core/control/control.go dae-core/control/kern/headers/bpf_helpers.h; do
+for required in dae/runtime.go dae-core/control/control.go dae-core/control/kern/headers/bpf_helpers.h dae-core/trace/kern/headers/bpf_helpers.h; do
 	[ -f "$wing_dir/$required" ] || {
 		printf 'Missing source dependency: %s\n' "$required" >&2
 		exit 1
