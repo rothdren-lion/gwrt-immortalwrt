@@ -52,7 +52,13 @@ master，首次 [运行 43445745283](https://github.com/rothdren-lion/gwrt-immor
 已有标记，因此原本地检查未复现。已补齐两个覆盖文件，并将覆盖 Makefile 的扫描
 签名纳入 source preflight。使用独立 metadata 目标冷扫描，daed/Aria2 页面和中文
 包四项均被真实 `include/scan.mk` 识别；仓库 source preflight 再次通过。
-修正后仍只重跑 SS-01 `261113-04`、release=false；当前尚无成品。
+修正提交 `971c1823` 已推送，重新触发
+[运行 43447840820](https://github.com/rothdren-lion/gwrt-immortalwrt/actions/runs/43447840820)，
+仍只编 SS-01 `261113-04`、release=false；当前尚无成品。
+截至 UTC 2026-11-13 15:08，第二次运行的 feeds、配置/source preflight、校准保护和
+Mesh 专项均成功，正在 `Build firmware` 阶段，尚未进入镜像审计与产物上传。
+本机一度因网络切换无法访问 GitHub/NAS，云端任务未受本地查询中断影响；查询已恢复。
+NAS 的第二次运行状态同步曾因挂载路径 I/O 错误失败，本隔离树日志已保存，待挂载恢复同步。
 等待构建和镜像审计成功，下载并核验哈希后
 归档到 `/home/godsun/build/gwrt-releases/` 对应 SS-01 目录，使用带 12M 的交付文件名。
 WAN DHCP、LAN/WAN 并发及反复插拔仍需用户刷入后验证，不以源码回归代替实机结论。
