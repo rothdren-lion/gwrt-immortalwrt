@@ -12,7 +12,7 @@ PKG_VERSION:=1.0
 # Keep this above the last field package (r111).  The theme owns a runtime
 # repair hook; a lower release would make apk/opkg keep the older package and
 # leave a luci-mod-status upgrade able to restore the stock dashboard.
-PKG_RELEASE:=116
+PKG_RELEASE:=117
 PKG_MAINTAINER:=GWRT
 PKG_LICENSE:=Apache-2.0
 

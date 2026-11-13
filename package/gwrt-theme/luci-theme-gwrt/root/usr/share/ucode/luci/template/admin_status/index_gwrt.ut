@@ -3330,11 +3330,14 @@ function gwrtStaInfo(sta){
 function gwrtSigLevel(dbm){if(!(dbm<0))return 0;if(dbm>=-55)return 4;if(dbm>=-65)return 3;if(dbm>=-75)return 2;return 1;}
 function fmtLinkRate(kbps){if(kbps>=1000000)return(kbps/1000000).toFixed(1).replace(/\.0$/,'')+'G';if(kbps>=1000)return Math.round(kbps/1000)+'M';return Math.round(kbps)+'k';}
 function gwrtWifiSta(mac){return(window._gwrtWifiStaMap||{})[normMac(mac)]||null;}
-function gwrtLinkRateMbps(kbps){
+function gwrtLinkRateText(kbps){
   var rate=Number(kbps);
-  return isFinite(rate)&&rate>0?String(Math.round(rate/100)/10)+' Mbps':'—';
+  if(!isFinite(rate)||rate<=0)return '—';
+  if(rate>=1000000)return String(Math.round(rate/10000)/100)+'Gbps';
+  if(rate>=1000)return String(Math.round(rate/100)/10)+'Mbps';
+  return String(Math.round(rate*10)/10)+'Kbps';
 }
-/* 接入设备「信号」列：当前网口/站点协商速率，无线下方显示信号。 */
+/* 接入设备「信号」列：无线信号格和 dBm 在上，紧凑协商速率在下。 */
 function signalCellHtml(d){
   var mac=normMac(d&&d.mac),sta=gwrtWifiSta(mac),detail=gwrtClientDetail(mac);
   if(!d||!d.online)return '<span class="gwrt-client-link-rate is-unknown">—</span>';
@@ -3343,16 +3346,19 @@ function signalCellHtml(d){
     var state=(window._gwrtPortStates||{})[gwrtClientPortName(d)]||{};
     var linked=state.carrier===true||state.carrier===1||state.carrier==='1';
     var speed=String(state.speed||'').match(/^(\d+(?:\.\d+)?)(?:[FH])?$/i);
-    var label=gwrtLinkRateMbps(linked&&speed?Number(speed[1])*1000:0);
+    var label=gwrtLinkRateText(linked&&speed?Number(speed[1])*1000:0);
     return '<span class="gwrt-client-link-rate gwrt-via-lan" title="网口协商速率">'+label+'</span>';
   }
   var sig=sta&&sta.signal<0?sta.signal:(detail&&detail.signal!==undefined&&detail.signal!==''?Number(detail.signal):NaN);
   if(!(sig<0)&&Number(d.signal)<0)sig=Number(d.signal);
-  var sigTxt=!(sig<0)?'—':(sig+' dBm');
+  var sigTxt=!(sig<0)?'—':(sig+'dBm');
   var sigCls=!(sig<0)?'gwrt-sig-none':(sig>=-55?'gwrt-sig-good':(sig>=-65?'gwrt-sig-mid':(sig>=-75?'gwrt-sig-weak':'gwrt-sig-bad')));
+  var level=gwrtSigLevel(sig),bars='<span class="gwrt-sig-bars lv'+level+'" aria-hidden="true">';
+  for(var i=1;i<=4;i++)bars+='<i'+(i<=level?' class="on"':'')+'></i>';
+  bars+='</span>';
   var rx=Number(sta&&sta.rx_rate)||0,tx=Number(sta&&sta.tx_rate)||0;
-  var title='当前协商速率：接收 '+gwrtLinkRateMbps(rx)+' / 发送 '+gwrtLinkRateMbps(tx);
-  var out='<div class="gwrt-wifi-cell"><span class="gwrt-client-link-rate" title="'+esc(title)+'">'+gwrtLinkRateMbps(Math.max(rx,tx))+'</span><span class="gwrt-wifi-sig '+sigCls+'" title="信号强度 '+(sig<0?sig:'—')+' dBm">'+sigTxt+'</span></div>';
+  var title='当前协商速率：接收 '+(rx>0?String(Math.round(rx/100)/10)+'Mbps':'—')+' / 发送 '+(tx>0?String(Math.round(tx/100)/10)+'Mbps':'—');
+  var out='<div class="gwrt-wifi-cell"><span class="gwrt-wifi-sig '+sigCls+'" title="信号强度 '+(sig<0?sig:'—')+' dBm">'+bars+'<span class="gwrt-sig-dbm">'+sigTxt+'</span></span><span class="gwrt-client-link-rate" title="'+esc(title)+'">'+gwrtLinkRateText(Math.max(rx,tx))+'</span></div>';
   return out;
 }
 /* 实时速率：上下行分开；只有合计值时退化为单值 */

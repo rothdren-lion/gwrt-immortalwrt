@@ -558,7 +558,9 @@ body::before{content:"";position:fixed;inset:0;z-index:20000;pointer-events:none
 /* 接入设备更紧凑 */
 .gwrt-wifi-cell{display:flex;flex-direction:column;gap:2px;align-items:flex-start}
 .gwrt-client-link-rate{font-family:var(--font-mono);font-size:.72rem;font-weight:600;white-space:nowrap}
-.gwrt-wifi-cell .gwrt-client-link-rate{color:var(--accent-purple)}
+.gwrt-wifi-cell .gwrt-client-link-rate{color:var(--accent-purple);font-size:.68rem;font-weight:500}
+.gwrt-wifi-cell .gwrt-wifi-sig{display:inline-flex;align-items:center;gap:5px;margin-top:0;font-size:.72rem;font-weight:600}
+.gwrt-wifi-cell .gwrt-sig-dbm{color:inherit}
 .gwrt-client-link-rate.is-unknown{color:var(--text-tertiary)}
 .gwrt-wifi-band{padding:1px 6px;border-radius:4px;background:color-mix(in srgb,var(--accent-purple) 16%,transparent);color:var(--accent-purple);font-size:.64rem;font-weight:700;letter-spacing:.04em}
 .gwrt-wifi-sig{font-family:var(--font-mono);font-size:.64rem}

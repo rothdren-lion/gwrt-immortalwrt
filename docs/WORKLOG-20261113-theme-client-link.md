@@ -55,3 +55,13 @@ tar -xzf /tmp/gwrt-theme-r116-before-client-link.tgz -C /
 ## 6. 推送与构建状态
 
 提交 `eda276cb6a74835ef9658b34a038263414289870` 已按原提交 SHA 推送到私有仓 `rothdren-lion/gwrt-immortalwrt` master。GitHub Actions SS-01 `261113-02`（`release=false`）运行 `43350331850` 已启动，链接：https://github.com/rothdren-lion/gwrt-immortalwrt/actions/runs/43350331850。截至 UTC 2026-11-13 02:15:22，配置生成/源码预检、校准保护和 Mesh 专项检查均通过，已进入 Build firmware；尚无本轮成品。完成后还需确认镜像内包含 `gwrt-runtime-dir`/clients collector/NSS cleanup 修改及 `KERNEL_SIZE=12288k`。无线实际速率仍待有在线 WiFi 终端时复核。
+
+
+## 7. 用户追加：信号在上、速率在下（r117）
+
+- 接入设备的协商速率使用短单位，例如 `100Mbps`、`1Gbps`、`2.5Gbps`、`10Gbps`；无线 `2401Mbps` 显示为 `2.4Gbps`、`1201Mbps` 显示为 `1.2Gbps`。悬停提示保留精确的收发 Mbps。
+- 恢复四格无线信号图，上方显示信号格和 `-48dBm`，下方显示紧凑协商速率；信号格跟随当前信号变化。
+- 主题包及 CSS 缓存键更新为 r117，规范源和两个包副本一致。实际页面已核对 PC 显示 `LAN1 / 1Gbps`。信号/速率数据缺失及离线逻辑继续保留。
+- `test-gwrt-client-link-ui.js` 和完整 source preflight 通过；浏览器用模拟 WiFi 数据核对桌面与手机宽度下的信号格、文字顺序和精确速率提示，模拟只影响临时浏览器 DOM，不写路由器状态。
+- 更新前实机备份 `/tmp/gwrt-theme-r116-before-compact-signal.tgz`；持久副本在上述验证目录的 `backups/`，新热更新包为 `gwrt-theme-r117-compact-signal-live.tgz`。
+- 按此前授权推送修改，并以 SS-01 `261113-03`、`release=false` 构建包含最新显示的 r117；此前 r116 运行 `43350331850` 将由新运行替代。

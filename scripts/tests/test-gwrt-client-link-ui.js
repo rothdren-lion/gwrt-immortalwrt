@@ -18,7 +18,7 @@ const context = {
   gwrtClientTrackerFresh: () => true,
 };
 const functions = ['normMac', 'esc', 'devViaKind', 'gwrtClientDetail', 'gwrtClientPortName',
-  'devViaLabel', 'gwrtStaInfo', 'gwrtWifiSta', 'gwrtLinkRateMbps', 'signalCellHtml',
+  'devViaLabel', 'gwrtStaInfo', 'gwrtWifiSta', 'gwrtSigLevel', 'gwrtLinkRateText', 'signalCellHtml',
   'radioBand', 'radioIsPcie', 'wifiInterfaceIsLanAp', 'wifiConfigDisabled',
   'wifiRadioHasEnabledAp', 'primaryWifiInterface', 'isSs01Board', 'wifiPortEntries'];
 vm.runInNewContext(functions.map(fn).join('\n') + '\nglobalThis.api={devViaLabel,signalCellHtml,gwrtStaInfo};', context);
@@ -31,11 +31,11 @@ function reset() {
 function detail(values) { context.gwrtClientsCache.map[mac] = Object.assign({online:true}, values); }
 
 reset();
-for (const [port,speed] of [['lan1','1000F'],['lan2','100H'],['lan3',2500],['lan4','10000F']]) {
+for (const [port,speed,label] of [['lan1','1000F','1Gbps'],['lan2','100H','100Mbps'],['lan3',2500,'2.5Gbps'],['lan4','10000F','10Gbps'],['lan5',5000,'5Gbps']]) {
   detail({via:'wired',port});
   context.window._gwrtPortStates = {[port]:{carrier:true,speed}};
   assert.equal(api.devViaLabel(d),port.toUpperCase());
-  assert.equal(text(api.signalCellHtml(d)), parseInt(speed,10)+' Mbps');
+  assert.equal(text(api.signalCellHtml(d)), label);
 }
 detail({via:'wired',port:'lan2'});
 context.window._gwrtPortStates = {lan1:{carrier:true,speed:'1000F'},lan2:{carrier:false,speed:'2500F'}};
@@ -52,8 +52,9 @@ for (const [via,band] of [['wifi24g','2.4G'],['wifi5gl','5.2G'],['wifi5gh','5.8G
   detail({via,port:'phy0-ap0',signal:'-72'});
   assert.equal(api.devViaLabel(d),'WiFi '+band,'collector frequency band overrides wired plugin data');
   context.window._gwrtWifiStaMap[mac]=api.gwrtStaInfo({rx:{rate:2401000},tx:{rate:1201000},signal:-48});
-  assert.equal(text(api.signalCellHtml(d)),'2401 Mbps -48 dBm');
-  assert(api.signalCellHtml(d).includes('发送 1201 Mbps'),'directional negotiated rates remain in tooltip');
+  assert.equal(text(api.signalCellHtml(d)),'-48dBm 2.4Gbps','signal appears above the compact negotiated rate');
+  assert.equal((api.signalCellHtml(d).match(/class="on"/g)||[]).length,4,'strong signal restores four lit bars');
+  assert(api.signalCellHtml(d).includes('接收 2401Mbps / 发送 1201Mbps'),'tooltip preserves precise directional rates');
 }
 
 reset();
@@ -63,14 +64,18 @@ context.window._gwrtPorts=[{name:'phy1-ap0',ifnames:['phy1-ap0','phy1-ap1'],role
 context.window._gwrtWifiStaMap[mac]=api.gwrtStaInfo({rx:{bitrate_raw:5735},tx:{bitrate:286.8},signal:-51});
 context.window._gwrtWifiStaMap[other]=api.gwrtStaInfo({rx:{rate:2401000},signal:-30});
 assert.equal(api.devViaLabel(d),'WiFi 2.4G','current radio wins over previous tracker band');
-assert.equal(text(api.signalCellHtml(d)),'573.5 Mbps -51 dBm','each device uses its own station rates');
+assert.equal(text(api.signalCellHtml(d)),'-51dBm 573.5Mbps','each device uses its own station rates');
 context.window._gwrtWifiStaMap[mac]=api.gwrtStaInfo({rx:{rate:6000},tx:{rate:1201000},signal:-64});
-assert.equal(text(api.signalCellHtml(d)),'1201 Mbps -64 dBm','negotiation changes refresh immediately');
+assert.equal(text(api.signalCellHtml(d)),'-64dBm 1.2Gbps','negotiation changes refresh immediately');
+assert.equal((api.signalCellHtml(d).match(/class="on"/g)||[]).length,3,'signal bars follow the current signal');
 assert.equal(text(api.signalCellHtml({...d,online:false})),'—','offline clients do not display stale rates');
 context.window._gwrtWifiStaMap[mac]=api.gwrtStaInfo({signal:-64});
-assert.equal(text(api.signalCellHtml({...d,rate:999999999,rate_rx:999999999})),'— -64 dBm','traffic is not a PHY rate');
+assert.equal(text(api.signalCellHtml({...d,rate:999999999,rate_rx:999999999})),'-64dBm —','traffic is not a PHY rate');
 delete context.window._gwrtWifiStaMap[mac];
-assert.equal(text(api.signalCellHtml(d)),'— -80 dBm','missing station rate stays unknown');
+assert.equal(text(api.signalCellHtml(d)),'-80dBm —','missing station rate stays unknown');
+detail({via:'wifi5gl',port:'phy-old'});
+assert.equal(text(api.signalCellHtml(d)),'— —','missing signal and rate stay unknown');
+assert.equal((api.signalCellHtml(d).match(/class="on"/g)||[]).length,0,'unknown signal has no lit bars');
 
 reset();
 detail({via:'wired',port:'usb0'});

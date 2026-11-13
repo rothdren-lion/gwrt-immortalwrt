@@ -183,9 +183,9 @@ def main():
             require(re.search(r'^' + package + r'\s+-\s+', manifest_text, re.M),
                     'missing mesh package in manifest: ' + package)
         print('PASS SS-01 packaged mesh stack and first-boot defaults')
-        require(any(re.search(r'^luci-theme-gwrt\s+-\s+1\.0-r116\s*$', p.read_text(), re.M)
+        require(any(re.search(r'^luci-theme-gwrt\s+-\s+1\.0-r117\s*$', p.read_text(), re.M)
                     for p in manifests), 'wrong theme package release')
-        print('PASS SS-01 packaged theme r116 and Ethernet modules')
+        print('PASS SS-01 packaged theme r117 and Ethernet modules')
 
 
 if __name__ == '__main__':
