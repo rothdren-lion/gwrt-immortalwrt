@@ -1,0 +1,78 @@
+--- a/open-app-filter/src/Makefile
++++ b/open-app-filter/src/Makefile
+@@ -1,4 +1,4 @@
+-OBJS:=fwx_user.o fwx_netlink.o fwx_ubus.o fwx_stat.o fwx_config.o fwx_feature.o fwx_feature_online.o fwx_custom_feature.o fwx_utils.o main.o  fwx_app_filter.o fwx_mac_filter.o fwx_record.o fwx_common.o fwx_system.o fwx_network.o fwx_firewall.o fwx_wireless.o check_main.o fwx_uci.o
++OBJS:=fwx_user.o fwx_netlink.o fwx_ubus.o fwx_stat.o fwx_config.o fwx_feature.o fwx_custom_feature.o fwx_utils.o main.o  fwx_app_filter.o fwx_mac_filter.o fwx_record.o fwx_common.o fwx_system.o fwx_network.o fwx_firewall.o fwx_wireless.o check_main.o fwx_uci.o
+ EXEC:=oafd
+ all: $(OBJS)
+ 	$(CC) -o $(EXEC) $(OBJS) $(LIBS)
+--- a/open-app-filter/src/main.c
++++ b/open-app-filter/src/main.c
+@@ -25,7 +25,6 @@
+ #include "fwx_app_filter.h"
+ #include "check_main.h"
+ #include "fwx_feature.h"
+-#include "fwx_feature_online.h"
+ #include "fwx_custom_feature.h"
+ 
+ int current_log_level = LOG_LEVEL_WARN;
+@@ -514,9 +513,6 @@
+     init_system_config_to_proc();
+     init_fwx_capability();
+ 
+-    if (fwx_feature_online_init() < 0)
+-        LOG_ERROR("Failed to initialize online feature update\n");
+-
+     if (fwx_ubus_init() < 0)
+     {
+         LOG_ERROR("Failed to connect to ubus\n");
+@@ -533,7 +529,6 @@
+     uloop_timeout_add(&fwx_tm);
+     uloop_run();
+     stop_check_thread();
+-    fwx_feature_online_cleanup();
+     uloop_done();
+     return 0;
+ }
+--- a/open-app-filter/src/fwx_ubus.c
++++ b/open-app-filter/src/fwx_ubus.c
+@@ -24,7 +24,6 @@
+ #include "fwx_user.h"
+ #include "fwx_config.h"
+ #include "fwx_feature.h"
+-#include "fwx_feature_online.h"
+ #include "fwx_custom_feature.h"
+ #include <uci.h>
+ #include "fwx.h"
+@@ -8578,11 +8577,6 @@
+     {"get_custom_feature_class_list", fwx_api_get_custom_feature_class_list, 0, FWX_API_METHOD_GET},
+     {"set_custom_feature", fwx_api_set_custom_feature, 0, FWX_API_METHOD_POST},
+     {"get_feature_info", fwx_api_get_feature_info, 0, FWX_API_METHOD_GET},
+-    {"get_feature_online_config", fwx_api_get_feature_online_config, 0, FWX_API_METHOD_GET},
+-    {"set_feature_online_config", fwx_api_set_feature_online_config, 0, FWX_API_METHOD_POST},
+-    {"get_feature_online_list", fwx_api_get_feature_online_list, 0, FWX_API_METHOD_GET},
+-    {"start_feature_online_update", fwx_api_start_feature_online_update, 0, FWX_API_METHOD_POST},
+-    {"get_feature_online_update_status", fwx_api_get_feature_online_update_status, 0, FWX_API_METHOD_GET},
+     {"get_dashboard_common", fwx_api_get_dashboard_common, 0, FWX_API_METHOD_GET},
+     {"get_history_session", fwx_api_get_history_session, 0, FWX_API_METHOD_GET},
+     {"get_hourly_top_apps", fwx_api_get_hourly_top_apps, 0, FWX_API_METHOD_GET},
+--- a/open-app-filter/files/fwx.config
++++ b/open-app-filter/files/fwx.config
+@@ -2,7 +2,6 @@
+ 	option lan_ifname 'br-lan'
+ 	option tcp_rst '1'
+ 	option theme_mode '1'
+-	option feature_token ''
+ 
+ config appfilter appfilter
+ 	option enable 1
+--- a/open-app-filter/files/appfilter.init
++++ b/open-app-filter/files/appfilter.init
+@@ -29,7 +29,6 @@
+ 	option lan_ifname 'br-lan'
+ 	option tcp_rst '1'
+ 	option theme_mode '1'
+-	option feature_token ''
+ 
+ config appfilter appfilter
+ 	option enable 1

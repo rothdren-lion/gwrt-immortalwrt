@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=open-app-filter
-PKG_RELEASE:=3
+PKG_RELEASE:=4
 
 PKG_SOURCE_URL:=https://github.com/destan19/OpenAppFilter.git
 PKG_SOURCE_PROTO:=git
@@ -11,6 +11,8 @@ PKG_SOURCE_VERSION:=7fcf9e87dc75f7c28c74e09504a4efa0a2db3c92
 PKG_HASH:=2f03988a01b8049b7dee720ef5f24c8432dfe1508caaf80bf353155f7df27b82
 
 PKG_BUILD_PARALLEL:=1
+PKG_FILE_DEPENDS:=$(CURDIR)/files/feature.bin
+GWRT_OAF_FEATURE_SHA256:=e06862803f4fa31a87c96715b845da018e91903ececd59fa4305f1409a12146f
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -29,12 +31,17 @@ endef
 define Package/appfilter
   SECTION:=net
   CATEGORY:=Network
-  DEPENDS:=+libblobmsg-json +libjson-c +libpthread +libubox +libubus +libuci +libuci-lua +lua +kmod-oaf +libcurl +libsqlite3
+  DEPENDS:=+libblobmsg-json +libjson-c +libpthread +libubox +libubus +libuci +libuci-lua +lua +kmod-oaf +libsqlite3
   TITLE:=App filter userspace module
 endef
 
 MAKE_PATH:=open-app-filter/src
-MAKE_VARS+= LIBS="-lm -lpthread -lubox -luci -lubus -ljson-c -lblobmsg_json -lcurl -lsqlite3"
+MAKE_VARS+= LIBS="-lm -lpthread -lubox -luci -lubus -ljson-c -lblobmsg_json -lsqlite3"
+
+define Build/Prepare
+	$(call Build/Prepare/Default)
+	echo "$(GWRT_OAF_FEATURE_SHA256)  $(CURDIR)/files/feature.bin" | sha256sum -c -
+endef
 
 define Build/Compile
 	+$(KERNEL_MAKE) $(PKG_JOBS) \
@@ -71,7 +78,7 @@ define Package/appfilter/install
 	$(INSTALL_CONF) $(PKG_BUILD_DIR)/open-app-filter/files/mac_blacklist.config $(1)/etc/config/mac_blacklist
 	$(INSTALL_CONF) $(PKG_BUILD_DIR)/open-app-filter/files/user_info.config $(1)/etc/config/user_info
 	$(INSTALL_DIR) $(1)/etc/fwxd
-	$(INSTALL_DATA) $(PKG_BUILD_DIR)/open-app-filter/files/feature.bin $(1)/etc/fwxd/
+	$(INSTALL_DATA) $(CURDIR)/files/feature.bin $(1)/etc/fwxd/
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/open-app-filter/files/custom_feature.cfg $(1)/etc/fwxd/
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/open-app-filter/files/appfilter.init $(1)/etc/init.d/appfilter
