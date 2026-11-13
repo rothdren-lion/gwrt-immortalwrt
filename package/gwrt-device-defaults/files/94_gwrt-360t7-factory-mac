@@ -1,0 +1,80 @@
+#!/bin/sh
+# Qihoo 360T7: restore the Ethernet MAC from the vendor factory text block.
+#
+# The stock layout keeps it in the lowercase "factory" MTD partition
+# (0x728000, 512 KiB) as plain text, e.g.:
+#
+#   hwver=A9.1.0
+#   lanMac=34:47:D4:18:52:39
+#   sn=360ZT...
+#
+# The non-UBI DTS only references the capital "Factory" partition for the
+# WiFi EEPROM and never reads this text, so the kernel generates a random
+# MAC every boot. The UBI DTS reads a binary MAC at offset 0x8000, which is
+# 0xFF on this layout, so it does not work here either.
+#
+# This runs once from /etc/uci-defaults before netifd starts and pins the
+# br-lan device to the real factory MAC. If the text is unreadable, derive a
+# stable locally-administered MAC from the serial number instead of letting
+# the kernel pick a new random address on every boot.
+
+[ -f /etc/config/network ] || exit 0
+
+board="$(cat /tmp/sysinfo/board_name 2>/dev/null)"
+case "$board" in
+	qihoo,360t7*) ;;
+	*) exit 0 ;;
+esac
+
+log() { logger -t gwrt-360t7-mac "$*"; }
+
+mtd="$(awk '$0 ~ /"factory"$/ {print $1; exit}' /proc/mtd 2>/dev/null | tr -d ':')"
+if [ -z "$mtd" ] || [ ! -e "/dev/mtd$mtd" ]; then
+	log "lowercase factory partition not found; leaving MAC unchanged"
+	exit 0
+fi
+
+header="$(dd if="/dev/mtd$mtd" bs=512 count=1 2>/dev/null)"
+mac="$(printf '%s\n' "$header" | tr -d '\r' | awk -F= '$1 == "lanMac" {print $2; exit}')"
+
+valid_mac() {
+	case "$1" in
+		[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]) ;;
+		*) return 1 ;;
+	esac
+	local first
+	first=$((0x${1%%:*}))
+	[ "$first" -ne 0 ] && [ "$first" -ne 255 ] && [ $((first & 1)) -eq 0 ]
+}
+
+if valid_mac "$mac"; then
+	log "factory lanMac=$mac"
+else
+	sn="$(printf '%s\n' "$header" | tr -d '\r' | awk -F= '$1 == "sn" {print $2; exit}')"
+	seed="$sn"
+	[ -n "$seed" ] || seed="$(cat /sys/class/ieee80211/phy0/macaddress 2>/dev/null)"
+	[ -n "$seed" ] || seed="$(cat /sys/devices/soc0/serial_number 2>/dev/null)"
+	[ -n "$seed" ] || seed="360t7"
+	h="$(printf '%s' "$seed" | md5sum | cut -c1-12)"
+	# shellcheck disable=SC2086
+	set -- $(printf '%s' "$h" | sed 's/../& /g')
+	b1="$(printf '%02x' $(( (0x$1 & 0xfc) | 0x02 )))"
+	mac="$b1:$2:$3:$4:$5:$6"
+	log "factory lanMac invalid; using stable derived MAC $mac (seed=$seed)"
+fi
+
+sec="$(uci -q show network | sed -n "s/^network\.\([^.=]*\)\.name='br-lan'$/\1/p" | head -n1)"
+[ -n "$sec" ] || sec="$(uci -q show network | sed -n "s/^network\.\([^.=]*\)\.type='bridge'.*/\1/p" | head -n1)"
+if [ -z "$sec" ]; then
+	log "br-lan device section not found; leaving MAC unchanged"
+	exit 0
+fi
+
+cur="$(uci -q get "network.$sec.macaddr")"
+[ "$cur" = "$mac" ] && exit 0
+
+uci -q set "network.$sec.macaddr=$mac" || exit 1
+uci -q commit network || exit 1
+log "set br-lan MAC ${cur:-<unset>} -> $mac"
+
+exit 0
