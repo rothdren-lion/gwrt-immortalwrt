@@ -55,7 +55,23 @@ profiles/checksums/buildinfo、实际 .config、feeds SHA 和审计记录。
 
 ## 云端与交付状态
 
-本记录创建时正在完成推送前核验，尚未触发本轮四任务。后续只以对应 run 的最终结果和
-实际产物为依据更新状态；成功后按模型归档至 `/home/godsun/build/gwrt-releases/`，
-交付文件均带 `12M`，一起保存 manifest、profiles、buildinfo 与校验文件。
+实现提交 `5c0024cb14ea6562943a017afd6f32caaa764582` 已原子推送至 GitHub master 与固定构建分支
+`build/ipq60xx-261114-01`。四任务均使用该分支的同一提交，`release=false`。
+
+| 机型 | GitHub run | 初始状态（UTC 2026-11-13 18:28） |
+| --- | --- | --- |
+| ss01 | [43482919662](https://github.com/rothdren-lion/gwrt-immortalwrt/actions/runs/43482919662) | in_progress |
+| cs02 | [43482945138](https://github.com/rothdren-lion/gwrt-immortalwrt/actions/runs/43482945138) | in_progress |
+| cs02-gwrt2 | [43482974072](https://github.com/rothdren-lion/gwrt-immortalwrt/actions/runs/43482974072) | in_progress |
+| cs07 | [43483003456](https://github.com/rothdren-lion/gwrt-immortalwrt/actions/runs/43483003456) | in_progress |
+
+后续只以对应 run 的最终结果和实际产物为依据更新状态；成功后按模型归档至
+`/home/godsun/build/gwrt-releases/`，交付文件均带 `12M`，一起保存 manifest、profiles、
+buildinfo 与校验文件。运行输入和精确 SHA 见证据 `runs.json`。
 SS-01 WAN/LAN 反复插拔、CS 系列 DSA 实机性能仍需刷入后验证；本轮不刷机、不重启。
+
+已启动只处理上述四个 run 的 `finish-four-builds.py`（证据目录内），直接读取 GitHub 状态，
+成功后下载镜像及验证 artifact、核对 feeds 锁、包表、DTB、12M 布局、主题与 Mesh，并以
+qemu 运行成品 ARM64 daed 做浏览器验证。四款最终应用版本一致后才生成带模型与 `12M`
+的交付文件，核对归档校验和；不会操作设备。实时状态为证据 `delivery-status.json`。
+脚本未将正在编译的镜像视为成品，失败时留证并停止交付。
