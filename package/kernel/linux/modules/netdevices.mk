@@ -2129,6 +2129,28 @@ endef
 
 $(eval $(call KernelPackage,net-selftests))
 
+define KernelPackage/qca-ppe
+  SUBMENU:=$(NETWORK_DEVICES_MENU)
+  DEPENDS:=@TARGET_qualcommax +kmod-nf-flow
+  TITLE:=Qualcomm IPQ60xx/IPQ807x DSA PPE switch
+  KCONFIG:=CONFIG_QCOM_80211AX_PPE
+  FILES:=$(LINUX_DIR)/drivers/net/ethernet/qualcomm/qca_ppe.ko
+  AUTOLOAD:=$(call AutoProbe,qca_ppe)
+endef
+
+$(eval $(call KernelPackage,qca-ppe))
+
+define KernelPackage/qca-edma
+  SUBMENU:=$(NETWORK_DEVICES_MENU)
+  DEPENDS:=@TARGET_qualcommax +kmod-qca-ppe
+  TITLE:=Qualcomm IPQ60xx/IPQ807x EDMA Ethernet
+  KCONFIG:=CONFIG_QCOM_EDMA
+  FILES:=$(LINUX_DIR)/drivers/net/ethernet/qualcomm/qca_edma.ko
+  AUTOLOAD:=$(call AutoProbe,qca_edma)
+endef
+
+$(eval $(call KernelPackage,qca-edma))
+
 define KernelPackage/qcom-ppe
   SUBMENU:=$(NETWORK_DEVICES_MENU)
   DEPENDS:=@TARGET_qualcommbe +kmod-libphy +kmod-nf-flow \

@@ -134,7 +134,8 @@ define Device/jdcloud_re-cs-02
 	#                                     button is GPIO 71 (the "screen"
 	#                                     key in the CS-02 DTS)
 	# kmod-ath11k-ahb comes from the board-wide DEFAULT_PACKAGES.
-	DEVICE_PACKAGES := -ath11k-firmware-ipq6018 ath11k-firmware-ipq6018-ddwrt -ath11k-firmware-qcn9074 ath11k-firmware-qcn9074-ddwrt ipq-wifi-jdcloud_re-cs-02 kmod-ath11k-pci luci-app-athena-led
+	DEVICE_PACKAGES := -ath11k-firmware-ipq6018 ath11k-firmware-ipq6018-ddwrt -ath11k-firmware-qcn9074 ath11k-firmware-qcn9074-ddwrt ipq-wifi-jdcloud_re-cs-02 kmod-ath11k-pci luci-app-athena-led \
+		-kmod-qca-nss-dp -kmod-qca-nss-ecm -kmod-qca-nss-drv -kmod-qca-nss-drv-bridge-mgr kmod-qca-edma kmod-qca-ppe
 	IMAGES += factory.bin
 	IMAGE/factory.bin := append-kernel | pad-to $$$$(KERNEL_SIZE) | append-rootfs | append-metadata
 endef
@@ -151,7 +152,8 @@ define Device/jdcloud_re-cs-02-gwrt2
 	# Same hardware as RE-CS-02, different board id. The radio stack and the
 	# LED screen driver must match the plain CS-02 exactly - see the comment
 	# there.
-	DEVICE_PACKAGES := -ath11k-firmware-ipq6018 ath11k-firmware-ipq6018-ddwrt -ath11k-firmware-qcn9074 ath11k-firmware-qcn9074-ddwrt ipq-wifi-jdcloud_re-cs-02 kmod-ath11k-pci luci-app-athena-led
+	DEVICE_PACKAGES := -ath11k-firmware-ipq6018 ath11k-firmware-ipq6018-ddwrt -ath11k-firmware-qcn9074 ath11k-firmware-qcn9074-ddwrt ipq-wifi-jdcloud_re-cs-02 kmod-ath11k-pci luci-app-athena-led \
+		-kmod-qca-nss-dp -kmod-qca-nss-ecm -kmod-qca-nss-drv -kmod-qca-nss-drv-bridge-mgr kmod-qca-edma kmod-qca-ppe
 	IMAGES += factory.bin
 	IMAGE/factory.bin := append-kernel | pad-to $$$$(KERNEL_SIZE) | append-rootfs | append-metadata
 endef
@@ -168,7 +170,8 @@ define Device/jdcloud_re-cs-07
 	# CS-07 has no radio at all: ipq6010-re-cs-07.dts enables neither &wifi
 	# (the integrated IPQ6018 2.4G/5G) nor &pcie0 (a PCIe card). Strip the
 	# inherited wireless defaults from the board/subtarget package list.
-	DEVICE_PACKAGES := -ath11k-firmware-ipq6018 -kmod-ath11k-ahb -wpad-openssl
+	DEVICE_PACKAGES := -ath11k-firmware-ipq6018 -kmod-ath11k-ahb -wpad-openssl \
+		-kmod-qca-nss-dp -kmod-qca-nss-ecm -kmod-qca-nss-drv -kmod-qca-nss-drv-bridge-mgr kmod-qca-edma kmod-qca-ppe
 	IMAGES += factory.bin
 	IMAGE/factory.bin := append-kernel | pad-to $$$$(KERNEL_SIZE) | append-rootfs | append-metadata
 endef

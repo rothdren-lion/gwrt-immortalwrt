@@ -40,16 +40,28 @@ ahb = {'kmod-ath11k', 'kmod-ath11k-ahb', 'wpad-openssl'}
 pci = {'kmod-ath11k-pci', 'ath11k-firmware-qcn9074', 'ath11k-firmware-qcn9074-ddwrt'}
 ath12k = {'kmod-ath12k', 'wpad-openssl', 'ath12k-firmware-ipq5332-ddwrt', 'ath12k-firmware-qcn9274-ddwrt'}
 radio_packages = {p for p in packages if p.startswith(('kmod-ath11k', 'ath11k-firmware-', 'kmod-ath12k', 'ath12k-firmware-', 'kmod-mt79'))}
+jdc_presets = {'ss01', 'cs02', 'cs02-gwrt2', 'cs07'}
+baseline = (ROOT / 'config.ss01-261101-01-nss').read_text()
+ss01_apps = {name for name in re.findall(r'^CONFIG_PACKAGE_([^=]+)=y$', baseline, re.M)
+             if re.fullmatch(r'(?:luci-(?:app|i18n)-[a-z0-9+.-]+|gwrt-[a-z0-9+.-]+|daed(?:-[a-z0-9+.-]+)?)', name)}
 
 def requirements(device):
     required, forbidden = set(), set()
+    if args.preset in jdc_presets:
+        required |= ss01_apps | {'daed', 'sgdisk'}
+        forbidden |= {'luci-app-homeproxy', 'luci-i18n-homeproxy-zh-cn'}
+        if args.preset != 'ss01':
+            required |= {'kmod-qca-edma', 'kmod-qca-ppe'}
+            forbidden |= {'kmod-qca-nss-dp', 'kmod-qca-nss-drv', 'kmod-qca-nss-ecm',
+                          'kmod-qca-nss-drv-bridge-mgr', 'kmod-qca-ssdk'}
     if values.get('EMMC_SUPPORT') == 'y' and 'gwrt-device-defaults' in packages:
         required.add('sgdisk')
     if board == 'airoha' and 'emmc' in device:
         required.add('sgdisk')
     if device in ('jdcloud_re-cs-02', 'jdcloud_re-cs-02-gwrt2'):
         required |= ahb | {'kmod-ath11k-pci', 'ath11k-firmware-ipq6018-ddwrt',
-                           'ath11k-firmware-qcn9074-ddwrt', 'ipq-wifi-jdcloud_re-cs-02'}
+                           'ath11k-firmware-qcn9074-ddwrt', 'ipq-wifi-jdcloud_re-cs-02',
+                           'athena-led', 'luci-app-athena-led'}
         forbidden |= {'ath11k-firmware-ipq6018', 'ath11k-firmware-qcn9074'}
     elif device == 'jdcloud_re-ss-01':
         required |= ahb | {'ath11k-firmware-ipq6018-ddwrt', 'ipq-wifi-jdcloud_re-ss-01',
@@ -66,6 +78,10 @@ def requirements(device):
     elif device in ('jdcloud_re-cs-07', 'jdcloud_re-cs-08', 'clx_s20m'):
         forbidden |= radio_packages
         forbidden.add('wpad-openssl')
+        if device == 'jdcloud_re-cs-07':
+            forbidden |= {'kmod-cfg80211', 'kmod-mac80211', 'kmod-ath', 'iw',
+                          'wifi-scripts', 'hostapd-common', 'wireless-regdb',
+                          'athena-led', 'luci-app-athena-led'}
     elif args.preset in ('mt7981', 'mt7986'):
         soc = args.preset
         required |= {'kmod-mt7915e', 'kmod-' + soc + '-firmware', soc + '-wo-firmware', 'wpad-openssl'}
@@ -120,14 +136,14 @@ if args.preset == 'mt7981':
     for option in ('PACKAGE_MAC80211_DEBUGFS', 'PACKAGE_MAC80211_MESH'):
         if values.get(option) != 'y':
             fail('MT7981 WiFi validation requires ' + option)
-if args.preset in ('cs02', 'cs02-gwrt2'):
+if args.preset in jdc_presets:
     image = (ROOT / 'target/linux/qualcommax/image/ipq60xx.mk').read_text()
     blocks = dict(re.findall(r'^define Device/([^\n]+)\n(.*?)^endef', image, re.M | re.S))
     for device in devices:
         block = blocks.get(device, '')
         size = re.search(r'^\s*KERNEL_SIZE\s*:?=\s*([^\s]+)', block, re.M)
         if not size or size.group(1) != '12288k':
-            fail('Device/' + device + ' must retain its recorded 12288k CS-02 layout')
+            fail('Device/' + device + ' must retain its recorded 12288k JDC layout')
 if 'daed' in packages:
     check_packages(packages, {'kmod-sched-bpf', 'kmod-xdp-sockets-diag'}, (), 'daed')
     if values.get('aarch64') != 'y':

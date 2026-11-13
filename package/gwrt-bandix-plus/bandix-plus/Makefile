@@ -2,7 +2,8 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=bandix-plus
 PKG_VERSION:=0.1.2
-PKG_RELEASE:=1
+PKG_RELEASE:=2
+PKG_CONFIG_DEPENDS:=CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-07
 
 PKG_LICENSE:=Apache-2.0
 PKG_MAINTAINER:=timsaya
@@ -69,7 +70,7 @@ define Package/$(PKG_NAME)
 	SECTION:=net
 	CATEGORY:=Network
 	TITLE:=Bandix Plus - Network traffic monitoring tool
-	DEPENDS:=+zoneinfo-all +conntrack +iw
+	DEPENDS:=+zoneinfo-all +conntrack +!TARGET_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-07:iw
 endef
 
 define Package/$(PKG_NAME)/description

@@ -128,7 +128,14 @@ jobs:
 
       - name: Install feeds
         run: |
+          case "${{ inputs.device }}" in
+            ss01|cs02|cs02-gwrt2|cs07) cp configs/ipq60xx-feeds.conf feeds.conf ;;
+          esac
           ./scripts/feeds update -a
+          for feed in feeds/*; do
+            [ -d "$feed/.git" ] || continue
+            printf '%s %s\n' "$feed" "$(git -C "$feed" rev-parse HEAD)"
+          done > feeds-revisions.txt
           sh scripts/gwrt-apply-feed-overlays.sh
           ./scripts/feeds install -a
           sh gwrt-theme-V3/scripts/integrate.sh --no-config
@@ -146,7 +153,7 @@ jobs:
           case "${{ inputs.device }}" in
             ss01) MN="亚瑟ss-01" ;;
             cs02) MN="雅典娜cs-02" ;;
-            cs02-gwrt2) MN="雅典娜cs-02-lan1-is-wan" ;;
+            cs02-gwrt2) MN="雅典娜cs-02-gwrt2" ;;
             cs06) MN="赵云cs-06" ;;
             cs08) MN="太乙2pluscs-08" ;;
             be6500) MN="小米BE6500" ;;
@@ -155,14 +162,11 @@ jobs:
           esac
           echo "MODEL_NAME=$MN" >> "$GITHUB_ENV"
           case "${{ inputs.device }}" in
-            ss01) cp config.ss01-261101-01-nss .config ;;
-            cs02) OUT=.config VER="$VER" sh gwrt-mk-cs02-standard-config.sh ;;
-            cs02-gwrt2) cp config.ci-cs02-gwrt2-261030-01 .config ;;
+            ss01|cs02|cs02-gwrt2|cs07) python3 scripts/gwrt-mk-ipq60xx-config.py "${{ inputs.device }}" --version "$VER" ;;
             cs06) OUT=.config VER="$VER" sh gwrt-mk-cs06-config.sh ;;
             cs08) OUT=.config VER="$VER" sh gwrt-mk-cs08-config.sh ;;
             be6500) OUT=.config VER="$VER" sh gwrt-mk-be6500-config.sh ;;
             xer5) cp configs/config.xer5-261011-built .config ;;
-            cs07) cp config.ci-cs07-261030-01 .config ;;
             cp02) OUT=.config VER="$VER" sh gwrt-mk-cp02-config.sh ;;
             pzl8) OUT=.config VER="$VER" sh gwrt-mk-pzl8-config.sh ;;
             nezha) OUT=.config VER="$VER" sh gwrt-mk-nezha-config.sh ;;
@@ -203,12 +207,20 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p logs
+          case "${{ inputs.device }}" in
+            ss01|cs02|cs02-gwrt2|cs07)
+              taskset -c 0-5 make -j6 download \
+                REVISION="$(git rev-parse --short HEAD)" \
+                GWRT_CS02_KERNEL_SIZE=12288k 2>&1 | tee logs/download.log ;;
+          esac
           taskset -c 0-5 make -j6 \
             REVISION="$(git rev-parse --short HEAD)" \
+            GWRT_CS02_KERNEL_SIZE=12288k \
             CONFIG_VERSION_DIST=GWRT \
             CONFIG_VERSION_NUMBER="$VER" 2>&1 | tee logs/build.log \
             || taskset -c 0-5 make -j1 V=s \
             REVISION="$(git rev-parse --short HEAD)" \
+            GWRT_CS02_KERNEL_SIZE=12288k \
             CONFIG_VERSION_DIST=GWRT \
             CONFIG_VERSION_NUMBER="$VER" 2>&1 | tee -a logs/build.log
 
@@ -239,15 +251,26 @@ jobs:
           python3 scripts/tests/test-gwrt-ipq6018-uniphy-clocks.py "$kernel_dir" | tee logs/ss01-uniphy-clocks-test.log
           python3 scripts/gwrt-verify-ss01-image.py bin/targets/qualcommax/ipq60xx | tee logs/ss01-image-audit.log
 
-      - name: Save SS-01 verification records
-        if: success() && inputs.device == 'ss01'
+      - name: Verify DSA IPQ60xx packaged Ethernet and applications
+        if: success() && contains(fromJSON('["cs02","cs02-gwrt2","cs07"]'), inputs.device)
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 scripts/gwrt-verify-ipq60xx-image.py bin/targets/qualcommax/ipq60xx "${{ inputs.device }}" | tee logs/ipq60xx-image-audit.log
+
+      - name: Save IPQ60xx verification records
+        if: success() && contains(fromJSON('["ss01","cs02","cs02-gwrt2","cs07"]'), inputs.device)
         uses: actions/upload-artifact@v4
         with:
-          name: gwrt-ss01-${{ env.VER }}-verification
+          name: gwrt-${{ inputs.device }}-${{ env.VER }}-verification
+          include-hidden-files: true
           path: |
             logs/ss01-image-audit.log
             logs/ss01-nss-cleanup-test.log
             logs/ss01-uniphy-clocks-test.log
+            logs/ipq60xx-image-audit.log
+            .config
+            feeds-revisions.txt
             bin/targets/qualcommax/ipq60xx/*.manifest
             bin/targets/qualcommax/ipq60xx/profiles.json
             bin/targets/qualcommax/ipq60xx/sha256sums
@@ -281,11 +304,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Preserve SS-01 images for failed package inspection
-        if: failure() && inputs.device == 'ss01' && steps.build_firmware.outcome == 'success'
+      - name: Preserve IPQ60xx images for failed package inspection
+        if: failure() && contains(fromJSON('["ss01","cs02","cs02-gwrt2","cs07"]'), inputs.device) && steps.build_firmware.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: gwrt-ss01-${{ env.VER }}-inspection
+          name: gwrt-${{ inputs.device }}-${{ env.VER }}-inspection
           path: |
             bin/targets/qualcommax/ipq60xx/*.bin
             bin/targets/qualcommax/ipq60xx/*.manifest
