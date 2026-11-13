@@ -72,6 +72,18 @@ for p in kmod-sfp kmod-phy-marvell kmod-phy-marvell-10g \
 	sed -i "/^# CONFIG_PACKAGE_${p} is not set\$/d" "$OUT"
 done
 
+# --- 2b. 去 CS-02 专用 Athena 点阵屏（CS-08 无屏幕硬件，GPIO 69/70/73/74
+#         在 ipq5322 TLMM 上不存在，装了也只会常驻失败）---
+for p in athena-led luci-app-athena-led; do
+	sed -i "s|^CONFIG_PACKAGE_${p}=y\$|# CONFIG_PACKAGE_${p} is not set|" "$OUT"
+	sed -i "s|^CONFIG_DEFAULT_${p}=y\$|# CONFIG_DEFAULT_${p} is not set|" "$OUT"
+done
+
+# --- 2c. M.2 槽（pcie1）NVMe 支持：cs-06 基配置里显式关了 kmod-nvme ---
+sed -i "/^# CONFIG_PACKAGE_kmod-nvme is not set\$/d" "$OUT"
+grep -q "^CONFIG_PACKAGE_kmod-nvme=y$" "$OUT" || \
+	echo "CONFIG_PACKAGE_kmod-nvme=y" >> "$OUT"
+
 # --- GWRT mesh 组网（所有机型必备）---
 for p in gwrt-device-defaults gwrt-mesh-led gwrt-mesh-apmode gwrt-agent; do
 	grep -q "^CONFIG_PACKAGE_${p}=y$" "$OUT" && continue
@@ -89,4 +101,4 @@ done
 echo "==> generated: $OUT"
 echo "    base: $(basename "$SRC")  VER: $VER"
 echo "    期望: CONFIG_TARGET_PROFILE=\"DEVICE_jdcloud_re-cs-08\""
-echo "    下一步: cp $OUT .config && make defconfig 后复核（无 ath12k/wpad，有 kmod-sfp）"
+echo "    下一步: cp $OUT .config && make defconfig 后复核（无 ath12k/wpad/athena，有 kmod-sfp/kmod-nvme）"
