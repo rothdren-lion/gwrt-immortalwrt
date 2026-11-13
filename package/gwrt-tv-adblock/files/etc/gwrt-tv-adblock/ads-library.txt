@@ -1,9 +1,10 @@
 # =====================================================================
 # GWRT 国内广告域名库 (纯文本规则库 — 无数据库/SQLite)
-# 版本: 20261113-r1    分类条目: tv=218 tv-ext=115 cn=158
+# 版本: 20261113-r2    分类条目: tv=218 tv-ext=115 cn=148 sec=79 kill=4
 # 来源: 六源合并去重(上轮) + anti-AD 20261111073634 品牌抽取
 #       阿里DNS存活验证剔除死域; 覆盖 360/百度/腾讯/字节/快手/网易/新浪
-#       微博/友盟/华为/OPPO/vivo/小米手机/酷狗/京东联盟/主流广告联盟
+#       微博/友盟/华为/OPPO/vivo/小米手机/酷狗/京东联盟/主流广告联盟;
+#       sec = anti-AD 360 全量 + 腾讯管家人工验证 + 微软 Defender/遥测/更新人工清单
 # ---------------------------------------------------------------------
 # 用途: /etc/init.d/gwrt-tv-adblock 按 LuCI 启用的分类生成 dnsmasq
 #       address=/domain/ 规则 (NXDOMAIN 拦截, A/AAAA 双栈)
@@ -11,7 +12,10 @@
 #       首个 [分类] 之前的行被忽略
 # 分类: tv     电视核心(开机广告/视频App广告SDK, 无副作用, 默认开)
 #       tv-ext 电视激进(商店/升级/语音/投屏, 有副作用, 默认关)
-#       cn     国内综合(360/百度/腾讯等Web与APP广告、统计, 默认关)
+#       cn     国内综合(百度/腾讯/字节等Web与APP广告、统计, 默认关)
+#       sec    安全软件与更新(360全家桶/腾讯管家/微软Defender与遥测/
+#              WindowsUpdate, 默认关, 有副作用: 360与Windows更新会失效)
+#       kill   必拦(无分类开关): hao123/2345 导航劫持全家桶, 总开关开即生效
 # ---------------------------------------------------------------------
 # 升级: LuCI 页面"更新规则库"按钮, 或 /usr/libexec/gwrt-tv-adblock update
 #       (需先在 LuCI 填库地址), 或直接替换本文件后执行
@@ -356,16 +360,13 @@ vcgame.cn
 vipauth.hpplay.cn
 ykugc.cp31.ott.cibntv.net
 [cn]
-# 国内综合广告: 大厂广告SDK/统计/广告联盟/手机厂商广告
+# 国内综合广告: 百度/腾讯/字节等广告SDK/统计/广告联盟/手机厂商广告
 2345api.dftoutiao.com
 2345apicode.dftoutiao.com
 a.tanx.com
 abtest-ch.snssdk.com
 actlog.dftoutiao.com
 ad-market.vivo.com.cn
-ad.iot.360.cn
-ad.jia.360.cn
-ad.life.360.cn
 ad.qq.com
 ad.sina.com.cn
 ad.toutiao.com
@@ -414,7 +415,6 @@ adx.ads.oppomobile.com
 adxlog-adnet.vivo.com.cn
 adxlog.vivo.com.cn
 adxstatic.vivo.com.cn
-aegis.qq.com
 allyes.com
 als.baidu.com
 analytics.163.com
@@ -434,13 +434,11 @@ casee.cn
 cbjs.baidu.com
 ccc-x.jd.com
 ck.ads.oppomobile.com
-click.stat.hao.360.cn
 click.tanx.com
 cmc.tanx.com
 cms.opendsp.tanx.com
 cms.tanx.com
 collect.kugou.com
-commercial.shouji.360.cn
 cpro.baidu.com
 cpro.baidustatic.com
 ctobsnssdk.com
@@ -476,8 +474,6 @@ gdtimg.com
 h.trace.qq.com
 hm.baidu.com
 hmma.baidu.com
-huodong.ios.shouji.360.cn
-huodong.mobilem.360.cn
 ifs.tanx.com
 ipinyou.com
 logbak.hicloud.com
@@ -510,8 +506,93 @@ saxs.sina.com.cn
 sclick.baidu.com
 sdk-config.tanx.com
 sms.ads.oppomobile.com
-stat.m.360.cn
-stat.tf.360.cn
 toruk.tanx.com
 ugdtimg.com
 umeng.co
+[sec]
+# 安全软件与更新: 360全家桶/腾讯管家风控/微软Defender云与遥测/WindowsUpdate(有副作用)
+ad.dev.360.cn
+ad.iot.360.cn
+ad.jia.360.cn
+ad.life.360.cn
+adapi.shouji.360.cn
+adapter.shouji.360.cn
+ads360.cn
+aegis.qq.com
+agd.p.360.cn
+agd2.p.360.cn
+asimov-win.settings.data.microsoft.com.akadns.net
+c.mse.360.cn
+c.sayhi.360.cn
+check.smartscreen.net
+click.stat.hao.360.cn
+cm.dmp.360.cn
+commercial.shouji.360.cn
+cy2.vortex.data.microsoft.com.akadns.net
+data.microsoft.com
+db5.settings.data.microsoft.com.akadns.net
+db5.vortex.data.microsoft.com.akadns.net
+delivery.mp.microsoft.com
+diagnostics.support.microsoft.com
+do.dsp.mp.microsoft.com
+down.360.cn
+e.tf.360.cn
+fenxi.360.cn
+geo.settings.data.microsoft.com.akadns.net
+geo.vortex.data.microsoft.com.akadns.net
+guanjia.qq.com
+guess.tf.360.cn
+hk2.settings.data.microsoft.com.akadns.net
+huid.ad.360.cn
+huodong.ios.shouji.360.cn
+huodong.mobilem.360.cn
+hye.comp.360os.com
+hyt.comp.360os.com
+iad.e.360.cn
+inst.360safe.com
+kuaikan.netmon.360safe.com
+lianmeng.360.cn
+mayi360.cn
+mclean.f.360.cn
+modern.watson.data.microsoft.com.akadns.net
+msg.shouji.360.cn
+oca.telemetry.microsoft.us
+officecdn.microsoft.com.edgesuite.net
+pcmgr.qq.com
+qhupdate.com
+qstore.inner.api.sj.360.cn
+s.360.cn
+s.union.360.cn
+sdk.look.360.cn
+sdk.tf.360.cn
+se.360.cn
+sec.qq.com
+service.jiagu.360.cn
+show.look.360.cn
+soft.data.weather.360.cn
+softdl4.360.cn
+spynet2.microsoft.com
+spynetalt.microsoft.com
+stat.360safe.com
+stat.m.360.cn
+stat.tf.360.cn
+telemetry.microsoft.com
+tr.p.360.cn
+u.api.look.360.cn
+umwatsonc.telemetry.microsoft.us
+update.microsoft.com
+v.tf.360.cn
+v10-win.vortex.data.microsoft.com.akadns.net
+vconf.f.360.cn
+wan.360.cn
+watson.microsoft.com
+wdcp.microsoft.com
+wdcpalt.microsoft.com
+windowsupdate.com
+windowsupdate.edgesuite.net
+[kill]
+# 必拦(无分类开关): hao123/2345 导航劫持全家桶
+2345.cc
+2345.cn
+2345.com
+hao123.com

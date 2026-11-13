@@ -1,8 +1,9 @@
-# GWRT-TV-ADBLOCK — 国内广告拦截（电视 + 国内通用, dnsmasq 域名层, 纯文本库）
+# GWRT-TV-ADBLOCK — 国内广告拦截（电视 + 国内通用 + 安全软件, dnsmasq 域名层, 纯文本库）
 
-> 数据日期 2026-11-13（库版本 20261113-r1）；来源见文末；规则库为纯文本
+> 数据日期 2026-11-13（库版本 20261113-r2）；来源见文末；规则库为纯文本
 > `/etc/gwrt-tv-adblock/ads-library.txt`（固件内模板在 `/usr/share`），
-> 分类由 `gwrt-tv-adblock.config.cat_tv / cat_tv_ext / cat_cn` 开关控制。
+> 分类由 `gwrt-tv-adblock.config.cat_tv / cat_tv_ext / cat_cn / cat_sec`
+> 开关控制；`kill` 为固定必拦档（无开关，总开关开即生效）。
 
 ## 1. 原理与边界
 
@@ -27,7 +28,7 @@
 ```
 package/gwrt-tv-adblock/
 ├── Makefile                              # 主包（init/CLI/规则库/uci-defaults）
-├── files/etc/gwrt-tv-adblock/ads-library.txt   # 纯文本规则库（tv/tv-ext/cn 三分类）
+├── files/etc/gwrt-tv-adblock/ads-library.txt   # 纯文本规则库（tv/tv-ext/cn/sec/kill）
 └── luci-app-gwrt-tvadblock/              # LuCI 开关页（网络 → 电视广告拦截）
 ```
 
@@ -41,14 +42,15 @@ package/gwrt-tv-adblock/
   兜底加载，开机无需额外重启 dnsmasq）
 - CLI：`/usr/libexec/gwrt-tv-adblock status|on|off <分类>|core|extended|off|update|migrate`
 - 配置：`/etc/config/gwrt-tv-adblock` 的 `config.enabled`（总开关）、
-  `config.cat_tv` / `config.cat_tv_ext` / `config.cat_cn`（分类开关）、
-  `config.library_url`（库更新地址）、
+  `config.cat_tv` / `config.cat_tv_ext` / `config.cat_cn` / `config.cat_sec`
+  （分类开关）、`config.library_url`（库更新地址）、
   `config.custom_block` / `config.custom_allow`（自定义拦截/放行）
 
 ```sh
 /usr/libexec/gwrt-tv-adblock status      # 库版本/分类计数/开关状态/实测拦截
 /usr/libexec/gwrt-tv-adblock on cn       # 打开国内综合档（或 off cn 关闭）
-/usr/libexec/gwrt-tv-adblock off         # 总关（分类配置保留）
+/usr/libexec/gwrt-tv-adblock on sec      # 打开安全软件与更新档（360/微软等）
+/usr/libexec/gwrt-tv-adblock off         # 总关（分类配置保留；kill 一并停用）
 /usr/libexec/gwrt-tv-adblock core        # 旧三档兼容: = 总开+tv
 /usr/libexec/gwrt-tv-adblock extended    # 旧三档兼容: = 总开+tv+tv-ext
 /usr/libexec/gwrt-tv-adblock migrate     # 旧 mode 配置一次性迁移为分类开关
@@ -79,19 +81,27 @@ core（+extended）/ 自定义规则重写进 `/etc/dnsmasq.conf`，`stop()` 只
 > 循环条件），且没有 `remove` 命令——所以旧 uci conffile 的清理是
 > 「读列表→过滤→delete 整项→重加」，不做循环判断。
 
-## 3. 三分类语义
+## 3. 分类语义
 
 | 分类 | uci 选项 | 条数 | 内容 | 默认 | 副作用 |
 |---|---|---|---|---|---|
 | tv（电视核心） | `cat_tv` | 218 | 各品牌开机广告域 + 视频 App 广告 SDK + 乐播广告子域 + 广告追踪 | 开 | 无 |
 | tv-ext（电视激进） | `cat_tv_ext` | 115 | 各品牌应用商店/系统升级/语音助手/投屏服务/GITV 认证/P2P 节点 | 关 | 对应功能失效 |
-| cn（国内综合） | `cat_cn` | 158 | 360/百度/腾讯(广点通GDT/优量汇)/字节(穿山甲)/快手/网易/新浪微博/友盟/华为/OPPO/vivo/小米手机等广告SDK与统计；主流广告联盟（mediav/tanx/domob/admaster/miaozhen 等整域） | 关 | 统计类拦截可能触发个别 App 风控提示，可白名单救回 |
+| cn（国内综合） | `cat_cn` | 148 | 百度/腾讯(广点通GDT/优量汇)/字节(穿山甲)/快手/网易/新浪微博/友盟/华为/OPPO/vivo/小米手机等广告SDK与统计；主流广告联盟（mediav/tanx/domob/admaster/miaozhen 等整域） | 关 | 统计类拦截可能触发个别 App 风控提示，可白名单救回 |
+| sec（安全软件与更新） | `cat_sec` | 79 | 360 全家桶 53 条（卫士/杀毒/手机助手/驱动/更新器/推广/遥测，anti-AD 全量）；腾讯管家与风控 4 条（`guanjia.qq.com` `pcmgr.qq.com` `sec.qq.com` `aegis.qq.com`）；微软 Defender 云（`wdcp/wdcpalt/spynet2/spynetalt`）与遥测根域（`data.microsoft.com` `telemetry.microsoft.com` `watson.microsoft.com`，含 akadns 回退）；Windows Update 6 条（`windowsupdate.com` `update.microsoft.com` `delivery.mp.microsoft.com` 等） | 关 | **按设计**导致 360 组件、Windows/Office 更新失效 |
+| kill（固定必拦） | 无 | 4 | `hao123.com` `2345.com` `2345.cc` `2345.cn` 导航劫持全家桶 | 恒开（随总开关） | 相关站点打不开（正是不想让它开） |
 
 cn 档刻意排除：搜/内容/云存储 CDN（bdstatic/qhres/gtimg/alipay 等）、
 GRS/HTTPDNS 等功能域（`grs.*.hicloud.com`、`httpdns.ocloud`）、
 推送（gw*.push.mcp.weibo.cn）、裸根域、`api.*` 标签域；
 umeng 仅收 `umeng.co` 与 umengacs（对齐 anti-AD 的保守边界），
 `is/gecko/ic.snssdk.com` 这类字节配置/内容域不收。
+360 与腾讯风控域已从 cn 移入 sec（避免两类重复，语义归位）。
+
+sec 档刻意排除的微软功能域：`crl.microsoft.com`（证书吊销列表）、
+`teredo/win*.ipv6.microsoft.com`（IPv6 隧道）、`corp.sts/corpext.msitadfs`
+（企业认证）、`msftconnecttest.com`（NCSI 联网检测，会导致 Windows
+误判无网）——只拦 Defender 云/遥测/更新通道。
 
 **刻意排除的危险条目**（野清单常见，直接抄会翻车）：NTP、DNSPod、
 connectivitycheck、米家控制域（`api.io.mi.com`）、裸根域（`mi.com`/
@@ -132,11 +142,18 @@ nftset=/ad.hpplay.cn/4#inet#fw4#tvads
   hkamran80 smart-tv、CSDN/ZNDS/阿里云社区实机清单
 - 国内综合分类（cn）：anti-AD 20261111073634（privacy-protection-tools，
   10 万条 dnsmasq 格式）按品牌白名单标签抽取 + 上轮通用清单国内部分
+- 安全软件与更新（sec）：360 全家桶取 anti-AD 全量（`360.cn/360safe.com/
+  360safe.cn/qhupdate.com/mayi360.cn/ads360.cn/360os.com` 根域下全部条目）；
+  腾讯管家/风控为人工验证清单（guanjia/pcmgr/sec/aegis 存活验证）；
+  微软 Defender/遥测取 anti-AD curated 条目 + 人工根域收敛（data/telemetry/
+  watson 根域覆盖全部子域，保留 akadns 回退目标）；Windows Update 为人工
+  清单（anti-AD 不含，按微软官方更新端点整理）
+- kill 必拦：hao123.com + 2345.com/cc/cn（导航劫持全家桶，人工指定）
 - 处理门禁：品牌正则（白名单标签，只收广告/统计端点）→ 危险域过滤
   （裸根/CDN/功能域/推送）→ 后缀去重（父域覆盖子域）→ 与 tv 排重 →
   阿里 DNS(223.5.5.5) 存活验证（复用缓存）
-- 构建脚本：`/tmp/opencode/tv-adblock/build_cn_library.py`（含全部
-  正则与门禁，输出库文件 + cn-final.txt 供人工过目）
+- 构建脚本：`/tmp/opencode/tv-adblock/build_cn_library.py`（含全部门禁；
+  tv/tv-ext 从当前库文件读回保证幂等，输出 ads-library.txt + cn-final.txt）
 
 **升级规则库（三种方式，均不需改代码/刷固件）**：
 

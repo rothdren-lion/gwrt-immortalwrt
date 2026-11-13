@@ -1,7 +1,7 @@
 #!/bin/sh
 # GWRT 广告拦截命令行
 #   /usr/libexec/gwrt-tv-adblock status              状态/库版本/分类计数/实测
-#   /usr/libexec/gwrt-tv-adblock on|off <分类>       分类开关 (tv|tv-ext|cn)
+#   /usr/libexec/gwrt-tv-adblock on|off <分类>       分类开关 (tv|tv-ext|cn|sec)
 #   /usr/libexec/gwrt-tv-adblock core|extended|off   旧三档 (兼容映射)
 #   /usr/libexec/gwrt-tv-adblock update [noreload]   从库地址下载并替换规则库
 #   /usr/libexec/gwrt-tv-adblock migrate             旧 mode 配置迁移为分类开关
@@ -54,15 +54,15 @@ do_status() {
 	local en; en="$(uci -q get ${CFG}.config.enabled 2>/dev/null)"; [ -z "$en" ] && en=1
 	echo "library: $lib"
 	echo "version: $(lib_version "$lib")"
-	echo "counts: tv=$(cat_count "$lib" tv) tv-ext=$(cat_count "$lib" tv-ext) cn=$(cat_count "$lib" cn)"
-	echo "enabled: $en  tv: $(cat_state cat_tv)  tv-ext: $(cat_state cat_tv_ext)  cn: $(cat_state cat_cn)"
+	echo "counts: tv=$(cat_count "$lib" tv) tv-ext=$(cat_count "$lib" tv-ext) cn=$(cat_count "$lib" cn) sec=$(cat_count "$lib" sec) kill=$(cat_count "$lib" kill)"
+	echo "enabled: $en  tv: $(cat_state cat_tv)  tv-ext: $(cat_state cat_tv_ext)  cn: $(cat_state cat_cn)  sec: $(cat_state cat_sec)"
 	local cb ca
 	cb=$(uci -q get ${CFG}.config.custom_block 2>/dev/null)
 	ca=$(uci -q get ${CFG}.config.custom_allow 2>/dev/null)
 	echo "custom: $(echo $cb | wc -w) block / $(echo $ca | wc -w) allow"
-	# 实测: 两个电视域 + 一个国内综合域(反映 cn 开关效果)
+	# 实测: 电视域 + 国内综合域 + 安全档域 + 必拦域(反映各开关效果)
 	local d
-	for d in api.ad.xiaomi.com ads.huan.tv hm.baidu.com; do
+	for d in api.ad.xiaomi.com ads.huan.tv hm.baidu.com s.360.cn hao123.com; do
 		if check_blocked "$d"; then
 			echo "test: $d 已拦截"
 		else
@@ -76,6 +76,7 @@ norm_cat() {
 		tv|cat_tv) echo cat_tv ;;
 		tv-ext|tv_ext|cat_tv_ext) echo cat_tv_ext ;;
 		cn|cat_cn) echo cat_cn ;;
+		sec|cat_sec) echo cat_sec ;;
 		*) echo "" ;;
 	esac
 }
@@ -191,7 +192,7 @@ case "$1" in
 	update)    do_update "$2" ;;
 	migrate)   do_migrate ;;
 	on)
-		[ -n "$2" ] || { echo "usage: $0 on <tv|tv-ext|cn>"; exit 2; }
+		[ -n "$2" ] || { echo "usage: $0 on <tv|tv-ext|cn|sec>"; exit 2; }
 		set_cat on "$2" ;;
 	off)
 		# 带分类参数: 关该分类; 不带: 旧总关
@@ -201,5 +202,5 @@ case "$1" in
 			set_mode off
 		fi
 		;;
-	*) echo "usage: $0 status|on <cat>|off [cat]|core|extended|update|migrate" >&2; exit 2 ;;
+	*) echo "usage: $0 status|on <cat>|off [cat]|core|extended|update|migrate (cat: tv|tv-ext|cn|sec)" >&2; exit 2 ;;
 esac

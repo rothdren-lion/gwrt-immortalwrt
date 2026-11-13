@@ -2,6 +2,9 @@
 # GWRT 广告拦截: 读取纯文本规则库(ads-library.txt), 按启用的分类生成
 # dnsmasq address= 规则, 以标记块写入 /etc/dnsmasq.conf
 #
+# 分类: tv(电视核心) tv-ext(电视激进) cn(国内综合) sec(安全软件与更新)
+# 固定分类 kill(必拦): 无开关, 总开关开时始终生效 (hao123/2345 等)
+#
 # 为什么直写 /etc/dnsmasq.conf 而不用 uci conffile/confdir:
 #  - 部分固件 dnsmasq init 不支持 uci "conffile" 选项
 #  - confdir 随匿名节名变化 (/tmp/dnsmasq.cfg01411c.d) 且 /tmp 开机重建,
@@ -40,6 +43,7 @@ enabled_cats() {
 	cat_on cat_tv && out="tv"
 	cat_on cat_tv_ext && out="$out tv-ext"
 	cat_on cat_cn && out="$out cn"
+	cat_on cat_sec && out="$out sec"
 	echo $out
 }
 
@@ -56,8 +60,9 @@ use_library() {
 }
 
 # 从库文件抽取启用分类的域名 → address=/d/ (大小写归一, 去重, 过滤畸形行)
+# $1=库文件 $2=要生成的分类(空格分隔); kill 为必拦档, 由调用方无条件追加
 gen_rules() {
-	awk -v cats="$(enabled_cats)" '
+	awk -v cats="$2" '
 	BEGIN {
 		n = split(cats, A, " ")
 		for (i = 1; i <= n; i++) en[A[i]] = 1
@@ -133,7 +138,8 @@ apply_mode() {
 		if [ -n "$lib" ]; then
 			{
 				echo "$BEGIN"
-				gen_rules "$lib"
+				# kill 档无开关: 总开关开启即始终拦截
+				gen_rules "$lib" "$(enabled_cats) kill"
 				gen_custom
 				echo "$END"
 			} >> "$DNSCONF"

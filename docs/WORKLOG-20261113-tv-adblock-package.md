@@ -204,6 +204,125 @@ disable 并删除全部服务/页面/规则文件 → 清 indexcache + rpcd 重�
 - 数据工作目录 `/tmp/opencode/tv-adblock/`：build_cn_library.py、
   antiad-dnsmasq.conf、cn-final.txt、cn-candidates.txt、liveness.json
 
+## 9. 编译集成（12 个生成器）与 GitHub 同步
+
+用户要求把 tv-adblock 写入本地与 GitHub 编译集成，固件构建继续停止。
+
+### 9.1 生成器接入（按各自风格，12 个文件）
+
+| 风格 | 生成器 | 插入方式 |
+|---|---|---|
+| add_pkg 独立 section | xingloo-ax3000 / mt7986 / wr632ax / an7581 | `gwrt-tv-adblock` + `luci-app-gwrt-tvadblock` 循环 |
+| 扁平 `CONFIG_PACKAGE_*` | cp02 / pzl8 / nezha | `gwrt-mesh-led=y` 后补两行 |
+| set_pkg（sed 原地） | cs02 | mesh 循环后新增 3c 循环 |
+| 内联去重循环 | cs06 / cs08 | 复用同款 `grep&&continue + sed 删 not-set + 追加` |
+| 只减不增 | cs07 | defconfig 前显式追加 |
+| CI seed sed 派生 | cs02-standard | seed 未含时补两行 |
+
+-be6500 经 cs06 生成器派生（OUT 传参），自动获得；wr630ax 是 4 行
+ stub（exec xingloo），自动获得。
+- 依赖核对：主包 `DEPENDS:=+dnsmasq`，各机型用 dnsmasq-full（Makefile
+  `PROVIDES:=dnsmasq`）满足；luci-app 依赖 `+luci-compat`，所有 seed
+  （ss01-261018-01 / cs02-gwrt2-261021-04 / cs06-261026-01 /
+  ci-cs02-gwrt2-261030-01）均已含。`PKGARCH:=all` 不限架构。
+- 只改生成器源码：12 个文件 `sh -n` 全通过；**未运行生成器**（不动 build
+  树 .config），未触发 `gwrt-build.yml`（该 workflow 仅 workflow_dispatch）。
+
+### 9.2 GitHub 同步（导出副本 → 私有仓 master）
+
+- 本地仓库此前只有 immortalwrt 上游 remote，无私有仓；沿用导出副本
+  `/home/godsun/build/gwrt-github-export`（origin=rothdren-lion/gwrt-immortalwrt）。
+- 导出副本原本停在 `4e20145b`，远端 master 已到 `48c54a2b`（30+ 提交）。
+  直接整文件覆盖会回退远端新改动：an7581（-77 行：WiFi/IPTV/Podman/SSR 等）、
+  cs02/cs07（configs/ 路径 + mkdir）、wr632ax（configs/ OUT 路径）。
+  处理：`reset --hard FETCH_HEAD` 对齐远端后，这 4 个文件**先恢复远端版，
+  再只插入 tv-adblock 块**；其余 8 个生成器本地版=远端版+新增，直接覆盖。
+  最终 12 个文件差异全部为纯新增（+2～+8 行，0 删除）。
+- 提交 `e740babd`：23 文件 +1523 行（packages 10 + 文档 1 + 生成器 12），
+  推送 `48c54a2b..e740babd`，远端回读库版本 r2 一致。
+- **教训**：导出副本索引里常有预先暂存的大量无关文件（.config.bak、
+  bin-*、.gwrt-logs、旧删除等，约 800 项）；第一次 `git commit -m` 未带
+  路径限定，把 820 个文件/86 万行卷进提交，push 被远端拒绝后
+  `reset --soft HEAD~1` 撤销。**必须用 `git commit -m MSG -- <paths>`
+  路径限定提交**，且推送前核对 `git diff-tree --name-only` 文件数。
+
+## 10. r2：新增 sec（安全软件与更新）与 kill（必拦）
+
+用户补充：360 卫士全家桶、腾讯安全、微软安全、微软更新「做一个开关」；
+hao123、2345.cc「直接拉入枪毙」。
+
+### 10.1 规则库 r2（20261113-r2，564 域名）
+
+| 分类 | 条数 | 变化 |
+|---|---|---|
+| tv | 218 | 不变 |
+| tv-ext | 115 | 不变 |
+| cn | 148 | 158→148：360 品牌 9 条 + aegis.qq.com 移入 sec，语义归位 |
+| sec | 79 | 新增（默认关） |
+| kill | 4 | 新增（无开关，随总开关） |
+
+- sec-360（53 条存活）：anti-AD 中 `360.cn/360safe.com/360safe.cn/qhupdate.com/
+  mayi360.cn/ads360.cn/360os.com` 根域下全量（卫士/杀毒/手机助手广告 API、
+  `cm.dmp.360.cn`、`fenxi.360.cn`、`lianmeng.360.cn`、`down/softdl4`、
+  `qhupdate.com` 更新器、`stat.*` 遥测等）。明确纳入 `ad.dev.360.cn`；
+  死域 7 条（shake/cpull/gamebox/leak/s.so/sdkrec.tf 等）按存活验证剔除。
+- sec-腾讯（4 条）：`guanjia.qq.com`（管家主域，覆盖子域）`pcmgr.qq.com`
+  `sec.qq.com` `aegis.qq.com`（原 cn 风控域移入）。均 AliDNS 存活验证。
+- sec-微软安全（18 条）：Defender 云 `wdcp/wdcpalt/spynet2/spynetalt`；
+  遥测根域 `data.microsoft.com`（覆盖 vortex/settings/events 全部子域）、
+  `telemetry.microsoft.com`（覆盖 sqm/watson.telemetry）、
+  `watson.microsoft.com`、`diagnostics.support.microsoft.com`、
+  `oca.telemetry.microsoft.us`、`umwatsonc.telemetry.microsoft.us`、
+  `check.smartscreen.net`、akadns/glbdns 回退目标（cy2/db5/geo/hk2/
+  asimov-win/modern.watson/v10-win）。
+  **刻意排除**：`crl.microsoft.com`（证书吊销列表）、teredo/win*.ipv6
+  （IPv6 隧道）、corp.sts/corpext.msitadfs（企业认证）、
+  msftconnecttest.com（NCSI 联网检测，拦了 Windows 会误判无网）。
+- sec-微软更新（6 条）：`windowsupdate.com`（根域覆盖 download/ctldl/fe*/
+  tlu 全部子域）、`update.microsoft.com`（含 fe2cr/catalog）、
+  `delivery.mp.microsoft.com`、`dl.delivery.mp.microsoft.com`、
+  `do.dsp.mp.microsoft.com`、`windowsupdate.edgesuite.net`、
+  `officecdn.microsoft.com.edgesuite.net`。
+- kill（4 条）：`hao123.com` `2345.com` `2345.cc` `2345.cn` —— 用户明确
+  「直接枪毙」，做成无开关固定档，总开关开启即始终生成。
+
+### 10.2 代码 v2.1
+
+- init：`gen_rules(lib, cats)` 增加分类参数；apply_mode 传
+  `"$(enabled_cats) kill"`，kill 无条件追加；`enabled_cats` 增 sec；
+  cat_sec 缺省关（cat_on 的 `*)` 分支天然覆盖）
+- CLI：norm_cat 增 sec；status 计数/开关行增 sec/kill；实测增
+  `s.360.cn`（sec）与 `hao123.com`（kill）；usage 更新
+- LuCI：新增「安全软件与更新档（sec）」开关（描述明确 360/Windows 更新
+  会失效）；库信息行增 sec/必拦条数；状态行增 sec；实测增 360/hao123
+- uci-defaults / 默认配置：`cat_sec=0`；Makefile 2.0→2.1（描述同步）
+- 库头注释更新为 5 分类 + kill 语义
+
+### 10.3 验证
+
+- 本地：`sh -n` init/CLI/uci-defaults 通过，`luac5.1 -p` model 通过；
+  awk 模拟默认态 `tv+kill`=222 条（218+4），全开=564；dnsmasq --test OK
+- `.9.9` 部署：busybox awk 分类计数 218/115/148/79/4 与主机一致；
+  默认态标记块 222 条，`hao123.com`/`2345.com`/`2345.cc` 拦截，
+  `s.360.cn` 放行（sec 关）、`api.ad.xiaomi.com` 拦截、`hm.baidu.com`
+  放行（cn 关）；正常站点 baidu/qq/microsoft 不受影响
+- `on sec`：标记块 301 条（222+79），`s.360.cn`/`windowsupdate.com`/
+  `guanjia.qq.com`/`wdcp.microsoft.com` 全部拦截，复测确认（避开
+  dnsmasq 重启瞬态）；CLI status 计数/实测全对
+- daed PID 10929 / oafd 3579 全程未变；LuCI model loadfile 通过、页面
+  403 登录壳正常（rpcd/indexcache 已清）
+- 设备状态：`.9.9` 按用户「最关键」定位**保持 cat_sec=1**（新装固件默认
+  仍为 0，界面可随时关）；cat_cn 仍 0
+
+### 10.4 文件
+
+- 修改：`files/etc/gwrt-tv-adblock/ads-library.txt`（r2 564 条）、
+  init、CLI、uci-defaults、`files/etc/config/gwrt-tv-adblock`、
+  LuCI model、Makefile
+- 数据：build_cn_library.py 重构为幂等（tv/tv-ext 从当前库读回），
+  新增 sec/kill 流水线与 liveness 缓存
+- GitHub：`e740babd` 已推送；docs/GWRT-TV-ADBLOCK.md 同步更新
+
 ## 6. 环境备注
 
 - 主机 dnsmasq 2.92 可用 `--test`；无 lua 解释器

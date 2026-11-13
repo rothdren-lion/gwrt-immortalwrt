@@ -23,8 +23,8 @@ local function cat_count(path, cat)
 	return tonumber(sys.exec(cmd):match("%d+")) or 0
 end
 
-m = Map("gwrt-tv-adblock", translate("广告拦截（电视/国内通用）"),
-	translate("基于纯文本规则库（无数据库）在 dnsmasq 域名层拦截广告：电视开机广告/视频App广告SDK（tv）、应用商店/升级/语音/投屏（tv-ext，有副作用）、360/百度/腾讯/字节等国内Web与APP广告及统计（cn）。对局域网内所有使用本机 DNS 的设备生效。注意：视频贴片广告与正片同一内容域名，DNS 层拦不住；改动生效后建议清理设备端缓存并重启。"))
+m = Map("gwrt-tv-adblock", translate("广告拦截（电视/国内通用/安全软件）"),
+	translate("基于纯文本规则库（无数据库）在 dnsmasq 域名层拦截：电视开机广告与视频App广告SDK（tv）、应用商店/升级/语音/投屏（tv-ext，有副作用）、百度/腾讯/字节等国内Web与APP广告及统计（cn）、360全家桶/腾讯管家/微软Defender与遥测/Windows Update（sec，有副作用）。hao123/2345 导航劫持为预置必拦项，无单独开关，总开关开启即生效。对局域网内所有使用本机 DNS 的设备生效。注意：视频贴片广告与正片同一内容域名，DNS 层拦不住；改动生效后建议清理设备端缓存并重启。"))
 
 s = m:section(NamedSection, "config", "gwrt-tv-adblock", translate("开关"))
 s.addremove = false
@@ -50,7 +50,13 @@ o = s:option(ListValue, "cat_cn", translate("国内综合档（cn）"))
 o:value("1", translate("开"))
 o:value("0", translate("关"))
 o.default = "0"
-o.description = translate("360/百度/腾讯/字节/快手/网易/新浪微博/友盟/华为/OPPO/vivo/小米手机等广告SDK与统计、主流广告联盟。默认关，开启后若某App异常可加自定义放行。")
+o.description = translate("百度/腾讯/字节/快手/网易/新浪微博/友盟/华为/OPPO/vivo/小米手机等广告SDK与统计、主流广告联盟。默认关，开启后若某App异常可加自定义放行。")
+
+o = s:option(ListValue, "cat_sec", translate("安全软件与更新档（sec）"))
+o:value("1", translate("开"))
+o:value("0", translate("关"))
+o.default = "0"
+o.description = translate("360 全家桶（卫士/杀毒/手机助手/驱动/更新器等推广与遥测）、腾讯管家/风控（guanjia/pcmgr/sec/aegis）、微软 Defender 云查杀与遥测、Windows Update 更新域、Office 更新 CDN。默认关；开启后 360 组件与 Windows 更新将失效（这正是拦截目的），恢复时关闭本档即可。hao123/2345 为预置必拦，不在此开关内。")
 
 -- 用户自定义拦截域名
 local function filter_domains(self, value)
@@ -92,8 +98,9 @@ function d.cfgvalue(self, section)
 	local html = { string.format(
 		"<div>活动库：<code>%s</code>（版本 <b>%s</b>）</div>", p, lib_version(p)) }
 	html[#html+1] = string.format(
-		"<div>条目：tv <b>%d</b> 条 / tv-ext <b>%d</b> 条 / cn <b>%d</b> 条</div>",
-		cat_count(p, "tv"), cat_count(p, "tv-ext"), cat_count(p, "cn"))
+		"<div>条目：tv <b>%d</b> / tv-ext <b>%d</b> / cn <b>%d</b> / sec <b>%d</b> / 必拦 <b>%d</b></div>",
+		cat_count(p, "tv"), cat_count(p, "tv-ext"), cat_count(p, "cn"),
+		cat_count(p, "sec"), cat_count(p, "kill"))
 	html[#html+1] = translate("升级方式：填库地址后点下方按钮；或直接替换库文件后执行 /etc/init.d/gwrt-tv-adblock reload。固件升级不影响已替换的库（位于 /etc）。")
 	return table.concat(html, "")
 end
@@ -122,10 +129,11 @@ function d.cfgvalue(self, section)
 	end
 	local en = m.uci:get("gwrt-tv-adblock", "config", "enabled") or "1"
 	local html = { string.format("<div>总开关：<b>%s</b></div>", onoff(en)) }
-	html[#html+1] = string.format("<div>分类：tv <b>%s</b>；tv-ext <b>%s</b>；cn <b>%s</b></div>",
+	html[#html+1] = string.format("<div>分类：tv <b>%s</b>；tv-ext <b>%s</b>；cn <b>%s</b>；sec <b>%s</b>（必拦 hao123/2345 固定生效）</div>",
 		onoff(m.uci:get("gwrt-tv-adblock", "config", "cat_tv") or "1"),
 		onoff(m.uci:get("gwrt-tv-adblock", "config", "cat_tv_ext") or "0"),
-		onoff(m.uci:get("gwrt-tv-adblock", "config", "cat_cn") or "0"))
+		onoff(m.uci:get("gwrt-tv-adblock", "config", "cat_cn") or "0"),
+		onoff(m.uci:get("gwrt-tv-adblock", "config", "cat_sec") or "0"))
 	local bl = m.uci:get_list("gwrt-tv-adblock", "config", "custom_block") or {}
 	local al = m.uci:get_list("gwrt-tv-adblock", "config", "custom_allow") or {}
 	html[#html+1] = string.format("<div>自定义：拦截 <b>%d</b> 条 / 放行 <b>%d</b> 条</div>", #bl, #al)
@@ -134,8 +142,8 @@ function d.cfgvalue(self, section)
 		return (out:match("%S") == nil) and "已拦截" or "未拦截"
 	end
 	html[#html+1] = string.format(
-		"<div>实测：api.ad.xiaomi.com（电视开机）<b>%s</b>；hm.baidu.com（百度统计/cn）<b>%s</b></div>",
-		test("api.ad.xiaomi.com"), test("hm.baidu.com"))
+		"<div>实测：api.ad.xiaomi.com（电视）<b>%s</b>；hm.baidu.com（cn）<b>%s</b>；s.360.cn（sec）<b>%s</b>；hao123.com（必拦）<b>%s</b></div>",
+		test("api.ad.xiaomi.com"), test("hm.baidu.com"), test("s.360.cn"), test("hao123.com"))
 	return table.concat(html, "")
 end
 

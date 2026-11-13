@@ -27,6 +27,7 @@ else
 	uci -q get ${CFG}.config.cat_tv     >/dev/null || uci set ${CFG}.config.cat_tv=1
 	uci -q get ${CFG}.config.cat_tv_ext >/dev/null || uci set ${CFG}.config.cat_tv_ext=0
 	uci -q get ${CFG}.config.cat_cn     >/dev/null || uci set ${CFG}.config.cat_cn=0
+	uci -q get ${CFG}.config.cat_sec    >/dev/null || uci set ${CFG}.config.cat_sec=0
 fi
 uci commit ${CFG}
 
