@@ -22,6 +22,7 @@ on:
           - nezha
           - bdy-g98-direct
           - bdy-g98-uefi
+          - r68s
           - mt7981
           - mt7986
           - an758x
@@ -151,6 +152,7 @@ jobs:
             cs08) MN="太乙2pluscs-08" ;;
             be6500) MN="小米BE6500" ;;
             cs07) MN="太乙er1-cs-07" ;;
+            r68s) MN="FastRhinoR68S" ;;
             *) MN="" ;;
           esac
           echo "MODEL_NAME=$MN" >> "$GITHUB_ENV"
@@ -168,6 +170,7 @@ jobs:
             nezha) OUT=.config VER="$VER" sh gwrt-mk-nezha-config.sh ;;
             bdy-g98-direct) OUT=.config VER="$VER" BOOT=direct sh gwrt-mk-bdy-g98-config.sh ;;
             bdy-g98-uefi) OUT=.config VER="$VER" BOOT=uefi sh gwrt-mk-bdy-g98-config.sh ;;
+            r68s) OUT=.config VER="$VER" sh gwrt-mk-r68s-config.sh ;;
             mt7981) OUT=.config GWRT_NO_SELF_DEFCONFIG=1 VER="$VER" sh gwrt-mk-xingloo-ax3000-config.sh ;;
             mt7986) OUT=.config GWRT_NO_SELF_DEFCONFIG=1 VER="$VER" sh gwrt-mk-mt7986-config.sh ;;
             an758x) OUT=.config VER="$VER" DEVICE=all WITH_OPENCLASH=1 WITH_SMB=1 sh gwrt-mk-an7581-config.sh ;;

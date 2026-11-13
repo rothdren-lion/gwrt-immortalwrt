@@ -352,6 +352,9 @@ define Device/lunzn_fastrhino-r68s
   $(Device/IfnameMigration)
   DEVICE_VENDOR := Lunzn
   DEVICE_MODEL := FastRhino R68S
+  # r68s.dts is the eMMC variant (sdhci, non-removable) with
+  # 2x 2.5G RTL8125 (PCIe) + 2x 1G GMAC; r66s.dts is the TF-card variant.
+  DEVICE_DTS := rk3568-fastrhino-r68s
   DEVICE_PACKAGES := kmod-r8125
 endef
 TARGET_DEVICES += lunzn_fastrhino-r68s

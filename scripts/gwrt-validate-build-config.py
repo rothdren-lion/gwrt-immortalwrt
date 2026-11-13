@@ -58,6 +58,15 @@ def requirements(device):
         forbidden |= ahb - {'wpad-openssl'}
         other = 'xiaomi_be6500' if device == 'jdcloud_re-cs-06' else 'jdcloud_re-cs-06'
         forbidden.add('ipq-wifi-' + other)
+    elif device == 'lunzn_fastrhino-r68s':
+        # RK3568 eMMC router: 2x 2.5G RTL8125 (PCIe) + 2x 1G GMAC.
+        # Plugin set follows SS-01, drivers are the R68S's own.
+        required |= {'kmod-r8125', 'sgdisk', 'daed', 'luci-app-daed',
+                     'gwrt-device-defaults', 'gwrt-mesh-apmode', 'gwrt-mesh-led',
+                     'gwrt-agent'}
+        forbidden |= {'luci-app-passwall', 'luci-i18n-passwall-zh-cn',
+                      'kmod-ath11k', 'kmod-ath11k-ahb', 'kmod-ath12k',
+                      'kmod-qca-nss-drv', 'kmod-qca-ssdk', 'kmod-r8169'}
     elif device in ('jdcloud_re-cs-07', 'jdcloud_re-cs-08', 'clx_s20m'):
         forbidden |= radio_packages
         forbidden.add('wpad-openssl')
