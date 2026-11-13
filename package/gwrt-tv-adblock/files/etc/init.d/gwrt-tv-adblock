@@ -61,11 +61,25 @@ use_library() {
 
 # 从库文件抽取启用分类的域名 → address=/d/ (大小写归一, 去重, 过滤畸形行)
 # $1=库文件 $2=要生成的分类(空格分隔); kill 为必拦档, 由调用方无条件追加
+# $3=放行清单(空格分隔): dnsmasq 的 address= 优先级高于 server=,
+#    同域/子域都救不回来, 所以放行必须在生成阶段就排除, 不能只靠 server=
 gen_rules() {
-	awk -v cats="$2" '
+	awk -v cats="$2" -v allow="$3" '
 	BEGIN {
 		n = split(cats, A, " ")
 		for (i = 1; i <= n; i++) en[A[i]] = 1
+		m = split(allow, W, " ")
+		for (i = 1; i <= m; i++) if (W[i] != "") wl[W[i]] = 1
+	}
+	# 域名 d 是否被某个放行项覆盖: 放行项等于 d 或为其父域
+	function allowed(d,    p, parts, i) {
+		if (d in wl) return 1
+		parts = d
+		while (match(parts, /\./)) {
+			parts = substr(parts, RSTART + 1)
+			if (parts in wl) return 1
+		}
+		return 0
 	}
 	/^#/ { next }
 	/^\[/ {
@@ -77,7 +91,7 @@ gen_rules() {
 	cur == 1 && NF >= 1 {
 		d = tolower($1)
 		if (d ~ /^[a-z0-9_.-]+$/ && d !~ /^[.-]/ && d !~ /[.-]$/ && d !~ /\.\./) {
-			if (!(d in seen)) { seen[d] = 1; print "address=/" d "/" }
+			if (!(d in seen) && !allowed(d)) { seen[d] = 1; print "address=/" d "/" }
 		}
 	}
 	' "$1"
@@ -88,8 +102,11 @@ gen_custom() {
 	for d in $(uci -q get ${CFG}.config.custom_block 2>/dev/null); do
 		echo "address=/$d/"
 	done
+	# 放行: 必须带目标。dnsmasq 的裸 server=/d/ 是"本地权威"语义(只查
+	# /etc/hosts 与 DHCP 租约, 不转发), 放行会等于继续拦死; 用 # 表示
+	# "按标准上游解析", 不依赖具体上游 IP, 换网络也不会失效。
 	for d in $(uci -q get ${CFG}.config.custom_allow 2>/dev/null); do
-		echo "server=/$d/"
+		echo "server=/$d/#"
 	done
 }
 
@@ -136,10 +153,13 @@ apply_mode() {
 		local lib
 		lib="$(use_library)"
 		if [ -n "$lib" ]; then
+			local allow
+			# 放行清单参与规则生成: address= 优先于 server=, 必须在生成阶段排除
+			allow="$(uci -q get ${CFG}.config.custom_allow 2>/dev/null)"
 			{
 				echo "$BEGIN"
 				# kill 档无开关: 总开关开启即始终拦截
-				gen_rules "$lib" "$(enabled_cats) kill"
+				gen_rules "$lib" "$(enabled_cats) kill" "$allow"
 				gen_custom
 				echo "$END"
 			} >> "$DNSCONF"

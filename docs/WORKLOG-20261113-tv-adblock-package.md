@@ -329,3 +329,67 @@ hao123、2345.cc「直接拉入枪毙」。
 - 数据工作目录 `/tmp/opencode/tv-adblock/`（merge.py/classify2.py/
   liveness.json/清理前后清单/hosts 版/ad-server-ips.txt/dead-domains.txt）
 - 构建树仍禁止 `make`/云端编译
+
+## 11. 误杀审计与白名单失效修复（包 2.2, 2026-11-14）
+
+用户问：「开关会不会被误杀导致 LAN 下无法上网」。做了静态审计 + `.9.9`
+五档全开实测。
+
+### 11.1 静态审计（564 条全量）
+
+- 危险关键词扫描（connectivitycheck/captive/msftconnecttest/ntp/pool/
+  dnspod/ocsp/crl/pki/dhcp/pppoe/cloudflare 等）：**零命中**
+- 裸根域：只有 `windowsupdate.com` 一条（用户有意选择的更新档，可关）
+- 其他"疑似"条目复核：`imdns.hpplay.cn`（乐播投屏广告 DNS）、
+  `ykad-gateway.youku.com`（优酷广告网关）、`*.akadns.net`（微软遥测
+  CNAME 目标）——均非基础设施
+- 与路由器自身服务（gwrt/daed/oaf/agent/openwrt）无交集；畸形行 0
+- 90 个常用域（百度/QQ/微信/淘宝/支付宝/微博/B站/爱奇艺/GitHub/
+  Docker/PyPI/OpenWrt/Steam/NTP/OCSP 等）比对：**只有 4 个命中**，
+  且全部是有意拦截（hao123 + 3 个 Windows 更新域）
+
+### 11.2 实证（`.9.9`，五档全开 564 条）
+
+- 路由器自身解析 + HTTP(S) 200 正常
+- LAN 客户端（查 `192.168.9.9:53`）：常用域全部正常，hao123/2345/
+  api.ad.xiaomi.com/s.360.cn/windowsupdate.com/hm.baidu.com 全拦
+- 证书链/OCSP（digicert/pki.goog/sectigo/crl.microsoft.com）、
+  时间同步（time.windows.com/cloudflare/pool.ntp.org）、
+  联网检测（gstatic/msftconnecttest/captive.apple/detectportal）全部正常
+- dnsmasq 监听 `192.168.9.9:53` + `:67`(DHCP)；10 条租约正常；
+  上游 `192.168.254.25` 直连正常；无 dnsmasq 报错
+- 结论：**不会导致 LAN 无法上网**
+
+### 11.3 发现并修复的真实缺陷：白名单失效
+
+用户担心的场景其实是成立的，但不是"库里的域误杀"，而是**白名单救不回来**：
+
+- 现象：`custom_allow` 加 `hao123.com` 后仍 NXDOMAIN
+- dnsmasq 2.92 实测根因（本地 dnsmasq 实例复现）：
+  1. `address=/X/` 优先级**高于** `server=/X/` 与 `server=/sub.X/`
+     → 早期文档"server 可覆盖更宽 address"是错的，同域/子域都救不回
+  2. 裸 `server=/X/`（不带目标）是**本地权威**语义，只查 /etc/hosts 与
+     DHCP 租约、**不转发上游** → 用它放行等于继续拦死
+- 修复（init v2.2）：
+  1. `gen_rules` 增加 `$3=放行清单`，用 `allowed()` 判断域名等于或
+     属于某个放行项时**不生成 address 规则**（从源头排除，含裸根与其
+     全部子域）
+  2. `gen_custom` 放行改写 `server=/d/#`（`#`=按标准上游解析，不写死
+     上游 IP，换网络不失效）
+- 设备实测：放行 `hao123.com` 与 `www.hao123.com` 均恢复解析；
+  放行 `qq.com` 后所有 `*.qq.com` 规则清零；撤销放行后重新拦截
+- 注意：跨注册域的条目需单独放行（如放行 `microsoft.com` 不会解除
+  `*.akadns.net` / `*.microsoft.us` / `*.edgesuite.net`），这是预期行为
+
+### 11.4 顺带发现的运维风险
+
+`.9.9` 在 2026-11-14 01:36 左右重启过一次，重启后
+`/etc/dnsmasq.conf` 被还原为默认 37 行、`enabled` 变 `0`（标记块 0 条）。
+手动恢复五档后 564 条正常。根因未定位（可能是固件升级/overlay 重置/
+他人操作），**已记入待查**；本包自身不会把自己关掉（uci 默认缺省视为开）。
+
+### 11.5 提交
+
+- 包版本 2.2：init `gen_rules` 放行排除 + `server=/d/#`；
+  文档修正 dnsmasq 优先级与裸 server 语义；WORKLOG §11
+- 未编固件，未触发 CI
