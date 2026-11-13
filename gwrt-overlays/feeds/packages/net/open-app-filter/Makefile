@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=open-app-filter
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 
 PKG_SOURCE_URL:=https://github.com/destan19/OpenAppFilter.git
 PKG_SOURCE_PROTO:=git
@@ -29,7 +29,7 @@ endef
 define Package/appfilter
   SECTION:=net
   CATEGORY:=Network
-  DEPENDS:=+libblobmsg-json +libjson-c +libpthread +libubox +libubus +libuci +kmod-oaf +libcurl +libsqlite3
+  DEPENDS:=+libblobmsg-json +libjson-c +libpthread +libubox +libubus +libuci +libuci-lua +lua +kmod-oaf +libcurl +libsqlite3
   TITLE:=App filter userspace module
 endef
 
@@ -45,7 +45,15 @@ endef
 
 define Package/appfilter/conffiles
 /etc/config/appfilter
+/etc/config/appfilter_whitelist
+/etc/config/fwx
+/etc/config/fwx_record
+/etc/config/macfilter
+/etc/config/macfilter_whitelist
+/etc/config/mac_blacklist
 /etc/config/user_info
+/etc/fwxd/feature.bin
+/etc/fwxd/custom_feature.cfg
 endef
 
 define Package/appfilter/install

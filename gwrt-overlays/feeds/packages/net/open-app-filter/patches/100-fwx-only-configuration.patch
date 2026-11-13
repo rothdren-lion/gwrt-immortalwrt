@@ -1,0 +1,57 @@
+--- a/open-app-filter/src/main.c
++++ b/open-app-filter/src/main.c
+@@ -294,7 +294,7 @@
+     if (!ctx)
+         return;
+ 	
+-    int ret = fwx_uci_get_value(ctx, "appfilter.global.lan_ifname", lan_ifname, sizeof(lan_ifname) - 1);
++    int ret = fwx_uci_get_value(ctx, "fwx.global.lan_ifname", lan_ifname, sizeof(lan_ifname) - 1);
+     if (ret != 0){
+         strcpy(lan_ifname, "br-lan");
+     }
+--- a/open-app-filter/src/fwx_config.c
++++ b/open-app-filter/src/fwx_config.c
+@@ -201,7 +201,7 @@
+     struct uci_context *ctx = uci_alloc_context();
+     if (!ctx)
+         return -1;
+-	enable = fwx_uci_get_int_value(ctx, "appfilter.global.enable");
++	enable = fwx_uci_get_int_value(ctx, "fwx.appfilter.enable");
+     if (enable < 0)
+         enable = 0;
+     
+--- a/open-app-filter/src/fwx_ubus.c
++++ b/open-app-filter/src/fwx_ubus.c
+@@ -5872,8 +5872,8 @@
+ 
+     int work_mode = 1; 
+     if (uci_ctx) {
+-        work_mode = fwx_uci_get_int_value(uci_ctx, "appfilter.global.work_mode");
+-        if (work_mode < 0) work_mode = 1;
++        work_mode = fwx_uci_get_int_value(uci_ctx, "fwx.network.work_mode");
++        if (work_mode < 0) work_mode = 0;
+     }
+     json_object_object_add(network_status, "work_mode", json_object_new_int(work_mode));
+     
+--- a/open-app-filter/files/appfilter.init
++++ b/open-app-filter/files/appfilter.init
+@@ -5,8 +5,6 @@
+ START=96
+ USE_PROCD=1
+ FWXD_BIN="/usr/bin/oafd"
+-CUSTOM_FEATURE_FILE="/etc/fwxd/custom_feature.cfg"
+-LEGACY_CUSTOM_FEATURE_FILE="/etc/custom_feature.cfg"
+ 
+ ensure_config_file()
+ {
+@@ -94,10 +92,6 @@
+ 
+ 	[ -x /usr/bin/hnat.sh ] && /usr/bin/hnat.sh 1
+ 
+-	if [ -s "$LEGACY_CUSTOM_FEATURE_FILE" ] && [ ! -s "$CUSTOM_FEATURE_FILE" ]; then
+-		mv -f "$LEGACY_CUSTOM_FEATURE_FILE" "$CUSTOM_FEATURE_FILE"
+-		chmod 0644 "$CUSTOM_FEATURE_FILE"
+-	fi
+ 	procd_open_instance
+ 	procd_set_param respawn 60 5 5
+ 	procd_set_param stderr 1
