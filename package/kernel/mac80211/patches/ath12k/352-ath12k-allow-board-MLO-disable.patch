@@ -1,0 +1,66 @@
+Subject: [PATCH] wifi: ath12k: allow boards to disable firmware MLO
+
+CS-06 dumps show a NULL peer dereference in the WLAN.WBE.1.6 partner
+UMAC migration path. Provide a board opt-out as a compatibility workaround;
+it does not repair the closed firmware's NULL-peer handling.
+
+Keep the WSI group intact for fixed-memory ownership and coordinated
+recovery. Honor qcom,ath12k-disable-mlo on any member before selecting
+single-chip or multi-chip MLO, including on recovery. The existing MAC
+allocator then registers one wiphy per radio.
+
+Advertise an explicit disabled MLO capability to firmware. Return no
+partner links when MLO is disabled so the ready and teardown paths do not
+send MLO commands just because the WSI group still contains two devices.
+Boards without the opt-out retain their existing MLO capability selection.
+
+---
+--- a/drivers/net/wireless/ath/ath12k/core.c
++++ b/drivers/net/wireless/ath/ath12k/core.c
+@@ -1124,6 +1124,9 @@
+ 
+ 	lockdep_assert_held(&ag->mutex);
+ 
++	if (!ag->mlo_capable)
++		return 0;
++
+ 	for (i = 0; i < ag->num_devices; i++) {
+ 		partner_ab = ag->ab[i];
+ 
+@@ -2318,6 +2321,21 @@
+ 
+ 	lockdep_assert_held(&ag->mutex);
+ 
++	/* Retain WSI grouping for shared memory and reset coordination, while
++	 * allowing boards with incompatible partner firmware to use separate
++	 * non-MLO wiphys. Recheck the policy on every firmware start.
++	 */
++	for (i = 0; i < ag->num_devices; i++) {
++		ab = ag->ab[i];
++		if (ab && of_property_read_bool(ab->dev->of_node,
++					     "qcom,ath12k-disable-mlo")) {
++			ag->mlo_capable = false;
++			ath12k_info(ab, "WSI group %d: MLO disabled by board policy\n",
++				    ag->id);
++			return;
++		}
++	}
++
+ 	if (ag->num_devices == 1) {
+ 		ab = ag->ab[0];
+ 		/* QCN9274 firmware uses firmware IE for MLO advertisement */
+--- a/drivers/net/wireless/ath/ath12k/qmi.c
++++ b/drivers/net/wireless/ath/ath12k/qmi.c
+@@ -2225,8 +2225,11 @@
+ 	int i, j, ret;
+ 
+ 	if (!ag->mlo_capable) {
++		/* An absent optional TLV does not explicitly disable firmware MLO. */
++		req->mlo_capable_valid = 1;
++		req->mlo_capable = 0;
+ 		ath12k_dbg(ab, ATH12K_DBG_QMI,
+-			   "MLO is disabled hence skip QMI MLO cap");
++			   "MLO disabled, advertise QMI capability 0\n");
+ 		return 0;
+ 	}
+ 
