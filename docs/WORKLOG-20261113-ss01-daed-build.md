@@ -58,7 +58,13 @@ master，首次 [运行 43445745283](https://github.com/rothdren-lion/gwrt-immor
 截至 UTC 2026-11-13 15:08，第二次运行的 feeds、配置/source preflight、校准保护和
 Mesh 专项均成功，正在 `Build firmware` 阶段，尚未进入镜像审计与产物上传。
 本机一度因网络切换无法访问 GitHub/NAS，云端任务未受本地查询中断影响；查询已恢复。
-NAS 的第二次运行状态同步曾因挂载路径 I/O 错误失败，本隔离树日志已保存，待挂载恢复同步。
+NAS 的第二次运行状态同步曾因挂载路径 I/O 错误失败；随后网络/挂载恢复，构建状态、
+日志和扫描修复均已选择性同步 NAS，保留其它任务的独立修改。
+后续本地监控与收尾任务已启动，脚本与日志在证据目录：
+`finish-cloud-build.py` / `finish-cloud-build.log`，状态为 `delivery-status.json`。
+它只等待指定运行成功，下载对应的固件/审计记录，重新拆包核验硬件、12M、包表、
+daed runtime1 和真实 qemu 浏览器，再归档到稳定的 `gwrt-releases/ss01-12M/`；
+失败即停并记录 `needs_attention`，不交付未通过的镜像，不刷机或重启。
 等待构建和镜像审计成功，下载并核验哈希后
 归档到 `/home/godsun/build/gwrt-releases/` 对应 SS-01 目录，使用带 12M 的交付文件名。
 WAN DHCP、LAN/WAN 并发及反复插拔仍需用户刷入后验证，不以源码回归代替实机结论。
