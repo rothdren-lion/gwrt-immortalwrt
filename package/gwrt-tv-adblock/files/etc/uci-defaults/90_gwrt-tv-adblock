@@ -1,0 +1,42 @@
+#!/bin/sh
+# GWRT 广告拦截首启默认值: 总开 + 电视核心档; 兼容旧 mode 配置迁移
+
+CFG=gwrt-tv-adblock
+[ -f /etc/config/${CFG} ] || touch /etc/config/${CFG}
+
+# 旧版 mode 选项迁移为分类开关 (一次性)
+m="$(uci -q get ${CFG}.config.mode 2>/dev/null)"
+if [ -n "$m" ]; then
+	case "$m" in
+		extended)
+			uci set ${CFG}.config.enabled=1
+			uci set ${CFG}.config.cat_tv=1
+			uci set ${CFG}.config.cat_tv_ext=1
+			;;
+		off)
+			uci set ${CFG}.config.enabled=0
+			;;
+		*)
+			uci set ${CFG}.config.enabled=1
+			uci set ${CFG}.config.cat_tv=1
+			;;
+	esac
+	uci -q delete ${CFG}.config.mode
+else
+	uci -q get ${CFG}.config.enabled    >/dev/null || uci set ${CFG}.config.enabled=1
+	uci -q get ${CFG}.config.cat_tv     >/dev/null || uci set ${CFG}.config.cat_tv=1
+	uci -q get ${CFG}.config.cat_tv_ext >/dev/null || uci set ${CFG}.config.cat_tv_ext=0
+	uci -q get ${CFG}.config.cat_cn     >/dev/null || uci set ${CFG}.config.cat_cn=0
+	uci -q get ${CFG}.config.cat_sec    >/dev/null || uci set ${CFG}.config.cat_sec=0
+fi
+uci commit ${CFG}
+
+# 活动库缺失则从模板恢复
+if [ ! -f /etc/gwrt-tv-adblock/ads-library.txt ]; then
+	mkdir -p /etc/gwrt-tv-adblock
+	[ -f /usr/share/gwrt-tv-adblock/ads-library.txt ] && \
+		cp /usr/share/gwrt-tv-adblock/ads-library.txt /etc/gwrt-tv-adblock/ads-library.txt
+fi
+
+/etc/init.d/gwrt-tv-adblock enable
+/etc/init.d/gwrt-tv-adblock start 2>/dev/null

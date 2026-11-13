@@ -104,6 +104,13 @@ for p in \
 	add_pkg "$p"
 done
 
+echo "[wr632ax] GWRT 广告拦截（电视 + 国内通用, 纯文本规则库）:"
+for p in \
+	gwrt-tv-adblock \
+	luci-app-gwrt-tvadblock ; do
+	add_pkg "$p"
+done
+
 echo "[wr632ax] 插件面板（对齐 an7581，去掉 PON / airoha-npu）:"
 for p in \
 	luci-app-route-tool \

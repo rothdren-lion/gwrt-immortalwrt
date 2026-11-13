@@ -1,0 +1,6 @@
+config gwrt-tv-adblock 'config'
+	option enabled '1'
+	option cat_tv '1'
+	option cat_tv_ext '0'
+	option cat_cn '0'
+	option cat_sec '0'

@@ -13,4 +13,11 @@ sed -i \
 grep -qx 'CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-02=y' "$out" || {
 	echo 'standard CS-02 profile missing from seed' >&2; exit 1;
 }
+
+# GWRT 广告拦截（电视 + 国内通用, 纯文本规则库）: CI seed 未含时显式补上
+for p in gwrt-tv-adblock luci-app-gwrt-tvadblock; do
+	grep -q "^CONFIG_PACKAGE_${p}=y$" "$out" && continue
+	sed -i "/^# CONFIG_PACKAGE_${p} is not set$/d" "$out"
+	echo "CONFIG_PACKAGE_${p}=y" >> "$out"
+done
 echo "generated standard CS-02: $out"

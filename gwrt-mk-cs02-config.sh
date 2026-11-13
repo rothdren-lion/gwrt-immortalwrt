@@ -144,6 +144,12 @@ for p in gwrt-device-defaults gwrt-mesh-led gwrt-mesh-apmode; do
   set_pkg "$p"
 done
 
+# --- 3c. GWRT 广告拦截（电视 + 国内通用, 纯文本规则库）---
+echo "[cs02] adding GWRT adblock (tv + cn text library):"
+for p in gwrt-tv-adblock luci-app-gwrt-tvadblock; do
+  set_pkg "$p"
+done
+
 # --- 4. 版本号 -------------------------------------------------------------
 sed -i "s|^CONFIG_VERSION_NUMBER=\"[0-9-]*\"\$|CONFIG_VERSION_NUMBER=\"$VER\"|" "$OUT"
 

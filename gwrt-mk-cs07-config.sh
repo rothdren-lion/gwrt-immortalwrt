@@ -104,6 +104,14 @@ done
 # --- 3. 版本号 -------------------------------------------------------------
 sed -i "s|^CONFIG_VERSION_NUMBER=\"[0-9-]*\"\$|CONFIG_VERSION_NUMBER=\"$VER\"|" "$OUT"
 
+# --- 3b. GWRT 广告拦截（电视 + 国内通用, 纯文本规则库）---
+# cs07 流程只减不增, 这里直接追加; 后面 make defconfig 会收敛依赖
+for p in gwrt-tv-adblock luci-app-gwrt-tvadblock; do
+  grep -q "^CONFIG_PACKAGE_${p}=y$" "$OUT" && continue
+  sed -i "/^# CONFIG_PACKAGE_${p} is not set$/d" "$OUT"
+  echo "CONFIG_PACKAGE_${p}=y" >> "$OUT"
+done
+
 # --- 4. 交给 kconfig 收敛（依赖级联 / DEFAULT_* 重算）---------------------
 cp "$OUT" "$TOP/.config"
 ( cd "$TOP" && make defconfig )

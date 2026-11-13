@@ -1,0 +1,170 @@
+#!/bin/sh /etc/rc.common
+# GWRT 广告拦截: 读取纯文本规则库(ads-library.txt), 按启用的分类生成
+# dnsmasq address= 规则, 以标记块写入 /etc/dnsmasq.conf
+#
+# 分类: tv(电视核心) tv-ext(电视激进) cn(国内综合) sec(安全软件与更新)
+# 固定分类 kill(必拦): 无开关, 总开关开时始终生效 (hao123/2345 等)
+#
+# 为什么直写 /etc/dnsmasq.conf 而不用 uci conffile/confdir:
+#  - 部分固件 dnsmasq init 不支持 uci "conffile" 选项
+#  - confdir 随匿名节名变化 (/tmp/dnsmasq.cfg01411c.d) 且 /tmp 开机重建,
+#    本服务(START=18)先于 dnsmasq(START=19)运行时目录尚不存在
+# /etc/dnsmasq.conf 被所有 OpenWrt dnsmasq init 以 --conf-file= 兜底加载;
+# 每次应用先剥掉旧块再按当前配置重写, 重复执行安全
+
+START=18
+
+CFG=gwrt-tv-adblock
+DNSCONF=/etc/dnsmasq.conf
+LIB_ETC=/etc/gwrt-tv-adblock/ads-library.txt
+LIB_SHARE=/usr/share/gwrt-tv-adblock/ads-library.txt
+BEGIN="# --- gwrt-tv-adblock begin ---"
+END="# --- gwrt-tv-adblock end ---"
+LEGACY_TMP=/tmp/dnsmasq.dnsmasq.d/gwrt-tv-ads.conf
+
+# 总开关 (缺省视为开, 兼容旧配置)
+is_enabled() {
+	local e; e="$(uci -q get ${CFG}.config.enabled 2>/dev/null)"
+	[ -z "$e" ] && e=1
+	[ "$e" = 1 ]
+}
+
+# 分类开关; cat_tv 缺省视为开(对齐旧 core 默认), 其余缺省关
+cat_on() {
+	local v; v="$(uci -q get ${CFG}.config.$1 2>/dev/null)"
+	case "$1" in
+		cat_tv) [ "$v" != 0 ] ;;
+		*) [ "$v" = 1 ] ;;
+	esac
+}
+
+enabled_cats() {
+	local out=""
+	cat_on cat_tv && out="tv"
+	cat_on cat_tv_ext && out="$out tv-ext"
+	cat_on cat_cn && out="$out cn"
+	cat_on cat_sec && out="$out sec"
+	echo $out
+}
+
+# 活动库: /etc 优先(可被用户替换/升级), 缺失时自愈自模板恢复
+use_library() {
+	if [ -f "$LIB_ETC" ]; then
+		echo "$LIB_ETC"
+	elif [ -f "$LIB_SHARE" ]; then
+		mkdir -p "$(dirname "$LIB_ETC")"
+		cp "$LIB_SHARE" "$LIB_ETC" 2>/dev/null && echo "$LIB_ETC" || echo "$LIB_SHARE"
+	else
+		echo ""
+	fi
+}
+
+# 从库文件抽取启用分类的域名 → address=/d/ (大小写归一, 去重, 过滤畸形行)
+# $1=库文件 $2=要生成的分类(空格分隔); kill 为必拦档, 由调用方无条件追加
+gen_rules() {
+	awk -v cats="$2" '
+	BEGIN {
+		n = split(cats, A, " ")
+		for (i = 1; i <= n; i++) en[A[i]] = 1
+	}
+	/^#/ { next }
+	/^\[/ {
+		cat = $0
+		gsub(/^\[/, "", cat); gsub(/\].*$/, "", cat)
+		cur = (cat in en) ? 1 : 0
+		next
+	}
+	cur == 1 && NF >= 1 {
+		d = tolower($1)
+		if (d ~ /^[a-z0-9_.-]+$/ && d !~ /^[.-]/ && d !~ /[.-]$/ && d !~ /\.\./) {
+			if (!(d in seen)) { seen[d] = 1; print "address=/" d "/" }
+		}
+	}
+	' "$1"
+}
+
+gen_custom() {
+	local d
+	for d in $(uci -q get ${CFG}.config.custom_block 2>/dev/null); do
+		echo "address=/$d/"
+	done
+	for d in $(uci -q get ${CFG}.config.custom_allow 2>/dev/null); do
+		echo "server=/$d/"
+	done
+}
+
+# 剥掉旧标记块, 保留块外内容
+strip_block() {
+	[ -f "$DNSCONF" ] || { : > "$DNSCONF"; return 0; }
+	awk -v b="$BEGIN" -v e="$END" '
+		$0 == b { inblk = 1; next }
+		$0 == e { inblk = 0; next }
+		!inblk { print }
+	' "$DNSCONF" > "${DNSCONF}.new" && mv "${DNSCONF}.new" "$DNSCONF"
+}
+
+# 一次性清理早期版本遗留: uci conffile 列表 + /tmp 旧生成文件 + 旧规则文件
+# (uci del_list 对不存在条目也返回0, 不能用失败判断做循环; 部分固件无 remove 命令)
+cleanup_legacy() {
+	if uci -q get dhcp.@dnsmasq[0].conffile >/dev/null 2>&1; then
+		local cur out=""
+		for cur in $(uci -q get dhcp.@dnsmasq[0].conffile 2>/dev/null); do
+			case "$cur" in
+				/usr/share/gwrt-tv-adblock/*|/etc/gwrt-tv-adblock/*) ;;
+				*) out="$out $cur" ;;
+			esac
+		done
+		uci -q delete dhcp.@dnsmasq[0].conffile 2>/dev/null
+		if [ -n "$out" ]; then
+			for cur in $out; do
+				uci add_list dhcp.@dnsmasq[0].conffile="$cur"
+			done
+		fi
+		uci commit dhcp
+	fi
+	rm -f "$LEGACY_TMP"
+	rmdir /tmp/dnsmasq.dnsmasq.d 2>/dev/null
+	# v2 遗留: 旧分档规则文件已由库文件取代
+	rm -f /usr/share/gwrt-tv-adblock/tv-ads-core.conf \
+	      /usr/share/gwrt-tv-adblock/tv-ads-extended.conf
+}
+
+apply_mode() {
+	cleanup_legacy
+	strip_block
+	if is_enabled; then
+		local lib
+		lib="$(use_library)"
+		if [ -n "$lib" ]; then
+			{
+				echo "$BEGIN"
+				# kill 档无开关: 总开关开启即始终拦截
+				gen_rules "$lib" "$(enabled_cats) kill"
+				gen_custom
+				echo "$END"
+			} >> "$DNSCONF"
+		else
+			logger -t gwrt-tv-adblock "规则库缺失, 拦截未生成"
+		fi
+	fi
+	sync
+}
+
+start() {
+	# START=18, 先于 dnsmasq(START=19) 写好规则, 开机无需重启 dnsmasq
+	apply_mode
+}
+
+stop() {
+	strip_block
+	sync
+	# 本服务不拥有 dnsmasq; 仅当其在运行时让它重读配置
+	pgrep dnsmasq >/dev/null 2>&1 && /etc/init.d/dnsmasq restart 2>/dev/null
+	return 0
+}
+
+# 运行期切换/改自定义/更新库后: CLI 与 LuCI 调用
+reload() {
+	apply_mode
+	/etc/init.d/dnsmasq restart
+}

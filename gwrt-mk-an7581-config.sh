@@ -201,6 +201,13 @@ for p in \
 	add_pkg "$p"
 done
 
+echo "[$SUB] GWRT 广告拦截（电视 + 国内通用, 纯文本规则库）:"
+for p in \
+	gwrt-tv-adblock \
+	luci-app-gwrt-tvadblock ; do
+	add_pkg "$p"
+done
+
 echo "[an7581] 主题:"
 for p in \
 	luci-theme-gwrt ; do

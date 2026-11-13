@@ -129,6 +129,13 @@ for p in \
 	add_pkg "$p"
 done
 
+echo "[wr630ax] GWRT 广告拦截（电视 + 国内通用, 纯文本规则库）:"
+for p in \
+	gwrt-tv-adblock \
+	luci-app-gwrt-tvadblock ; do
+	add_pkg "$p"
+done
+
 echo "[wr630ax] 主题配套插件（面板 + 后端，主题功能必需）:"
 for p in \
 	luci-app-route-tool \

@@ -1,0 +1,206 @@
+#!/bin/sh
+# GWRT 广告拦截命令行
+#   /usr/libexec/gwrt-tv-adblock status              状态/库版本/分类计数/实测
+#   /usr/libexec/gwrt-tv-adblock on|off <分类>       分类开关 (tv|tv-ext|cn|sec)
+#   /usr/libexec/gwrt-tv-adblock core|extended|off   旧三档 (兼容映射)
+#   /usr/libexec/gwrt-tv-adblock update [noreload]   从库地址下载并替换规则库
+#   /usr/libexec/gwrt-tv-adblock migrate             旧 mode 配置迁移为分类开关
+
+INIT=/etc/init.d/gwrt-tv-adblock
+CFG=gwrt-tv-adblock
+LIB_ETC=/etc/gwrt-tv-adblock/ads-library.txt
+LIB_SHARE=/usr/share/gwrt-tv-adblock/ads-library.txt
+
+lib() {
+	if [ -f "$LIB_ETC" ]; then echo "$LIB_ETC"
+	elif [ -f "$LIB_SHARE" ]; then echo "$LIB_SHARE"
+	fi
+}
+
+# 判定是否被拦: 看有没有非 127.0.0.1 的应答地址(NXDOMAIN/空应答都算拦截)
+check_blocked() {
+	local out
+	out=$(nslookup "$1" 127.0.0.1 2>&1 | grep -E "^Address" | grep -v "127.0.0.1")
+	[ -z "$out" ]
+}
+
+cat_count() {
+	awk -v c="$2" '
+	/^#/ { next }
+	/^\[/ { cat = $0; gsub(/^\[/, "", cat); gsub(/\].*$/, "", cat); next }
+	cat == c && $1 ~ /^[a-z0-9._-]+$/ { n++ }
+	END { print n + 0 }
+	' "$1"
+}
+
+lib_version() {
+	grep -m1 "^# 版本:" "$1" 2>/dev/null | sed "s/^# 版本: //" || echo 未知
+}
+
+cat_state() {
+	local v; v="$(uci -q get ${CFG}.config.$1 2>/dev/null)"
+	case "$1" in
+		cat_tv) [ "$v" != 0 ] && echo on || echo off ;;
+		*) [ "$v" = 1 ] && echo on || echo off ;;
+	esac
+}
+
+do_status() {
+	local lib; lib="$(lib)"
+	if [ -z "$lib" ]; then
+		echo "规则库缺失! (模板: $LIB_SHARE)"
+		return 1
+	fi
+	local en; en="$(uci -q get ${CFG}.config.enabled 2>/dev/null)"; [ -z "$en" ] && en=1
+	echo "library: $lib"
+	echo "version: $(lib_version "$lib")"
+	echo "counts: tv=$(cat_count "$lib" tv) tv-ext=$(cat_count "$lib" tv-ext) cn=$(cat_count "$lib" cn) sec=$(cat_count "$lib" sec) kill=$(cat_count "$lib" kill)"
+	echo "enabled: $en  tv: $(cat_state cat_tv)  tv-ext: $(cat_state cat_tv_ext)  cn: $(cat_state cat_cn)  sec: $(cat_state cat_sec)"
+	local cb ca
+	cb=$(uci -q get ${CFG}.config.custom_block 2>/dev/null)
+	ca=$(uci -q get ${CFG}.config.custom_allow 2>/dev/null)
+	echo "custom: $(echo $cb | wc -w) block / $(echo $ca | wc -w) allow"
+	# 实测: 电视域 + 国内综合域 + 安全档域 + 必拦域(反映各开关效果)
+	local d
+	for d in api.ad.xiaomi.com ads.huan.tv hm.baidu.com s.360.cn hao123.com; do
+		if check_blocked "$d"; then
+			echo "test: $d 已拦截"
+		else
+			echo "test: $d 未拦截"
+		fi
+	done
+}
+
+norm_cat() {
+	case "$1" in
+		tv|cat_tv) echo cat_tv ;;
+		tv-ext|tv_ext|cat_tv_ext) echo cat_tv_ext ;;
+		cn|cat_cn) echo cat_cn ;;
+		sec|cat_sec) echo cat_sec ;;
+		*) echo "" ;;
+	esac
+}
+
+set_cat() {
+	local opt; opt="$(norm_cat "$2")"
+	[ -n "$opt" ] || { echo "未知分类: $2 (tv|tv-ext|cn)"; exit 2; }
+	uci set ${CFG}.config.$opt="$([ "$1" = on ] && echo 1 || echo 0)"
+	uci commit ${CFG}
+	"$INIT" reload
+}
+
+# 旧三档 → 分类映射 (cn 不受旧命令影响, 保持原状)
+set_mode() {
+	uci -q get ${CFG}.config >/dev/null 2>&1 || {
+		touch /etc/config/${CFG}
+		uci set ${CFG}.config=${CFG}
+	}
+	case "$1" in
+		core)
+			uci set ${CFG}.config.enabled=1
+			uci set ${CFG}.config.cat_tv=1
+			uci set ${CFG}.config.cat_tv_ext=0
+			;;
+		extended)
+			uci set ${CFG}.config.enabled=1
+			uci set ${CFG}.config.cat_tv=1
+			uci set ${CFG}.config.cat_tv_ext=1
+			;;
+		off)
+			uci set ${CFG}.config.enabled=0
+			;;
+	esac
+	uci commit ${CFG}
+	"$INIT" reload
+}
+
+do_migrate() {
+	local m; m="$(uci -q get ${CFG}.config.mode 2>/dev/null)"
+	if [ -z "$m" ]; then
+		echo "no legacy mode found"
+		return 0
+	fi
+	case "$m" in
+		extended)
+			uci set ${CFG}.config.enabled=1
+			uci set ${CFG}.config.cat_tv=1
+			uci set ${CFG}.config.cat_tv_ext=1
+			;;
+		off)
+			uci set ${CFG}.config.enabled=0
+			;;
+		*)
+			uci set ${CFG}.config.enabled=1
+			uci set ${CFG}.config.cat_tv=1
+			;;
+	esac
+	uci -q delete ${CFG}.config.mode
+	uci commit ${CFG}
+	echo "migrated mode=$m → 分类开关"
+}
+
+do_update() {
+	local url; url="$(uci -q get ${CFG}.config.library_url 2>/dev/null)"
+	if [ -z "$url" ]; then
+		echo "未配置库地址: LuCI 页面填写, 或"
+		echo "  uci set ${CFG}.config.library_url='https://.../ads-library.txt'"
+		exit 1
+	fi
+	local tmp="/tmp/ads-library.new.$$"
+	if ! wget -q -O "$tmp" "$url"; then
+		echo "下载失败: $url"
+		rm -f "$tmp"
+		exit 1
+	fi
+	# 校验: 至少 1 个分类头 + 10 条域名 + dnsmasq 语法通过
+	local nsec ndom
+	nsec=$(grep -c "^\[" "$tmp" 2>/dev/null)
+	ndom=$(awk "/^#/ {next} /^\[/ {next} NF>0 {n++} END {print n+0}" "$tmp")
+	if [ "${nsec:-0}" -lt 1 ] || [ "${ndom:-0}" -lt 10 ]; then
+		echo "内容校验失败 (分类=$nsec 域名=$ndom), 保留原库"
+		rm -f "$tmp"
+		exit 1
+	fi
+	awk "
+		/^#/ { next }
+		/^\[/ { next }
+		{
+			d = tolower(\$1)
+			if (d ~ /^[a-z0-9_.-]+\$/ && d !~ /^[.-]/ && d !~ /[.-]\$/)
+				print \"address=/\" d \"/\"
+		}
+	" "$tmp" > "${tmp}.rules"
+	if ! dnsmasq --test -C "${tmp}.rules" >/dev/null 2>&1; then
+		echo "dnsmasq 语法校验失败, 保留原库"
+		rm -f "$tmp" "${tmp}.rules"
+		exit 1
+	fi
+	rm -f "${tmp}.rules"
+	[ -f "$LIB_ETC" ] && cp "$LIB_ETC" "$LIB_ETC.bak"
+	mkdir -p "$(dirname "$LIB_ETC")"
+	mv "$tmp" "$LIB_ETC"
+	if [ "$2" != noreload ]; then
+		"$INIT" reload
+	fi
+	echo "updated: $(lib_version "$LIB_ETC")"
+}
+
+case "$1" in
+	status)    do_status ;;
+	core)      set_mode core ;;
+	extended)  set_mode extended ;;
+	update)    do_update "$2" ;;
+	migrate)   do_migrate ;;
+	on)
+		[ -n "$2" ] || { echo "usage: $0 on <tv|tv-ext|cn|sec>"; exit 2; }
+		set_cat on "$2" ;;
+	off)
+		# 带分类参数: 关该分类; 不带: 旧总关
+		if [ -n "$2" ]; then
+			set_cat off "$2"
+		else
+			set_mode off
+		fi
+		;;
+	*) echo "usage: $0 status|on <cat>|off [cat]|core|extended|update|migrate (cat: tv|tv-ext|cn|sec)" >&2; exit 2 ;;
+esac
