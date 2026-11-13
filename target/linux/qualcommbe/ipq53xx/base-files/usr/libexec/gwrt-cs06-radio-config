@@ -1,0 +1,45 @@
+#!/bin/sh
+# Migrate only the bindings of CS-06's former shared MLO wiphy.
+# Called before wifi config under the CS-06 Wi-Fi hotplug lock.
+
+. /lib/functions/system.sh
+[ "$(board_name)" = 'jdcloud,re-cs-06' ] || exit 0
+
+pci_path=
+for phy_dir in /sys/class/ieee80211/*; do
+	[ -d "$phy_dir" ] || continue
+	path=$(readlink -f "$phy_dir/device" 2>/dev/null)
+	path=${path#/sys/devices/}
+	case "$path" in
+		platform/*/18000000.pcie/*) pci_path="$path"; break ;;
+	esac
+done
+
+changed=0
+for section in $(uci -q show wireless | sed -n 's/^wireless\.\([^.]*\)=wifi-device$/\1/p'); do
+	path=$(uci -q get "wireless.$section.path")
+	case "$path" in
+		platform/*/c000000.wifi) ;;
+		*) continue ;;
+	esac
+	band=$(uci -q get "wireless.$section.band")
+	radio=$(uci -q get "wireless.$section.radio")
+	case "$band:$radio" in
+		2g:0)
+			uci -q delete "wireless.$section.radio" || exit 1
+			changed=1
+			;;
+		5g:1)
+			# The first PHY event can precede registration of the PCI PHY.
+			[ -n "$pci_path" ] || continue
+			uci -q set "wireless.$section.path=$pci_path" || exit 1
+			uci -q delete "wireless.$section.radio" || exit 1
+			uci -q delete "wireless.$section.phy"
+			changed=1
+			;;
+	esac
+done
+
+[ "$changed" = 1 ] || exit 0
+uci commit wireless || exit 1
+logger -t gwrt-cs06-wifi 'migrated radio bindings for separate 2.4 GHz and 5 GHz wiphys'

@@ -6,6 +6,13 @@
 		# Serialize radio generation with the SS-01 deferred first-boot defaults.
 		mkdir -p /var/lock || exit 1
 		( flock -x 9 && /sbin/wifi config ) 9>/var/lock/gwrt-ss01-wifi
+	elif [ "$(cat /tmp/sysinfo/board_name 2>/dev/null)" = 'jdcloud,re-cs-06' ] && \
+	     [ -x /usr/libexec/gwrt-cs06-radio-config ]; then
+		mkdir -p /var/lock || exit 1
+		(
+			flock -x 9 || exit 1
+			/usr/libexec/gwrt-cs06-radio-config && /sbin/wifi config
+		) 9>/var/lock/gwrt-cs06-wifi
 	else
 		/sbin/wifi config
 	fi
