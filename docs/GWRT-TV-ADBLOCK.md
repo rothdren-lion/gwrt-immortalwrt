@@ -1,9 +1,12 @@
 # GWRT-TV-ADBLOCK — 国内广告拦截（电视 + 国内通用 + 安全软件, dnsmasq 域名层, 纯文本库）
 
-> 数据日期 2026-11-13（库版本 20261113-r2）；来源见文末；规则库为纯文本
+> 数据日期 2026-11-14（库版本 20261113-r2，包 2.2）；来源见文末；规则库为纯文本
 > `/etc/gwrt-tv-adblock/ads-library.txt`（固件内模板在 `/usr/share`），
 > 分类由 `gwrt-tv-adblock.config.cat_tv / cat_tv_ext / cat_cn / cat_sec`
 > 开关控制；`kill` 为固定必拦档（无开关，总开关开即生效）。
+>
+> **误杀可救回**：`custom_allow` 会从规则生成阶段排除对应域（含其子域），
+> 并写 `server=/d/#` 走标准上游——裸根域和子域都能恢复。
 
 ## 1. 原理与边界
 
@@ -70,8 +73,22 @@ core（+extended）/ 自定义规则重写进 `/etc/dnsmasq.conf`，`stop()` 只
 该文件是 dnsmasq init 的第 949 行兜底 `--conf-file=` 加载项，不受节名/时序影响。
 
 自定义规则生成在块内：`custom_block` → `address=/d/`（NXDOMAIN），
-`custom_allow` → `server=/d/`（转发正常 DNS）。dnsmasq 按最长后缀匹配，
-`server=` 放行条目可覆盖更宽的 `address=` 拦截条目，用于救误拦。
+`custom_allow` → `server=/d/#`（按标准上游解析）。
+
+> **重要（v2.2 修正）**：早期文档写"`server=` 放行条目可覆盖更宽的
+> `address=` 拦截条目"——**这是错的**。dnsmasq 2.92 实测：`address=/X/`
+> 优先级高于 `server=/X/` 与 `server=/sub.X/`，同域和子域都救不回来；
+> 且裸 `server=/X/`（不带目标）是"本地权威"语义，只查 /etc/hosts 与
+> DHCP 租约、**不转发上游**，用它放行等于继续拦死。
+>
+> 现行做法有两层保证：
+> 1. init 生成规则时把 `custom_allow` 里的域（含被其覆盖的子域）从
+>    `address=` 中排除，从源头不生成拦截；
+> 2. 仍然写入 `server=/d/#`，`#` 表示"按标准上游解析"，不写死上游 IP，
+>    换网络/换 DNS 也不会失效。
+>
+> 因此 `custom_allow` 现在真的能救回误拦，包括裸根域（如 `hao123.com`）
+> 和任意子域（如 `www.hao123.com`）。
 
 > **验证陷阱**：busybox nslookup 对 NXDOMAIN/空应答也可能返回 0，
 > 判断是否拦截必须检查应答内容里有没有真实 Address
