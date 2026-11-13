@@ -64,4 +64,4 @@ tar -xzf /tmp/gwrt-theme-r116-before-client-link.tgz -C /
 - 主题包及 CSS 缓存键更新为 r117，规范源和两个包副本一致。实际页面已核对 PC 显示 `LAN1 / 1Gbps`。信号/速率数据缺失及离线逻辑继续保留。
 - `test-gwrt-client-link-ui.js` 和完整 source preflight 通过；浏览器用模拟 WiFi 数据核对桌面与手机宽度下的信号格、文字顺序和精确速率提示，模拟只影响临时浏览器 DOM，不写路由器状态。
 - 更新前实机备份 `/tmp/gwrt-theme-r116-before-compact-signal.tgz`；持久副本在上述验证目录的 `backups/`，新热更新包为 `gwrt-theme-r117-compact-signal-live.tgz`。
-- 按此前授权推送修改，并以 SS-01 `261113-03`、`release=false` 构建包含最新显示的 r117；此前 r116 运行 `43350331850` 将由新运行替代。
+- 修改已推送 GitHub，提交 `dc78eab21224b598261ec94a4bcdfd743cc75e33`。SS-01 `261113-03`、`release=false` 运行 `43354566787` 已触发：https://github.com/rothdren-lion/gwrt-immortalwrt/actions/runs/43354566787；最后查询时运行 `43350331850`（r116）仍在编译，r117 的新运行已排队/启动，后续应以 `43354566787` 镜像为准。
