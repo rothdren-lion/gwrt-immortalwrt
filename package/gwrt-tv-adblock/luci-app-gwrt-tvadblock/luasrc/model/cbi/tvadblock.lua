@@ -1,22 +1,56 @@
--- GWRT 电视广告拦截: dnsmasq 域名层, 三档模式 + 用户自定义拦截/放行
+-- GWRT 国内广告拦截: 纯文本规则库 + 分类开关 + 自定义拦截/放行 + 库升级
 local sys = require "luci.sys"
+local LIB_ETC = "/etc/gwrt-tv-adblock/ads-library.txt"
+local LIB_SHARE = "/usr/share/gwrt-tv-adblock/ads-library.txt"
 
-local function count_rules(path)
-	local out = sys.exec("grep -c '^address=/' " .. path .. " 2>/dev/null")
-	return (tonumber(out:match("%d+")) or 0)
+local function libpath()
+	local f = io.open(LIB_ETC, "r")
+	if f then f:close() return LIB_ETC end
+	f = io.open(LIB_SHARE, "r")
+	if f then f:close() return LIB_SHARE end
+	return nil
 end
 
-m = Map("gwrt-tv-adblock", translate("电视广告拦截"),
-	translate("在 dnsmasq 域名层拦截国内智能电视广告：开机广告、视频App广告SDK、投屏广告。对局域网内所有使用本机 DNS 的设备生效。注意：视频贴片广告与正片同一内容域名，DNS 层拦不住；改动生效后建议到电视端清理缓存并重启。"))
+local function lib_version(path)
+	local out = sys.exec("grep -m1 '^# 版本:' " .. path .. " 2>/dev/null")
+	return (out:match("版本:%s*(%S+)")) or "未知"
+end
 
-s = m:section(NamedSection, "config", "gwrt-tv-adblock", translate("拦截模式"))
+local function cat_count(path, cat)
+	local cmd = string.format(
+		[[awk -v c="%s" '/^#/{next} /^\[/{cat=$0; gsub(/^\[/,"",cat); gsub(/\].*$/,"",cat); next} cat==c && $1 ~ /^[a-z0-9._-]+$/ {n++} END{print n+0}' %s 2>/dev/null]],
+		cat, path)
+	return tonumber(sys.exec(cmd):match("%d+")) or 0
+end
+
+m = Map("gwrt-tv-adblock", translate("广告拦截（电视/国内通用）"),
+	translate("基于纯文本规则库（无数据库）在 dnsmasq 域名层拦截广告：电视开机广告/视频App广告SDK（tv）、应用商店/升级/语音/投屏（tv-ext，有副作用）、360/百度/腾讯/字节等国内Web与APP广告及统计（cn）。对局域网内所有使用本机 DNS 的设备生效。注意：视频贴片广告与正片同一内容域名，DNS 层拦不住；改动生效后建议清理设备端缓存并重启。"))
+
+s = m:section(NamedSection, "config", "gwrt-tv-adblock", translate("开关"))
 s.addremove = false
 
-o = s:option(ListValue, "mode", translate("模式"))
-o:value("off",      translate("关闭"))
-o:value("core",     translate("核心档（推荐）"))
-o:value("extended", translate("激进档（有副作用）"))
-o.description = translate("核心档：开机广告与视频App广告域名，无副作用。激进档：额外拦截各品牌应用商店/系统升级/语音助手/投屏服务，相应功能会失效。")
+o = s:option(ListValue, "enabled", translate("总开关"))
+o:value("1", translate("开启"))
+o:value("0", translate("关闭"))
+o.default = "1"
+
+o = s:option(ListValue, "cat_tv", translate("电视核心档（tv）"))
+o:value("1", translate("开"))
+o:value("0", translate("关"))
+o.default = "1"
+o.description = translate("各品牌开机广告域 + 视频App广告SDK，无副作用。小米/创维/TCL/长虹等。")
+
+o = s:option(ListValue, "cat_tv_ext", translate("电视激进档（tv-ext）"))
+o:value("1", translate("开"))
+o:value("0", translate("关"))
+o.default = "0"
+o.description = translate("应用商店/系统升级/语音助手/投屏服务，对应功能会失效。")
+
+o = s:option(ListValue, "cat_cn", translate("国内综合档（cn）"))
+o:value("1", translate("开"))
+o:value("0", translate("关"))
+o.default = "0"
+o.description = translate("360/百度/腾讯/字节/快手/网易/新浪微博/友盟/华为/OPPO/vivo/小米手机等广告SDK与统计、主流广告联盟。默认关，开启后若某App异常可加自定义放行。")
 
 -- 用户自定义拦截域名
 local function filter_domains(self, value)
@@ -42,24 +76,56 @@ function cb.validate(self, value)
 end
 
 ca = s:option(DynamicList, "custom_allow", translate("自定义放行域名（白名单）"))
-ca.description = translate("若发现内置规则误拦了正常服务（如某App打不开），把对应域名加在这里：dnsmasq 最长匹配优先，放行条目会覆盖内置拦截并转发到正常 DNS。")
+ca.description = translate("误拦时把对应域名加在这里：dnsmasq 最长匹配优先，等于或长于拦截条目的放行项会覆盖拦截并转发到正常 DNS。")
 function ca.validate(self, value)
 	return filter_domains(self, value)
+end
+
+-- 规则库信息
+d = s:option(DummyValue, "_libinfo", translate("规则库"))
+d.rawhtml = true
+function d.cfgvalue(self, section)
+	local p = libpath()
+	if not p then
+		return "<div style='color:red'>规则库缺失！</div>"
+	end
+	local html = { string.format(
+		"<div>活动库：<code>%s</code>（版本 <b>%s</b>）</div>", p, lib_version(p)) }
+	html[#html+1] = string.format(
+		"<div>条目：tv <b>%d</b> 条 / tv-ext <b>%d</b> 条 / cn <b>%d</b> 条</div>",
+		cat_count(p, "tv"), cat_count(p, "tv-ext"), cat_count(p, "cn"))
+	html[#html+1] = translate("升级方式：填库地址后点下方按钮；或直接替换库文件后执行 /etc/init.d/gwrt-tv-adblock reload。固件升级不影响已替换的库（位于 /etc）。")
+	return table.concat(html, "")
+end
+
+-- 库地址 + 更新按钮
+u = s:option(Value, "library_url", translate("库更新地址"))
+u.placeholder = "https://example.com/ads-library.txt"
+u.description = translate("纯文本规则库的下载地址。留空则按钮无效果。")
+u.rmempty = true
+
+local has_button = (type(Button) == "table")
+if has_button then
+	local b = s:option(Button, "_updlib", translate("更新"))
+	b.inputtitle = translate("从库地址更新规则库")
+	b.description = translate("下载 → 内容与 dnsmasq 语法双重校验 → 备份原库(.bak) → 替换 → 重新生成。结果见 /tmp/gwrt-tv-adblock-update.log")
+	function b.write(self, section, value)
+		sys.call("/usr/libexec/gwrt-tv-adblock update noreload >/tmp/gwrt-tv-adblock-update.log 2>&1")
+	end
 end
 
 d = s:option(DummyValue, "_status", translate("当前状态"))
 d.rawhtml = true
 function d.cfgvalue(self, section)
-	local mode = m.uci:get("gwrt-tv-adblock", "config", "mode") or "core"
-	local html = { string.format("<div>模式：<b>%s</b></div>", mode) }
-	if mode ~= "off" then
-		html[#html+1] = string.format("<div>核心档规则：<b>%d</b> 条域名</div>",
-			count_rules("/usr/share/gwrt-tv-adblock/tv-ads-core.conf"))
+	local function onoff(v)
+		return (v == "1") and "开" or "关"
 	end
-	if mode == "extended" then
-		html[#html+1] = string.format("<div>激进档规则：<b>%d</b> 条域名</div>",
-			count_rules("/usr/share/gwrt-tv-adblock/tv-ads-extended.conf"))
-	end
+	local en = m.uci:get("gwrt-tv-adblock", "config", "enabled") or "1"
+	local html = { string.format("<div>总开关：<b>%s</b></div>", onoff(en)) }
+	html[#html+1] = string.format("<div>分类：tv <b>%s</b>；tv-ext <b>%s</b>；cn <b>%s</b></div>",
+		onoff(m.uci:get("gwrt-tv-adblock", "config", "cat_tv") or "1"),
+		onoff(m.uci:get("gwrt-tv-adblock", "config", "cat_tv_ext") or "0"),
+		onoff(m.uci:get("gwrt-tv-adblock", "config", "cat_cn") or "0"))
 	local bl = m.uci:get_list("gwrt-tv-adblock", "config", "custom_block") or {}
 	local al = m.uci:get_list("gwrt-tv-adblock", "config", "custom_allow") or {}
 	html[#html+1] = string.format("<div>自定义：拦截 <b>%d</b> 条 / 放行 <b>%d</b> 条</div>", #bl, #al)
@@ -68,8 +134,8 @@ function d.cfgvalue(self, section)
 		return (out:match("%S") == nil) and "已拦截" or "未拦截"
 	end
 	html[#html+1] = string.format(
-		"<div>验证：api.ad.xiaomi.com（小米开机广告）<b>%s</b>；ads.huan.tv（长虹广告）<b>%s</b></div>",
-		test("api.ad.xiaomi.com"), test("ads.huan.tv"))
+		"<div>实测：api.ad.xiaomi.com（电视开机）<b>%s</b>；hm.baidu.com（百度统计/cn）<b>%s</b></div>",
+		test("api.ad.xiaomi.com"), test("hm.baidu.com"))
 	return table.concat(html, "")
 end
 

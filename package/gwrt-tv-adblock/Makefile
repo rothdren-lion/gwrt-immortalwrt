@@ -1,15 +1,18 @@
 #
-# GWRT 国内电视广告拦截 (dnsmasq 域名层)
+# GWRT 国内广告拦截 (dnsmasq 域名层, 纯文本规则库)
 #
-# 覆盖: 小米/创维/TCL/长虹/海信/索尼 开机广告, 银河奇艺/腾讯视频TV/优酷CIBN
-# 等视频App广告SDK, 乐播投屏广告子域. 核心档无副作用; 激进档含应用商店/
-# 系统升级域名 (会让相应功能失效, 默认不启用).
+# 覆盖: 电视开机广告 (小米/创维/TCL/长虹/海信/索尼), 视频App广告SDK
+# (银河奇艺/腾讯视频TV/优酷CIBN), 乐播投屏广告子域; 以及国内通用广告
+# (360/百度/腾讯/字节/快手/网易/新浪微博/友盟/华为/OPPO/vivo/小米手机/
+# 主流广告联盟). 分类: tv(核心) tv-ext(激进) cn(国内综合), LuCI 按分类开关.
+# 规则库为纯文本 /etc/gwrt-tv-adblock/ads-library.txt, 可整体替换升级,
+# 无数据库/SQLite 依赖.
 # 设计文档: docs/GWRT-TV-ADBLOCK.md
 #
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=gwrt-tv-adblock
-PKG_VERSION:=1.0
+PKG_VERSION:=2.0
 PKG_RELEASE:=1
 PKG_LICENSE:=GPL-2.0
 
@@ -18,25 +21,27 @@ include $(INCLUDE_DIR)/package.mk
 define Package/gwrt-tv-adblock
   SECTION:=net
   CATEGORY:=Network
-  TITLE:=GWRT domestic smart TV ad blocker (dnsmasq domain layer)
+  TITLE:=GWRT domestic ad blocker (dnsmasq domain layer, text library)
   DEPENDS:=+dnsmasq
   PKGARCH:=all
 endef
 
 define Package/gwrt-tv-adblock/description
-  Blocks domestic smart TV ads at the DNS layer via dnsmasq
-  address=/domain/ entries: boot ads (Xiaomi/Skyworth/TCL/Hisense/
-  Changhong/Sony), video-app ad SDKs (GITV/Tencent Video TV/Youku CIBN),
-  and LeBo (hpplay) casting ad subdomains. Modes: off / core (safe) /
-  extended (also blocks appstore/upgrade/voice domains, may break
-  features). Managed by /usr/libexec/gwrt-tv-adblock or the LuCI page.
-  NOTE: does not cover pre-roll ads embedded in the same CDN as video
-  content, and ads that use hardcoded IPs (see docs for the nftset
-  option).
+  Blocks domestic ads at the DNS layer via dnsmasq address=/domain/
+  entries driven by a plain-text rule library (no database). Categories:
+  tv (TV boot ads + video app ad SDKs), tv-ext (appstore/upgrade/voice,
+  may break features), cn (360/Baidu/Tencent/ByteDance etc. web+app ads
+  and analytics). Per-category switches on the LuCI page, custom
+  block/allow lists, and library hot-swap update (replace the txt file
+  or use the update button; survives firmware upgrades). Managed by
+  /usr/libexec/gwrt-tv-adblock or the LuCI page. NOTE: does not cover
+  pre-roll ads embedded in the same CDN as video content, and ads that
+  use hardcoded IPs (see docs for the nftset option).
 endef
 
 define Package/gwrt-tv-adblock/conffiles
 /etc/config/gwrt-tv-adblock
+/etc/gwrt-tv-adblock/ads-library.txt
 endef
 
 define Build/Compile
@@ -44,13 +49,14 @@ endef
 
 define Package/gwrt-tv-adblock/install
 	$(INSTALL_DIR) $(1)/etc/init.d $(1)/etc/uci-defaults $(1)/etc/config
+	$(INSTALL_DIR) $(1)/etc/gwrt-tv-adblock
 	$(INSTALL_DIR) $(1)/usr/libexec $(1)/usr/share/gwrt-tv-adblock
 	$(INSTALL_BIN) ./files/etc/init.d/gwrt-tv-adblock $(1)/etc/init.d/gwrt-tv-adblock
 	$(INSTALL_BIN) ./files/etc/uci-defaults/90_gwrt-tv-adblock $(1)/etc/uci-defaults/90_gwrt-tv-adblock
 	$(INSTALL_BIN) ./files/usr/libexec/gwrt-tv-adblock $(1)/usr/libexec/gwrt-tv-adblock
 	$(INSTALL_CONF) ./files/etc/config/gwrt-tv-adblock $(1)/etc/config/gwrt-tv-adblock
-	$(INSTALL_DATA) ./files/usr/share/gwrt-tv-adblock/tv-ads-core.conf $(1)/usr/share/gwrt-tv-adblock/
-	$(INSTALL_DATA) ./files/usr/share/gwrt-tv-adblock/tv-ads-extended.conf $(1)/usr/share/gwrt-tv-adblock/
+	$(INSTALL_CONF) ./files/etc/gwrt-tv-adblock/ads-library.txt $(1)/etc/gwrt-tv-adblock/ads-library.txt
+	$(INSTALL_DATA) ./files/etc/gwrt-tv-adblock/ads-library.txt $(1)/usr/share/gwrt-tv-adblock/ads-library.txt
 endef
 
 $(eval $(call BuildPackage,gwrt-tv-adblock))

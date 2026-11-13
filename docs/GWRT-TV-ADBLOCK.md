@@ -1,7 +1,8 @@
-# GWRT-TV-ADBLOCK — 国内智能电视广告拦截（dnsmasq 域名层）
+# GWRT-TV-ADBLOCK — 国内广告拦截（电视 + 国内通用, dnsmasq 域名层, 纯文本库）
 
-> 数据日期 2026-11-13；来源见文末；数据文件随包安装到
-> `/usr/share/gwrt-tv-adblock/`，模式由 `gwrt-tv-adblock.config.mode` 控制。
+> 数据日期 2026-11-13（库版本 20261113-r1）；来源见文末；规则库为纯文本
+> `/etc/gwrt-tv-adblock/ads-library.txt`（固件内模板在 `/usr/share`），
+> 分类由 `gwrt-tv-adblock.config.cat_tv / cat_tv_ext / cat_cn` 开关控制。
 
 ## 1. 原理与边界
 
@@ -25,24 +26,32 @@
 
 ```
 package/gwrt-tv-adblock/
-├── Makefile                              # 主包（含 conf 数据/init/CLI）
+├── Makefile                              # 主包（init/CLI/规则库/uci-defaults）
+├── files/etc/gwrt-tv-adblock/ads-library.txt   # 纯文本规则库（tv/tv-ext/cn 三分类）
 └── luci-app-gwrt-tvadblock/              # LuCI 开关页（网络 → 电视广告拦截）
 ```
 
-- 规则文件：`/usr/share/gwrt-tv-adblock/tv-ads-core.conf`（核心档）、
-  `tv-ads-extended.conf`（激进档）
-- init：`/etc/init.d/gwrt-tv-adblock`（START=18，把规则以
-  `# --- gwrt-tv-adblock begin/end ---` 标记块写入 `/etc/dnsmasq.conf`；
-  该文件被 OpenWrt dnsmasq init 以 `--conf-file=` 兜底加载，开机无需额外重启 dnsmasq）
-- CLI：`/usr/libexec/gwrt-tv-adblock status|core|extended|off`
-- 配置：`/etc/config/gwrt-tv-adblock` 的 `config.mode` = off/core/extended，
-  `config.custom_block` / `config.custom_allow` = 自定义拦截/放行域名列表
+- **规则库（无数据库/SQLite）**：单文件纯文本，`[分类名]` 行切换分类，
+  每行一个域名，`#` 注释。活动库在 `/etc/gwrt-tv-adblock/ads-library.txt`
+  （conffile，固件升级保留，可整体替换升级）；固件内模板在
+  `/usr/share/gwrt-tv-adblock/`，/etc 缺失时 init 自愈恢复
+- init：`/etc/init.d/gwrt-tv-adblock`（START=18，按启用的分类把
+  `address=/d/` 以 `# --- gwrt-tv-adblock begin/end ---` 标记块写入
+  `/etc/dnsmasq.conf`；该文件被 OpenWrt dnsmasq init 以 `--conf-file=`
+  兜底加载，开机无需额外重启 dnsmasq）
+- CLI：`/usr/libexec/gwrt-tv-adblock status|on|off <分类>|core|extended|off|update|migrate`
+- 配置：`/etc/config/gwrt-tv-adblock` 的 `config.enabled`（总开关）、
+  `config.cat_tv` / `config.cat_tv_ext` / `config.cat_cn`（分类开关）、
+  `config.library_url`（库更新地址）、
+  `config.custom_block` / `config.custom_allow`（自定义拦截/放行）
 
 ```sh
-/usr/libexec/gwrt-tv-adblock core        # 核心档（默认，无副作用）
-/usr/libexec/gwrt-tv-adblock extended    # 激进档（见下）
-/usr/libexec/gwrt-tv-adblock off
-/usr/libexec/gwrt-tv-adblock status      # 查看模式/条数/实测拦截结果
+/usr/libexec/gwrt-tv-adblock status      # 库版本/分类计数/开关状态/实测拦截
+/usr/libexec/gwrt-tv-adblock on cn       # 打开国内综合档（或 off cn 关闭）
+/usr/libexec/gwrt-tv-adblock off         # 总关（分类配置保留）
+/usr/libexec/gwrt-tv-adblock core        # 旧三档兼容: = 总开+tv
+/usr/libexec/gwrt-tv-adblock extended    # 旧三档兼容: = 总开+tv+tv-ext
+/usr/libexec/gwrt-tv-adblock migrate     # 旧 mode 配置一次性迁移为分类开关
 ```
 
 ### 2.1 集成方式：/etc/dnsmasq.conf 标记块（v2）
@@ -70,12 +79,19 @@ core（+extended）/ 自定义规则重写进 `/etc/dnsmasq.conf`，`stop()` 只
 > 循环条件），且没有 `remove` 命令——所以旧 uci conffile 的清理是
 > 「读列表→过滤→delete 整项→重加」，不做循环判断。
 
-## 3. 两档语义
+## 3. 三分类语义
 
-| 档 | 条数 | 内容 | 副作用 |
-|---|---|---|---|
-| core | 218 | 各品牌开机广告域 + 视频 App 广告 SDK + 乐播广告子域 + 广告追踪 | 无 |
-| extended | 115 | 各品牌应用商店/系统升级/语音助手/投屏服务/GITV 认证/P2P 节点 | 对应功能失效，默认不启用 |
+| 分类 | uci 选项 | 条数 | 内容 | 默认 | 副作用 |
+|---|---|---|---|---|---|
+| tv（电视核心） | `cat_tv` | 218 | 各品牌开机广告域 + 视频 App 广告 SDK + 乐播广告子域 + 广告追踪 | 开 | 无 |
+| tv-ext（电视激进） | `cat_tv_ext` | 115 | 各品牌应用商店/系统升级/语音助手/投屏服务/GITV 认证/P2P 节点 | 关 | 对应功能失效 |
+| cn（国内综合） | `cat_cn` | 158 | 360/百度/腾讯(广点通GDT/优量汇)/字节(穿山甲)/快手/网易/新浪微博/友盟/华为/OPPO/vivo/小米手机等广告SDK与统计；主流广告联盟（mediav/tanx/domob/admaster/miaozhen 等整域） | 关 | 统计类拦截可能触发个别 App 风控提示，可白名单救回 |
+
+cn 档刻意排除：搜/内容/云存储 CDN（bdstatic/qhres/gtimg/alipay 等）、
+GRS/HTTPDNS 等功能域（`grs.*.hicloud.com`、`httpdns.ocloud`）、
+推送（gw*.push.mcp.weibo.cn）、裸根域、`api.*` 标签域；
+umeng 仅收 `umeng.co` 与 umengacs（对齐 anti-AD 的保守边界），
+`is/gecko/ic.snssdk.com` 这类字节配置/内容域不收。
 
 **刻意排除的危险条目**（野清单常见，直接抄会翻车）：NTP、DNSPod、
 connectivitycheck、米家控制域（`api.io.mi.com`）、裸根域（`mi.com`/
@@ -111,14 +127,26 @@ nftset=/ad.hpplay.cn/4#inet#fw4#tvads
 
 ## 6. 数据来源与更新方法
 
-- 合并来源：AWAvenue-Ads-Rule v1.7.8（2026-10-22 更新，活跃维护）、
-  GitHub 小米/GITV/TCL/长虹 gists、Kiterepo TV 清单、hkamran80 smart-tv、
-  CSDN/ZNDS/阿里云社区实机清单
-- 处理：跨源去重 + 阿里 DNS(223.5.5.5) 存活验证（剔除 145 个 NXDOMAIN
-  死域）+ 人工安全裁决（分层/排除危险条目）
-- 更新流程：重新抓取来源 → 复跑合并脚本
-  （`/tmp/opencode/tv-adblock/merge.py` + `classify2.py`）→ 覆盖
-  `files/usr/share/gwrt-tv-adblock/*.conf` → `dnsmasq --test` 校验 →
-  bump PKG_RELEASE
-- 全网通用广告（手机 SDK 等 964 条）不在本包内，需要时可另行订阅
-  anti-AD / AWAvenue（adblock-fast 或 AdGuardHome）
+- 电视分类（tv/tv-ext）：AWAvenue-Ads-Rule v1.7.8（2026-10-22 更新，
+  活跃维护）、GitHub 小米/GITV/TCL/长虹 gists、Kiterepo TV 清单、
+  hkamran80 smart-tv、CSDN/ZNDS/阿里云社区实机清单
+- 国内综合分类（cn）：anti-AD 20261111073634（privacy-protection-tools，
+  10 万条 dnsmasq 格式）按品牌白名单标签抽取 + 上轮通用清单国内部分
+- 处理门禁：品牌正则（白名单标签，只收广告/统计端点）→ 危险域过滤
+  （裸根/CDN/功能域/推送）→ 后缀去重（父域覆盖子域）→ 与 tv 排重 →
+  阿里 DNS(223.5.5.5) 存活验证（复用缓存）
+- 构建脚本：`/tmp/opencode/tv-adblock/build_cn_library.py`（含全部
+  正则与门禁，输出库文件 + cn-final.txt 供人工过目）
+
+**升级规则库（三种方式，均不需改代码/刷固件）**：
+
+1. LuCI 页面：填「库更新地址」→ 点「更新规则库」按钮（下载 → 内容
+   （≥1 分类头 + ≥10 域名）与 dnsmasq 语法双重校验 → 备份 .bak → 替换）
+2. 命令：`uci set gwrt-tv-adblock.config.library_url='https://…/ads-library.txt'`
+   然后 `/usr/libexec/gwrt-tv-adblock update`
+3. 手工替换 `/etc/gwrt-tv-adblock/ads-library.txt` 后执行
+   `/etc/init.d/gwrt-tv-adblock reload`
+
+库文件在 /etc（conffile），固件升级后仍保留；init 启动时若缺失会从
+固件模板自愈恢复。重新打包发版时复跑构建脚本覆盖
+`files/etc/gwrt-tv-adblock/ads-library.txt` 并 bump PKG_RELEASE。

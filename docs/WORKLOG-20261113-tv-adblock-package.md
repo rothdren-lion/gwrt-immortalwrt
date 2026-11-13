@@ -132,6 +132,78 @@ dnsmasq 2.93、busybox pgrep 无 `-c`、dropbear 无 sftp-server（须 `scp -O`�
 disable 并删除全部服务/页面/规则文件 → 清 indexcache + rpcd 重启。
 备份含 dhcp.conf.pre / dhcp.conf.135246 / dnsmasq.conf.pre-block。
 
+## 8. v2：规则库架构（国内通用广告并入, 纯文本库 + 分类开关）
+
+用户要求把 360/百度/腾讯 等国内广告一并收集，做成 txt 库（明确不要
+数据库/SQLite），界面支持开关，升级只需换库文件，保留自定义。
+
+### 8.1 库构建（build_cn_library.py）
+
+- 分类结构：`[tv]` 218（原核心档原样保留）+ `[tv-ext]` 115（原激进档）+
+  `[cn]` 158（新增国内综合）= 491 域名，跨分类零重复
+- cn 来源：anti-AD 20261111073634（10 万条 dnsmasq 格式）按品牌白名单
+  标签抽取（baidu: hm/hmma/pos/cpro/eclick/mobads 等 17 标签；
+  腾讯: gdt.qq.com/ugdtimg/gdtimg 整域 + ad/beacon/bsrv/btrace 等 24 标签；
+  360: ad/stat/commercial 标签; 字节: toutiao/snssdk/pangolin/pglstatp;
+  快手 e.kuaishou.com/cn + promotion-partner; 网易 g/analytics.163.com +
+  adnet; 新浪 ad/adbox/beacon/sax*; 微博 uve.* 广告子域;
+  华为 logbak/logservice.hicloud + adx/events-drcn.op.dbankcloud.cn;
+  OPPO ads.oppomobile.com + adsfs; vivo ad*/adx* 全套; 小米手机
+  ad.xiaomi.com/tracking.miui.com; 酷狗/京东联盟/mediav/tanx/domob/
+  admaster/miaozhen/adsame/allyes/dianru/madhouse/ipinyou/aduu/casee 等联盟整域）
+  + 上轮 general 清单国内部分
+- 门禁链：品牌正则（白名单标签）→ 危险域过滤（ROOT_DROP 裸根/内容CDN +
+  EXCLUDE_LABEL api/pay/update/push/cdn/chat 等 + PER_DOMAIN_DROP：
+  chat1.jd.com 客服、alltbcsp2p.baidu.com 网盘P2P、grs/httpdns/gecko/
+  browsercfg 功能域、gw*.push 推送、ad.dev.360.cn 开发者平台）→
+  **先验活后去重**（否则 ads.oppomobile.com 死域会连带丢掉其活子域）→
+  与 tv/tv-ext 排重 → dnsmasq --test（491 条 OK，tv 单独 218 精确对齐）
+- anti-AD 边界对齐：umeng 仅 umeng.co + umengacs（友盟推送不拦）；
+  tanx.com 根域不解析，按其子域清单收录；is/gecko/ic.snssdk 配置/
+  内容域不收；c.gj.qq.com 无 anti-AD 背书剔除
+
+### 8.2 包代码 v2（PKG_VERSION 2.0）
+
+- init v3：`use_library()` 活动库 `/etc/gwrt-tv-adblock/ads-library.txt`
+  优先（conffile，可整体替换升级、固件升级保留），缺失自愈自
+  `/usr/share` 模板恢复；`gen_rules` busybox awk 按启用分类抽取
+  （tolower/去重/畸形行过滤）；总开关 `enabled` + 分类
+  `cat_tv`(缺省开, 对齐旧 core)/`cat_tv_ext`/`cat_cn`(缺省关)；
+  cleanup_legacy 增删 v2 旧分档 conf 文件
+- CLI v2：`status`（库版本/分类计数/开关/实测含 hm.baidu.com 反映 cn）、
+  `on|off <tv|tv-ext|cn>`、旧 `core|extended|off` 兼容映射、
+  `update [noreload]`（wget → ≥1分类头+≥10域名校验 → dnsmasq --test →
+  备份 .bak → 替换）、`migrate`（旧 mode → 分类一次性迁移）
+- LuCI v2：总开关 + 电视核心/电视激进/国内综合三开关 + 库信息
+  （活动路径/版本/分类条数）+ 库更新地址 + 更新按钮（Button 类
+  cbi.lua:1887 存在，write() 调 CLI update noreload，on_after_commit reload）
+  + 自定义拦截/放行保留；on/off 循环选择修复（无参 off=总关,
+  带参=分类关）
+- uci-defaults v2：新装默认 enabled=1/cat_tv=1/其余关 + 旧 mode 迁移
+
+### 8.3 部署 .9.9 与验证（2026-11-13）
+
+- scp 库（/etc + /usr/share 双份）、init、CLI、uci-defaults、model；
+  `migrate` 完成 mode=core → enabled=1 + cat_tv=1，mode 已删
+- busybox awk 设备端解析分类计数 218/115/158 与主机一致；
+  多分类解析 491 一致
+- reload 后标记块 218 条（tv on / cn off）；电视域拦截正常，
+  hm.baidu.com/pos.baidu.com/g.163.com/www.baidu.com/www.qq.com 放行
+  （首查瞬态误报"已拦截"，复测正常——dnsmasq 重启后上游查询竞态，
+  与 §7.1 nslookup rc 陷阱同源，判定必须看 Address 内容且避开重启瞬间）
+- daed 10929 / oafd 3579 未变；rpcd + indexcache 已清；页面 403 登录壳
+  正常；model lua loadfile 通过
+- cn 档默认关，用户在 LuCI 一键打开即可（或 CLI `on cn`）
+
+### 8.4 文件变化
+
+- 新增 `files/etc/gwrt-tv-adblock/ads-library.txt`（三分类 491 条）
+- 删除 `files/usr/share/gwrt-tv-adblock/tv-ads-core.conf`、
+  `tv-ads-extended.conf`（git rm，旧设备上的副本由 init cleanup 清理）
+- Makefile：双路径安装库（/etc conffile + /usr/share 模板）+ conffiles 补充
+- 数据工作目录 `/tmp/opencode/tv-adblock/`：build_cn_library.py、
+  antiad-dnsmasq.conf、cn-final.txt、cn-candidates.txt、liveness.json
+
 ## 6. 环境备注
 
 - 主机 dnsmasq 2.92 可用 `--test`；无 lua 解释器
