@@ -54,4 +54,4 @@ tar -xzf /tmp/gwrt-theme-r116-before-client-link.tgz -C /
 
 ## 6. 待办
 
-提交后按已有授权推送 GitHub，触发 SS-01 `261113-02`、`release=false` 构建；构建产物需按 SS-01 12MiB HLOS 布局（现有 `KERNEL_SIZE=12288k`）审计。无线实际速率仍待有在线 WiFi 终端时复核。
+提交 `eda276cb6a74835ef9658b34a038263414289870` 已按原提交 SHA 推送到私有仓 `rothdren-lion/gwrt-immortalwrt` master。GitHub Actions SS-01 `261113-02`（`release=false`）运行 `43350331850` 已启动，链接：https://github.com/rothdren-lion/gwrt-immortalwrt/actions/runs/43350331850。最后检查时 runner 仍在释放磁盘，尚未进入源码预检。完成后还需确认镜像内包含 `gwrt-runtime-dir`/clients collector/NSS cleanup 修改及 `KERNEL_SIZE=12288k`。无线实际速率仍待有在线 WiFi 终端时复核。
