@@ -46,7 +46,13 @@
 ## 交付与验证边界
 
 证据位于 `/home/godsun/build/gwrt-ss01-261113-04/`。源码 `8584a2c1` 已推送 GitHub
-master，已触发 [运行 43445745283](https://github.com/rothdren-lion/gwrt-immortalwrt/actions/runs/43445745283)，
-仅 SS-01 `261113-04`、release=false；当前尚无成品。等待构建和镜像审计成功，下载并核验哈希后
+master，首次 [运行 43445745283](https://github.com/rothdren-lion/gwrt-immortalwrt/actions/runs/43445745283)
+在配置检查失败，未进入编译、未产生固件。原因是 LuCI daed/Aria2 的覆盖 Makefile
+遗漏 `call BuildPackage` 扫描标记，冷扫描时 daed 页面和中文包被漏掉；旧本地 feed
+已有标记，因此原本地检查未复现。已补齐两个覆盖文件，并将覆盖 Makefile 的扫描
+签名纳入 source preflight。使用独立 metadata 目标冷扫描，daed/Aria2 页面和中文
+包四项均被真实 `include/scan.mk` 识别；仓库 source preflight 再次通过。
+修正后仍只重跑 SS-01 `261113-04`、release=false；当前尚无成品。
+等待构建和镜像审计成功，下载并核验哈希后
 归档到 `/home/godsun/build/gwrt-releases/` 对应 SS-01 目录，使用带 12M 的交付文件名。
 WAN DHCP、LAN/WAN 并发及反复插拔仍需用户刷入后验证，不以源码回归代替实机结论。

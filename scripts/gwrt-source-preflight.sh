@@ -9,6 +9,12 @@ from pathlib import Path
 import json
 import re
 import subprocess
+# include/scan.mk discovers packages by this signature, including LuCI apps
+# whose actual BuildPackage call is in luci.mk. Check the shipped overlays,
+# rather than relying on metadata cached before overlays were applied.
+for makefile in Path('gwrt-overlays/feeds').rglob('Makefile'):
+    assert re.search(r'call (Build/DefaultTargets|BuildPackage|KernelPackage)',
+                     makefile.read_text()), str(makefile) + ': missing package scan signature'
 theme = Path('gwrt-theme-V3/theme/luci-theme-gwrt')
 for package in (theme, Path('package/gwrt-theme/luci-theme-gwrt'),
                 Path('package/gwrt-theme/luci-theme-gwrt/luci-theme-gwrt')):
