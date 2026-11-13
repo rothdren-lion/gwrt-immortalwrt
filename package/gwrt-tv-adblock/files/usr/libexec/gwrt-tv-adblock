@@ -1,0 +1,54 @@
+#!/bin/sh
+# GWRT TV adblock 命令行
+#   /usr/libexec/gwrt-tv-adblock status              查看模式/规则数/测试域名
+#   /usr/libexec/gwrt-tv-adblock core|extended|off   切换模式并重启 dnsmasq
+
+INIT=/etc/init.d/gwrt-tv-adblock
+CORE=/usr/share/gwrt-tv-adblock/tv-ads-core.conf
+EXT=/usr/share/gwrt-tv-adblock/tv-ads-extended.conf
+
+count_rules() {
+	grep -c '^address=/' "$1" 2>/dev/null || echo 0
+}
+
+get_mode() {
+	uci -q get gwrt-tv-adblock.config.mode 2>/dev/null || echo core
+}
+
+do_status() {
+	local mode
+	mode="$(get_mode)"
+	echo "mode: $mode"
+	if [ "$mode" != off ]; then
+		echo "core: $(count_rules "$CORE") domains"
+		[ "$mode" = extended ] && echo "extended: $(count_rules "$EXT") domains"
+	fi
+	# 用本机 dnsmasq 验证两个典型广告域名是否已拦
+	local d
+	for d in api.ad.xiaomi.com ads.huan.tv; do
+		if nslookup "$d" 127.0.0.1 >/dev/null 2>&1; then
+			echo "test: $d 未拦截"
+		else
+			echo "test: $d 已拦截"
+		fi
+	done
+}
+
+set_mode() {
+	# 配置节可能被用户删掉, 补齐
+	uci -q get gwrt-tv-adblock.config >/dev/null 2>&1 || {
+		touch /etc/config/gwrt-tv-adblock
+		uci set gwrt-tv-adblock.config=gwrt-tv-adblock
+	}
+	uci set gwrt-tv-adblock.config.mode="$1"
+	uci commit gwrt-tv-adblock
+	"$INIT" reload
+}
+
+case "$1" in
+	status)  do_status ;;
+	core)    set_mode core ;;
+	extended) set_mode extended ;;
+	off)     set_mode off ;;
+	*) echo "usage: $0 status|core|extended|off" >&2; exit 2 ;;
+esac

@@ -1,0 +1,2 @@
+config gwrt-tv-adblock 'config'
+	option mode 'core'

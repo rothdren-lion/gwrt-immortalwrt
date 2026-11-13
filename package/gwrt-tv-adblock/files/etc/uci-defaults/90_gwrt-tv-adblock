@@ -1,0 +1,11 @@
+#!/bin/sh
+# 首启: 建配置(默认核心档) + 自启动 + 立即挂载规则
+[ -f /etc/config/gwrt-tv-adblock ] || touch /etc/config/gwrt-tv-adblock
+uci -q get gwrt-tv-adblock.config >/dev/null 2>&1 || uci set gwrt-tv-adblock.config=gwrt-tv-adblock
+uci -q get gwrt-tv-adblock.config.mode >/dev/null 2>&1 || uci set gwrt-tv-adblock.config.mode=core
+uci commit gwrt-tv-adblock
+
+/etc/init.d/gwrt-tv-adblock enabled || /etc/init.d/gwrt-tv-adblock enable
+/etc/init.d/gwrt-tv-adblock start
+
+exit 0

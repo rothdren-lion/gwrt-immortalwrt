@@ -1,0 +1,16 @@
+{
+	"luci-app-gwrt-tvadblock": {
+		"description": "Grant access to GWRT TV adblock switch",
+		"read": {
+			"uci": [ "gwrt-tv-adblock" ]
+		},
+		"write": {
+			"uci": [ "gwrt-tv-adblock" ],
+			"file": {
+				"/etc/init.d/gwrt-tv-adblock": [ "exec" ],
+				"/usr/libexec/gwrt-tv-adblock": [ "exec" ],
+				"/usr/share/gwrt-tv-adblock/*": [ "read" ]
+			}
+		}
+	}
+}

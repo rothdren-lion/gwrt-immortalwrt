@@ -1,0 +1,58 @@
+#!/bin/sh /etc/rc.common
+# GWRT TV adblock: 按模式(off/core/extended)把规则文件挂到 dnsmasq
+# 规则本体只读, 不复制不生成; 开机在 dnsmasq 之前把 conffile 写进 uci
+# (START=18 < dnsmasq START=19), 因此 start() 不需要重启 dnsmasq.
+
+CORE=/usr/share/gwrt-tv-adblock/tv-ads-core.conf
+EXT=/usr/share/gwrt-tv-adblock/tv-ads-extended.conf
+CFG=gwrt-tv-adblock
+
+get_mode() {
+	uci -q get ${CFG}.config.mode 2>/dev/null || echo core
+}
+
+ensure_dhcp() {
+	uci -q get dhcp.@dnsmasq[0] >/dev/null 2>&1 || uci -q add dhcp dnsmasq
+}
+
+# 删干净自己加过的 conffile (重复执行也安全)
+del_lists() {
+	while uci -q del_list dhcp.@dnsmasq[0].conffile="$CORE"; do :; done
+	while uci -q del_list dhcp.@dnsmasq[0].conffile="$EXT"; do :; done
+}
+
+apply_mode() {
+	ensure_dhcp || return 1
+	del_lists
+	local mode
+	mode="$(get_mode)"
+	case "$mode" in
+		extended)
+			uci add_list dhcp.@dnsmasq[0].conffile="$CORE"
+			uci add_list dhcp.@dnsmasq[0].conffile="$EXT"
+			;;
+		off)
+			: ;;
+		*)
+			mode=core
+			uci add_list dhcp.@dnsmasq[0].conffile="$CORE"
+			;;
+	esac
+	uci commit dhcp
+}
+
+start() {
+	apply_mode
+}
+
+stop() {
+	ensure_dhcp
+	del_lists
+	uci commit dhcp
+}
+
+# 运行期切模式: CLI/LuCI 调用, 需要重启 dnsmasq 生效
+reload() {
+	apply_mode || return 1
+	/etc/init.d/dnsmasq restart
+}
