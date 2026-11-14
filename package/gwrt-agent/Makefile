@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=gwrt-agent
 PKG_VERSION:=1712
-PKG_RELEASE:=7
+PKG_RELEASE:=9
 PKG_MAINTAINER:=GWRT
 PKG_LICENSE:=Apache-2.0
 # shell 部分跨架构通用；预编译 aarch64(musl) 二进制仅随 aarch64 目标安装。
@@ -20,8 +20,8 @@ define Package/gwrt-agent
 endef
 
 define Package/gwrt-agent/description
- GWRT agent: telemetry and Mesh control daemon. v1712-r7 adds structured
- Mesh discovery/member reports and verified pairing acknowledgements.
+ GWRT agent: telemetry and Mesh control daemon. v1712-r8 prefers IPv6
+ direct API connections with bounded fallback and recovery over the tunnel.
  JSON is serialized with ucode; the original aarch64 binary is retained
  for telemetry collection, local CGI commands and gwrt-pair-v2 binding.
 endef

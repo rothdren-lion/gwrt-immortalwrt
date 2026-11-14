@@ -1,5 +1,5 @@
 #!/bin/sh
-# GWRT-Agent — v1712-r7 shell reporting / mesh control adapter
+# GWRT-Agent — v1712-r9 shell reporting / mesh control adapter
 #
 # 背景: 原 1712 预编译二进制与 op.gwrt.uk 服务端契约错配, 导致上报全失败:
 #   1. 认证: 原版用 X-GWRT-Token: <local_token>  -> 服务端要 Authorization: Bearer <pair_token>
@@ -17,37 +17,178 @@
 
 ORIG="/usr/sbin/gwrt-agent.bin"
 CFG="/etc/config/gwrt-agent"
-UA="gwrt-agent/1712-r7"
+# UA 保持 r8：服务端是否校验 UA 未经验证，不随 shim 版本号一起改。
+UA="gwrt-agent/1712-r8"
 JSON_HELPER="/usr/share/gwrt-agent/json.uc"
+STATE_DIR="/tmp/gwrt-agent"
 
 log() { logger -t gwrt-agent "$@"; }
 
 cfg() { uci -q get "$CFG.main.$1" 2>/dev/null; }
 
-endpoint() { cfg endpoint || echo "https://op.gwrt.uk"; }
+endpoint() {
+	local url
+	url=$(cfg endpoint)
+	printf '%s' "${url:-https://op.gwrt.uk}" | sed 's:/*$::'
+}
 
-# api <path> <json-body>   -> prints response body, returns curl rc
-api() {
-	local path="$1" body="$2" rsp rc err
-	# 失败时不能只返回空串：日志里会变成 "report FAILED:" 什么都看不到。
-	# 这里把 curl 退出码 + stderr 一起带回，方便判断是 DNS/超时/TLS/HTTP 码。
-	err=$(mktemp 2>/dev/null) || { echo '__API_FAIL__ temporary file'; return 1; }
-	rsp=$(curl -4 -sS -m 20 --noproxy '*' -w '\n__HTTP__%{http_code}' \
+ipv6_endpoint() {
+	[ "$(cfg prefer_ipv6)" != 0 ] || return 1
+	local url
+	url=$(cfg endpoint_ipv6)
+	if [ -z "$url" ]; then
+		# Old conffiles get the new route without rewriting identities or UCI.
+		# Never send a private server's credentials to the public GWRT service.
+		case "$(endpoint)" in
+			https://op.gwrt.uk) url='https://op6.gwrt.uk:8443';;
+			*) return 1;;
+		esac
+	fi
+	case "$url" in https://*) printf '%s' "$url" | sed 's:/*$::';; *) return 1;; esac
+}
+
+ipv6_ready() { ip -6 route show default 2>/dev/null | grep -q '^default'; }
+
+network_ready() {
+	ip route 2>/dev/null | grep -q '^default' || ipv6_ready
+}
+
+# Command substitution runs api() in a subshell. Keep cooldown/route state in
+# tmpfs so the next pull/report/ack shares it; never write it into flash/UCI.
+transport_state() {
+	local name="$1" value="$2" tmp
+	mkdir -p "$STATE_DIR" || return 1
+	tmp=$(mktemp "$STATE_DIR/transport.XXXXXX") || return 1
+	printf '%s\n' "$value" >"$tmp" && mv -f "$tmp" "$STATE_DIR/$name" && return 0
+	rm -f "$tmp"
+	return 1
+}
+
+transport_connected() {
+	local value="$1 $2" previous
+	previous=$(cat "$STATE_DIR/connection" 2>/dev/null)
+	[ "$previous" = "$value" ] && return 0
+	transport_state connection "$value"
+	log "transport connected: $value"
+}
+
+ipv6_retry_ready() {
+	local saved until now
+	[ -f "$STATE_DIR/ipv6-retry" ] || return 0
+	{ IFS= read -r saved; IFS= read -r until; } <"$STATE_DIR/ipv6-retry"
+	[ "$saved" = "$1" ] || return 0
+	case "$until" in ''|*[!0-9]*|????????????*) return 0;; esac
+	now=$(date +%s)
+	# Also recover immediately if an NTP clock correction invalidates the timer.
+	[ "$now" -ge "$until" ] || [ "$until" -gt "$((now + 60))" ]
+}
+
+# 2026-11-14 修复：服务端对未知 (device_id, pair_token) 一律回 401
+#   {"ok":false,"error":"unknown device or token"}
+# 旧行为：ensure_device_id 里 do_pair 的输出被丢弃 → 首次注册失败（如开机时
+# WAN 未就绪）后没人重试，daemon 每 5-30 秒拿同一枚 token 重发 report/pull，
+# 日志刷满 401 且永不自愈。现在：认证失败记入 tmpfs 状态，指数退避
+# （60/300/900/1800/3600 秒），退避期内只做一次 POST /api/agent/register，
+# 成功即清除状态并恢复上报。
+AUTH_STATE="$STATE_DIR/auth"
+AUTH_UNTIL=0
+AUTH_LEVEL=0
+AUTH_REASON=""
+
+auth_read() {
+	local until level reason
+	AUTH_UNTIL=0 AUTH_LEVEL=0 AUTH_REASON=""
+	[ -f "$AUTH_STATE" ] || return 0
+	{ IFS= read -r until; IFS= read -r level; IFS= read -r reason; } <"$AUTH_STATE" 2>/dev/null
+	case "$until" in ''|*[!0-9]*) return 0;; esac
+	AUTH_UNTIL="$until"
+	case "$level" in ''|*[!0-9]*) level=1;; esac
+	AUTH_LEVEL="$level"
+	AUTH_REASON="$reason"
+	return 0
+}
+
+auth_blocked() { auth_read; [ "$AUTH_UNTIL" -gt "$(date +%s)" ]; }
+
+auth_due() { auth_read; [ "$AUTH_UNTIL" -gt 0 ] && [ "$AUTH_UNTIL" -le "$(date +%s)" ]; }
+
+# Remaining backoff, bounded so a new route/identity is re-checked regularly.
+auth_wait() {
+	auth_read
+	local left=$((AUTH_UNTIL - $(date +%s)))
+	[ "$left" -gt 0 ] || left=5
+	[ "$left" -gt 300 ] && left=300
+	echo "$left"
+}
+
+# Keep the backoff without escalating or logging (failed re-register attempt).
+auth_postpone() {
+	auth_read
+	[ "$AUTH_UNTIL" -gt 0 ] || return 0
+	transport_state auth "$(printf '%s\n%s\n%s' "$(( $(date +%s) + $1 ))" "$AUTH_LEVEL" "$AUTH_REASON")"
+}
+
+# Backoff step for the current escalation level (seconds).
+auth_delay() {
+	auth_read
+	case "$AUTH_LEVEL" in
+	1) echo 60;; 2) echo 300;; 3) echo 900;; 4) echo 1800;; *) echo 3600;;
+	esac
+}
+
+# $1 = short log-safe reason (redacted: no tokens, only path/status)
+auth_fail() {
+	auth_read
+	local level=$((AUTH_LEVEL + 1)) delay reason="$1"
+	case "$level" in
+	1) delay=60;; 2) delay=300;; 3) delay=900;; 4) delay=1800;; *) delay=3600;;
+	esac
+	[ -n "$reason" ] || reason="$AUTH_REASON"
+	transport_state auth "$(printf '%s\n%s\n%s' "$(( $(date +%s) + delay ))" "$level" "$reason")"
+	log "cloud rejected device credentials ($reason); auto re-register in ${delay}s (attempt $level). If this repeats the server has no binding for this device"
+}
+
+auth_ok() {
+	[ -f "$AUTH_STATE" ] || return 0
+	rm -f "$AUTH_STATE"
+	log "cloud credentials accepted; reporting resumed"
+}
+
+# 0 = identity rejection (retrying cannot help), not a transport problem.
+auth_failure() {
+	case "$1" in
+	'__API_FAIL__ http 401'*|'__API_FAIL__ http 403'*) return 0;;
+	esac
+	case "$1" in *'unknown device or token'*) return 0;; esac
+	return 1
+}
+
+# Same message twice in a row must not fill the ring buffer.
+log_once() { # $1=key $2=message
+	local prev
+	prev=$(cat "$STATE_DIR/once-$1" 2>/dev/null)
+	[ "$prev" = "$2" ] && return 0
+	transport_state "once-$1" "$2"
+	log "$2"
+}
+
+# One attempt: 0=valid API JSON, 1=transport/upstream failure, 2=HTTP rejection.
+# Never follow redirects with the device's bearer token or disable TLS checks.
+api_request() {
+	local path="$1" body="$2" url="$3" family="$4" dir code rc ok why connect=3 total=15
+	mkdir -p "$STATE_DIR" || { echo '__API_FAIL__ state directory'; return 1; }
+	dir=$(mktemp -d "$STATE_DIR/http.XXXXXX") || { echo '__API_FAIL__ temporary file'; return 1; }
+	set --
+	if [ "$family" = ipv6 ]; then set -- -6; connect=2; total=4; fi
+	code=$(curl "$@" -sS --connect-timeout "$connect" -m "$total" --noproxy '*' \
+		-o "$dir/body" -w '%{http_code}' \
 		-H "Content-Type: application/json" \
 		-H "User-Agent: $UA" \
 		-H "Authorization: Bearer $(cfg pair_token)" \
 		-d "$body" \
-		"$(endpoint)${path}" 2>"$err")
+		"${url}${path}" 2>"$dir/error")
 	rc=$?
-	local code=""
-	case "$rsp" in
-		*__HTTP__*)
-			code="${rsp##*__HTTP__}"
-			rsp="${rsp%$'\n'__HTTP__*}"
-			;;
-	esac
 	if [ "$rc" -ne 0 ]; then
-		local why
 		case "$rc" in
 			6) why="dns" ;;
 			7) why="connect" ;;
@@ -57,18 +198,63 @@ api() {
 			56) why="recv" ;;
 			*) why="curl-rc$rc" ;;
 		esac
-		[ -s "$err" ] && why="$why: $(tr -d '\n' < "$err" | cut -c1-120)"
-		rm -f "$err"
-		echo "__API_FAIL__ $why (endpoint=$(endpoint)${path})"
-		return 0
+		[ -s "$dir/error" ] && why="$why: $(tr -d '\n' <"$dir/error" | cut -c1-120)"
+		printf '__API_FAIL__ %s (endpoint=%s%s)' "$why" "$url" "$path"
+		rm -rf "$dir"
+		return 1
 	fi
-	rm -f "$err"
-	# HTTP 码不是 2xx 也当成失败，把码和响应片段带回去
+	rc=1
 	case "$code" in
-		2*) printf '%s' "$rsp" ;;
-		"") printf '%s' "$rsp" ;;
-		*) printf '__API_FAIL__ http %s: %s' "$code" "$(printf '%s' "$rsp" | cut -c1-120)" ;;
+		2??)
+			ok=$(jsonfilter -i "$dir/body" -e '@.ok' 2>/dev/null)
+			case "$ok" in
+				true|false) cat "$dir/body"; rc=0;;
+				*) printf '__API_FAIL__ invalid API JSON (endpoint=%s%s)' "$url" "$path";;
+			esac;;
+		*)
+			printf '__API_FAIL__ http %s (endpoint=%s%s)' "$code" "$url" "$path"
+			case "$code" in 408|425|429) ;; 4??) rc=2;; esac;;
 	esac
+	rm -rf "$dir"
+	return "$rc"
+}
+
+# api <path> <json-body>: IPv6 direct first, original endpoint as fallback.
+# Sequential requests preserve the server's existing command delivery/ACK flow.
+api() {
+	local path="$1" body="$2" direct fallback rsp rc
+	fallback=$(endpoint)
+	direct=$(ipv6_endpoint)
+	if [ -n "$direct" ] && ipv6_ready && ipv6_retry_ready "$direct"; then
+		rsp=$(api_request "$path" "$body" "$direct" ipv6)
+		rc=$?
+		if [ "$rc" = 0 ]; then
+			rm -f "$STATE_DIR/ipv6-retry"
+			transport_connected ipv6 "$direct"
+			auth_ok
+			printf '%s' "$rsp"
+			return 0
+		fi
+		# Authentication/validation errors must not be retried on another route,
+		# and a rejected token is rejected on every route: back off, do not spam.
+		if [ "$rc" = 2 ]; then
+			auth_failure "$rsp" && auth_fail "$(printf '%s' "$rsp" | cut -c1-90)"
+			printf '%s' "$rsp"
+			return 1
+		fi
+		transport_state ipv6-retry "$(printf '%s\n%s' "$direct" "$(($(date +%s) + 60))")"
+		log "IPv6 direct unavailable; retry in 60s, falling back: $rsp"
+	fi
+	rsp=$(api_request "$path" "$body" "$fallback" auto)
+	rc=$?
+	if [ "$rc" = 0 ]; then
+		transport_connected fallback "$fallback"
+		auth_ok
+	else
+		auth_failure "$rsp" && auth_fail "$(printf '%s' "$rsp" | cut -c1-90)"
+	fi
+	printf '%s' "$rsp"
+	[ "$rc" = 0 ]
 }
 
 did() { cfg device_id; }
@@ -137,9 +323,11 @@ do_report() {
 	rsp=$(api /api/agent/report "$body")
 	# A server-side identity error must not silently discard an existing binding.
 	if [ "$(jsonfilter -s "$rsp" -e '@.ok' 2>/dev/null)" = true ]; then
+		rm -f "$STATE_DIR/once-report"
 		log "report ok: interval=$(interval_of "$rsp")"
 	else
-		log "report FAILED: $rsp"
+		# api() already logged the actionable 401/403 backoff line.
+		auth_failure "$rsp" || log_once report "report FAILED: $rsp"
 	fi
 	printf '%s\n' "$rsp"
 }
@@ -332,6 +520,10 @@ run_command() { # $1=json-command-object
 handle_commands() {
 	local rsp cmds requested
 	GWRT_PULL_INTERVAL=""
+	GWRT_PULL_OK=0
+	# Rejected credentials deliver nothing (ack would 401 too): stay silent until
+	# the backoff expires and the daemon re-registers.
+	auth_blocked && return 0
 	rsp=$(do_pull)
 	requested=$(jsonfilter -s "$rsp" -e '@.report_interval' 2>/dev/null)
 	if [ "$(jsonfilter -s "$rsp" -e '@.ok' 2>/dev/null)" = true ] && [ -n "$requested" ]; then
@@ -339,11 +531,22 @@ handle_commands() {
 	fi
 	cmds=$(jsonfilter -s "$rsp" -e '@.commands[*]' 2>/dev/null)
 	if [ -n "$cmds" ]; then
+		rm -f "$STATE_DIR/once-pull"
+		GWRT_PULL_OK=1
 		printf '%s\n' "$cmds" | while IFS= read -r c; do
 			[ -n "$c" ] && run_command "$c"
 		done
-	elif [ "$(jsonfilter -s "$rsp" -e '@.commands' 2>/dev/null)" != '[ ]' ]; then
-		log "pull FAILED: $rsp"
+	else
+		case "$(jsonfilter -s "$rsp" -e '@.commands' 2>/dev/null)" in
+		'[ ]')
+			rm -f "$STATE_DIR/once-pull"
+			GWRT_PULL_OK=1
+			;;
+		*)
+			# api() already logged the actionable 401/403 backoff line.
+			auth_failure "$rsp" || log_once pull "pull FAILED: $rsp"
+			;;
+		esac
 	fi
 }
 
@@ -355,9 +558,28 @@ do_once() {
 	echo "$iv"
 }
 
+# POST /api/agent/register: binds (device_id, pair_token) server-side.
+# Same `Authorization: Bearer <pair_token>` header as every other call.
+do_register() {
+	local rsp
+	if auth_blocked; then
+		printf '%s' '__API_FAIL__ auth backoff'
+		return 1
+	fi
+	rsp=$(api /api/agent/register "{\"device_id\":\"$(jstr "$(did)")\",\"agent_version\":1712,\"arch\":\"$(uname -m)\"}")
+	if [ "$(jsonfilter -s "$rsp" -e '@.ok' 2>/dev/null)" = true ]; then
+		rm -f "$STATE_DIR/once-register"
+		printf '%s' "$rsp"
+		return 0
+	fi
+	log_once register "register FAILED: $rsp"
+	printf '%s' "$rsp"
+	return 1
+}
+
 do_pair() {
 	local rsp
-	rsp=$(api /api/agent/register "{\"device_id\":\"$(jstr "$(did)")\",\"agent_version\":1712,\"arch\":\"$(uname -m)\"}")
+	rsp=$(do_register) || { echo "注册失败: $rsp" >&2; return 1; }
 	case "$(jsonfilter -s "$rsp" -e '@.ok' 2>/dev/null)" in
 	true)
 		echo "注册成功: $rsp"
@@ -368,10 +590,20 @@ do_pair() {
 }
 
 do_status() {
-	echo "gwrt-agent v1712-r7 (shim)"
+	local left
+	echo "gwrt-agent v1712-r9 (shim)"
 	echo "device_id=$(did)"
+	if [ -f "$AUTH_STATE" ]; then
+		auth_read
+		left=$((AUTH_UNTIL - $(date +%s)))
+		echo "auth=rejected level=$AUTH_LEVEL retry_in=${left}s reason=$AUTH_REASON"
+	else
+		echo "auth=ok"
+	fi
 	echo "hardware_id=$(cfg hardware_id)"
 	echo "endpoint=$(endpoint)"
+	echo "endpoint_ipv6=$(ipv6_endpoint)"
+	echo "transport=$(cat "$STATE_DIR/connection" 2>/dev/null)"
 	echo "lan_ifname=$(cfg lan_ifname)"
 	echo "firmware=$(. /etc/openwrt_release 2>/dev/null; echo "$DISTRIB_DESCRIPTION")"
 }
@@ -446,21 +678,36 @@ ensure_device_id() {
 	[ "$changed" = "1" ] || return 0
 	uci -q commit gwrt-agent
 	log "身份一机一码化: device_id=$(cfg device_id)"
-	# 新身份需重新注册（拿一次性绑定码）
-	do_pair >/dev/null 2>&1
+	# 2026-11-14：以前是 do_pair >/dev/null 2>&1，注册失败完全静默且不再重试，
+	# 结果就是每次上报都 401 却永远不自愈。失败必须可见，并记入退避状态。
+	if do_register >/dev/null; then
+		log "云端注册成功: device_id=$(cfg device_id)"
+	fi
 	return 0
 }
 
 daemon() {
-	log "daemon start (shim v1712-r7, endpoint=$(endpoint))"
+	log "daemon start (shim v1712-r9, endpoint=$(endpoint), ipv6=$(ipv6_endpoint))"
 	ensure_device_id
-	local iv next_report=0 started current delay rsp
+	local iv next_report=0 started current delay rsp fails=0 ok wait
 	iv=$(interval_of "")
 	while :; do
 		started=$(date +%s)
-		if ip route 2>/dev/null | grep -q '^default'; then
+		ok=0
+		if auth_blocked; then
+			# Rejected credentials: the only useful request is one registration
+			# attempt when the backoff expires.
+			if auth_due && network_ready; then
+				do_register >/dev/null
+				auth_read
+				# Still rejected (or unreachable): keep the backoff, do not hammer.
+				[ -f "$AUTH_STATE" ] && auth_postpone "$(auth_delay)"
+				next_report=0
+			fi
+		elif network_ready; then
 			# Keep command polling responsive even when telemetry is idle.
 			handle_commands
+			[ "$GWRT_PULL_OK" = 1 ] && ok=1
 			if [ -n "$GWRT_PULL_INTERVAL" ]; then
 				[ "$GWRT_PULL_INTERVAL" -lt "$iv" ] && next_report=0
 				iv="$GWRT_PULL_INTERVAL"
@@ -468,28 +715,39 @@ daemon() {
 			current=$(date +%s)
 			if [ "$current" -ge "$next_report" ]; then
 				rsp=$(do_report)
-				[ "$(jsonfilter -s "$rsp" -e '@.ok' 2>/dev/null)" = true ] && iv=$(interval_of "$rsp")
+				if [ "$(jsonfilter -s "$rsp" -e '@.ok' 2>/dev/null)" = true ]; then
+					ok=1
+					iv=$(interval_of "$rsp")
+				fi
 				next_report=$((current+iv))
 			fi
 		fi
+		if [ "$ok" = 1 ]; then fails=0; else fails=$((fails+1)); fi
 		delay=$((5-($(date +%s)-started)))
 		[ "$delay" -gt 0 ] || delay=1
+		# Repeated transport failures: slow down instead of retrying every 5s.
+		[ "$fails" -ge 3 ] && [ "$delay" -lt 30 ] && delay=30
+		if auth_blocked; then
+			wait=$(auth_wait)
+			[ "$wait" -gt "$delay" ] && delay="$wait"
+		fi
 		sleep "$delay"
 	done
 }
 
 case "${1:-daemon}" in
 	daemon|run) daemon;;
+	register) do_pair;;
 	once) do_once;;
 	pair) shift; if [ -x "$ORIG" ]; then exec "$ORIG" pair "$@"; else echo 'gwrt-agent: this architecture has no gwrt-pair-v2 binary' >&2; exit 1; fi ;;
 	dump) payload;;
 	mesh) mesh_report;;
 	cmd) shift; command_json="$1"; [ -n "$command_json" ] || command_json='{}'; run_command "$command_json";;
 	status) do_status;;
-	version|ver) echo "gwrt-agent 1712-r7";;
+	version|ver) echo "gwrt-agent 1712-r9";;
 	cgi) [ -x "$ORIG" ] && exec "$ORIG" cgi || { echo "Status: 500"; echo; echo '{"ok":false,"error":"orig missing"}'; };;
 	help|-h|--help)
-		echo "用法: gwrt-agent [daemon|once|pair|dump|mesh|cmd|status|version|cgi|help]";;
+		echo "用法: gwrt-agent [daemon|once|pair|register|dump|mesh|cmd|status|version|cgi|help]";;
 	*) # 未知参数转发原二进制, 保证兼容
 		[ -x "$ORIG" ] && exec "$ORIG" "$@" || { echo "gwrt-agent: unknown command '$1'" >&2; exit 1; };;
 esac

@@ -1,6 +1,11 @@
 
 config agent 'main'
 	option endpoint 'https://op.gwrt.uk'
+	# 优先 IPv6 直连；失败回退 endpoint，60 秒后重新尝试直连。
+	# 官方 endpoint 自动使用 https://op6.gwrt.uk:8443，保留旧配置升级同样生效。
+	option prefer_ipv6 '1'
+	# 自建服务可显式配置自己的 IPv6 HTTPS 入口：
+	# option endpoint_ipv6 'https://your-ipv6-host:8443'
 	option report_interval '30'
 	option lan_ifname 'br-lan'
 	# 2026-10-21：一机一码 —— device_id / pair_token / local_token 均不内置，

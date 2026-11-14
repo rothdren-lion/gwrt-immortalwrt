@@ -26,6 +26,8 @@ RETRY_GAP=30
 AP_OFF="dnsmasq odhcpd turboacc eqos shadowsocksr microsocks easytier bandix-plus appfilter ttyd"
 tick=0
 retry_at=0
+# 纯有线机型上「没有无线」的提示只打一次（见 no_wifi_notice）
+wifi_absent_logged=0
 
 log() { logger -t gwrt-mesh-apmode "$@"; }
 
@@ -44,6 +46,24 @@ mesh_wanted() {
 	[ -x /etc/init.d/wifiroam ] || return 1
 	/etc/init.d/wifiroam enabled >/dev/null 2>&1 || return 1
 	return 0
+}
+
+# 本机是否有无线子系统（配置、radio 目录、wifi 控制脚本任一个存在即可）。
+# 纯有线固件（例如 JDCloud RE-CS-08：不装 wpad/hostapd/mac80211）三者都没有，
+# 这时 `uci set wireless.x` 只会报 "Entry not found"，配对 STA 永远建不起来，
+# 守护循环就会每 10 秒重试一次并刷日志。所有无线专用分支都必须先过这道判断。
+wifi_present() {
+	[ -f /etc/config/wireless ] && return 0
+	[ -d /sys/class/ieee80211 ] && return 0
+	command -v wifi >/dev/null 2>&1 && return 0
+	return 1
+}
+
+# 「没有无线」只在第一次说清楚，之后不再刷日志（每个进程一次）
+no_wifi_notice() {
+	[ "$wifi_absent_logged" = "1" ] && return 0
+	wifi_absent_logged=1
+	log "$1"
 }
 
 # 无线回传 STA 是否已连上主AP（接口名通常是 phyX-sta0）
@@ -135,6 +155,10 @@ fw_add_wwan_wan() { fw_move_wwan wan; }
 ensure_wireless_pairing() {
 	local ssid key dev r
 	mesh_wanted || return 0
+	if ! wifi_present; then
+		no_wifi_notice "no wifi radio/config: wireless pairing STA disabled (wired-only build)"
+		return 1
+	fi
 	[ "$(uci -q get wifiroam.core.role)" = "unconfigured" ] || return 0
 	[ "$(uci -q get wifiroam.backhaul.enabled)" = "1" ] || return 0
 	ssid="$(uci -q get wifiroam.backhaul.ssid)"
@@ -183,7 +207,8 @@ ensure_wireless_pairing() {
 
 clear_wireless_pairing() {
 	local changed=0
-	if [ "$(uci -q get wireless.wifiroam_bh.network)" = "wwan" ]; then
+	# 无线段只在真有无线时删（纯有线机型 uci 会报 Entry not found）
+	if wifi_present && [ "$(uci -q get wireless.wifiroam_bh.network)" = "wwan" ]; then
 		uci -q delete wireless.wifiroam_bh
 		uci -q commit wireless
 		changed=1
@@ -206,6 +231,8 @@ clear_wireless_pairing() {
 ensure_backhaul() {
 	local ssid key dev r carrier band ch sig old want_dis
 	mesh_wanted || return 0
+	# 没有无线就没有回传可建（纯有线机型插网线即可，回传由 AP 模式处理）
+	wifi_present || return 0
 	[ "$(uci -q get wifiroam.core.role)" = "sap" ] || return 0
 	[ "$(uci -q get wifiroam.backhaul.enabled)" = "1" ] || return 0
 	ssid="$(uci -q get wifiroam.backhaul.ssid)"
@@ -440,6 +467,8 @@ ft_bridge_socket_stale() {
 
 repair_ft_bridge_sockets() {
 	local status radio radios="" ifnames ifname conf needed sig waited=0
+	# FT(BSS 间漫游) 修复要停/起 wifi-device，纯有线机型没有可修的对象
+	wifi_present || return 0
 	ft_bridge_socket_stale || return 0
 	# 对同一旧 socket 只尝试一次，失败不能变成周期性踢客。
 	sig="$(cat /sys/class/net/br-lan/ifindex 2>/dev/null):$(awk '($4 == "890d" || $4 == "88b7") && $5 == "-1" { printf "%s:%s;", $4, $9 }' /proc/net/packet 2>/dev/null)"
@@ -479,13 +508,22 @@ repair_ft_bridge_sockets() {
 
 apply_apmode() {
 	if [ "$1" != "force" ] && in_apmode; then return 0; fi
+
+	local brsec wan_up carrier
+	carrier="$(wan_carrier)"
+	# 纯有线机型：没插网线就是没连上主路由，直接保持路由模式。
+	# 不能掉进下面的无线回传分支（会写 wwan 接口，25s 后回滚，反复折腾配置）。
+	# 必须放在 save_state 之前：STATE 一建立，in_apmode 就变真了。
+	if [ "$carrier" != "1" ] && ! wifi_present; then
+		no_wifi_notice "no wifi radio/config: waiting for wired uplink, staying in router mode"
+		return 1
+	fi
+
 	log "mesh paired -> switching to AP mode (force=$1)"
 	[ -f "$STATE" ] || save_state
 
-	local brsec wan_up carrier
 	brsec="$(brlan_dev_section)"
 	wan_up="$(default_dev)"
-	carrier="$(wan_carrier)"
 
 	for sv in $AP_OFF; do
 		[ -x "/etc/init.d/$sv" ] || continue
@@ -666,7 +704,7 @@ restore_routermode() {
 	/etc/init.d/network reload >/dev/null 2>&1
 
 	# 恢复路由模式的原 SSID/密码（否则子AP 还在广播主路由 SSID，回退后连不上）
-	if [ -f /etc/gwrt-wireless-orig ]; then
+	if wifi_present && [ -f /etc/gwrt-wireless-orig ]; then
 		if valid_wireless /etc/gwrt-wireless-orig; then
 			cp -f /etc/gwrt-wireless-orig /etc/config/wireless
 			uci -q delete wireless.wifiroam_bh 2>/dev/null
