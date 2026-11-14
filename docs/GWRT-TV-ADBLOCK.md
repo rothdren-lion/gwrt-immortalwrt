@@ -205,6 +205,24 @@ python3 build-ads-library.py      # 依赖 python3 + dig
 - 危险域门禁：裸根/CDN/功能域/`api.*` 标签过滤；微软侧硬排除
   `crl.microsoft.com`、teredo/ipv6、corp.sts、`msftconnecttest.com`
 
-> anti-AD 站点限流严重（常在中途截断）。下载不完整时先手动拉全量：
-> `curl -L --retry 5 -o .cache/antiad-dnsmasq.conf https://anti-ad.net/anti-ad-for-dnsmasq.conf`
-> 确认 `grep -c '^address=/'` ≥ 10 万再重跑脚本。
+> anti-AD 站点限流严重（实测官网只能拉到 1.5 万/10 万条就断，且不支持
+> Range 续传）。**用 GitHub 源**，仓库内文件名是 `adblock-for-dnsmasq.conf`：
+> `curl -L -o .cache/antiad-dnsmasq.conf https://raw.githubusercontent.com/privacy-protection-tools/anti-AD/master/adblock-for-dnsmasq.conf`
+> 确认 `grep -c '^address=/'` ≥ 10 万再重跑脚本（脚本会自动按此顺序尝试两个源）。
+
+### 7.1 重建时的两个坑（已修）
+
+1. **死父域连带丢活子域**：`ads.oppomobile.com` 已 NXDOMAIN，但它下面
+   `adx/bdapi/ck/data/sms.ads.oppomobile.com` 实测都是活的（111.206.136.x，
+   OPPO 广告投放）。必须**先存活验证、再后缀去重**，否则父域一死连子域
+   一起丢。修剪除顺序后这 5 条保住。
+2. **sec 不能用 cn 的通用门禁**：360 的 `down.` / `api.` / `update.` 和微软
+   `update.microsoft.com` 正是要拦的目标，被 `EXCLUDE_LABEL` 一过全没了。
+   sec 只做 `MS_NEVER` + `PER_DOMAIN_DROP` 级排除。
+
+另：`kill` 档（hao123/2345）是用户强制指定项，**不受存活验证影响**——
+当前网络下 NXDOMAIN 也照样拦（拦一条 NXDOMAIN 无副作用，换环境可能就活了）。
+
+`EXTRA_CN` 列表保存了 anti-AD 新版源已删、但实测有效/需保留的域
+（上面 5 个 OPPO 子域 + `cpro.baidustatic.com` + `h.trace.qq.com` +
+`adstrategy.biz.weibo.com` + `ad.xiaomi.com`），保证重建不丢。

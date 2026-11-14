@@ -23,7 +23,12 @@ LIB = PKG / "files/etc/gwrt-tv-adblock/ads-library.txt"
 CACHE = PKG / ".cache"
 LIVE_JSON = CACHE / "liveness.json"
 ANTIAD = CACHE / "antiad-dnsmasq.conf"
-ANTIAD_URL = "https://anti-ad.net/anti-ad-for-dnsmasq.conf"
+# 优先 GitHub raw: 官网 anti-ad.net 限流严重(实测只能拉到 1.5万/10万条就断)
+# 注意 GitHub 仓库里的文件名是 adblock-for-dnsmasq.conf
+ANTIAD_URLS = [
+    "https://raw.githubusercontent.com/privacy-protection-tools/anti-AD/master/adblock-for-dnsmasq.conf",
+    "https://anti-ad.net/anti-ad-for-dnsmasq.conf",
+]
 
 # ---------------------------------------------------------------- 工具
 
@@ -150,7 +155,6 @@ PER_DOMAIN_DROP = {
     "hwpub-s01-drcn.cloud.dbankcloud.cn", "dt.dbankcloud.ru",
     "gw5.push.mcp.weibo.cn", "gw6.push.mcp.weibo.cn",
     "appcfg.v.qq.com", "commdata.v.qq.com",   # 腾讯视频遥测(非广告)
-    "ad.dev.360.cn",                          # 360 开发者平台
 }
 # video 标签下但确实是广告服务器的豁免
 PER_DOMAIN_KEEP = {"adss.video.qq.com"}
@@ -263,6 +267,22 @@ BRAND = {
     ],
 }
 
+# 曾收录但 anti-AD 新版源已删、实测仍活跃的域(人工确认保留, 重建时不丢)
+EXTRA_CN = [
+    # OPPO 广告投放(111.206.136.x, 父域 ads.oppomobile.com 已 NXDOMAIN)
+    "adx.ads.oppomobile.com", "bdapi.ads.oppomobile.com",
+    "ck.ads.oppomobile.com", "data.ads.oppomobile.com",
+    "sms.ads.oppomobile.com",
+    # 百度联盟广告素材
+    "cpro.baidustatic.com",
+    # 腾讯广点通链路追踪
+    "h.trace.qq.com",
+    # 微博广告策略
+    "adstrategy.biz.weibo.com",
+    # 小米手机广告(当前 NXDOMAIN, 保留以防复活)
+    "ad.xiaomi.com",
+]
+
 # ------------------------------------------------------- sec 白名单清单
 
 # 360 全家桶: 按注册域全量收(anti-AD curated)
@@ -307,31 +327,37 @@ KILL = ["hao123.com", "2345.com", "2345.cc", "2345.cn"]
 def fetch_antiad():
     """确保 anti-AD 缓存完整可用。
 
-    安全闸: anti-AD 完整清单约 10 万条, 站点限流严重常被截断。来源不足时
+    安全闸: anti-AD 完整清单约 10 万条, 官网限流严重常被截断。来源不足时
     绝不能覆盖现有库(cn/sec 会大量缩水), 这里直接拒绝继续。
     """
+    def count(p):
+        return sum(1 for line in p.read_text(errors="replace").splitlines()
+                   if line.startswith("address=/")) if p.exists() else 0
+
     if ANTIAD.exists():
-        n = sum(1 for line in ANTIAD.read_text(errors="replace").splitlines()
-                if line.startswith("address=/"))
+        n = count(ANTIAD)
         if n >= 50000:
             print(f"anti-AD 缓存可用: {n} 条")
             return ANTIAD
-        sys.exit(
-            f"anti-AD 缓存不完整({n} 条, 需要 >=50000)。\n"
-            f"请先完整下载后重跑:\n"
-            f"  rm -f {ANTIAD}\n"
-            f"  curl -L --retry 5 -o {ANTIAD} {ANTIAD_URL}\n"
-            f"拒绝继续, 以免把 cn/sec 缩水覆盖现有库。")
-    print(f"下载 anti-AD: {ANTIAD_URL}")
+        print(f"anti-AD 缓存不完整({n} 条), 重新下载")
+        ANTIAD.unlink()
+
     CACHE.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["curl", "-sSL", "--retry", "5", "-m", "600",
-                    "-o", str(ANTIAD), ANTIAD_URL], check=False)
-    n = sum(1 for line in ANTIAD.read_text(errors="replace").splitlines()
-            if line.startswith("address=/")) if ANTIAD.exists() else 0
-    if n < 50000:
-        sys.exit(f"下载后仍不完整({n} 条), 拒绝覆盖现有库。")
-    print(f"anti-AD: {n} 条")
-    return ANTIAD
+    for url in ANTIAD_URLS:
+        print(f"下载 anti-AD: {url}")
+        subprocess.run(["curl", "-sSL", "--retry", "3", "-m", "600",
+                        "-o", str(ANTIAD), url], check=False)
+        n = count(ANTIAD)
+        if n >= 50000:
+            print(f"  成功: {n} 条")
+            return ANTIAD
+        print(f"  不完整({n} 条), 换下一个源")
+        ANTIAD.unlink(missing_ok=True)
+
+    sys.exit(
+        "所有源都不完整(需要 >=50000 条), 拒绝覆盖现有库。\n"
+        f"手动下载后重跑:\n"
+        f"  curl -L -o {ANTIAD} {ANTIAD_URLS[0]}")
 
 
 def main():
@@ -362,6 +388,9 @@ def main():
         print(f"  {brand}: {n}")
 
     cn = check_many(sorted(cand), cache)
+    # 人工确认保留的额外域(不受存活验证影响: 当前 NXDOMAIN 不代表永久废弃)
+    cn += [d for d in EXTRA_CN if d not in cn]
+    # 先验活再后缀去重: 父域死了不能连带丢掉活着的子域
     cn = dedupe_suffix(cn)
     others = set(tv) | set(tvext)
     cn = [d for d in cn if d not in others]
@@ -374,8 +403,19 @@ def main():
                  f"\n检查 anti-AD 来源完整性或 BRAND/excluded 规则。")
 
     # ---- sec
-    sec = [d for d in antiad if covered_by(d, SEC360_ROOTS) and not excluded(d)]
-    sec += [d for d in SEC_TENCENT + SEC_MS_SEC + SEC_MS_UPD if not excluded(d)]
+    # 注意: sec 是人工白名单清单(360 全家桶/腾讯管家/微软 Defender 与更新),
+    # 不能用 cn 的通用 EXCLUDE_LABEL 门禁——360 的 down./api./update. 等
+    # 正是要拦的域, 微软 update.microsoft.com 也是目标而非功能域。
+    # 只做 MS_NEVER 与 PER_DOMAIN_DROP 级排除。
+    def sec_ok(d):
+        if d in MS_NEVER:
+            return False
+        if d in PER_DOMAIN_DROP:
+            return False
+        return True
+
+    sec = [d for d in antiad if covered_by(d, SEC360_ROOTS) and sec_ok(d)]
+    sec += [d for d in SEC_TENCENT + SEC_MS_SEC + SEC_MS_UPD if sec_ok(d)]
     sec = check_many(sorted(set(sec)), cache)
     sec = dedupe_suffix(sec)
     sec = [d for d in sec if d not in others and d not in set(cn)]
@@ -386,7 +426,10 @@ def main():
         sys.exit(f"sec 从 {prev_sec} 降到 {len(sec)}, 拒绝覆盖。")
 
     # ---- kill
-    kill = check_many(KILL, cache)
+    # 先验活再后缀去重（见主流程注释）。
+    # kill 是用户强制指定的必拦项, 不受存活验证影响——域名 NXDOMAIN 也照样
+    # 拦(可能是当前网络下不解析, 换环境就活; 且拦一条 NXDOMAIN 无副作用)。
+    kill = list(KILL)
     taken = others | set(cn) | set(sec)
     kill = [d for d in kill if d not in taken]
     print(f"  kill 最终: {len(kill)}")

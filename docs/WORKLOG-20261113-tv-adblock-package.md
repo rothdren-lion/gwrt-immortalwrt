@@ -393,3 +393,43 @@ hao123、2345.cc「直接拉入枪毙」。
 - 包版本 2.2：init `gen_rules` 放行排除 + `server=/d/#`；
   文档修正 dnsmasq 优先级与裸 server 语义；WORKLOG §11
 - 未编固件，未触发 CI
+
+## 12. 规则库可复现性验证（2026-11-14）
+
+用户指出 anti-AD 有 GitHub 仓库。补回构建脚本后做完整复现验证。
+
+### 12.1 下载源修正
+
+- 官网 `anti-ad.net/anti-ad-for-dnsmasq.conf` **限流严重**：实测反复只能拉到
+  15752 / 102656 条（822 KB）就断，`curl -C -` 与 `wget -c` 续传均无效
+  （服务器不支持 Range）
+- GitHub 仓库可用，但**文件名不同**：仓库内是
+  `adblock-for-dnsmasq.conf`（`anti-ad-for-dnsmasq.conf` 返回 404）
+- 正确地址：
+  `https://raw.githubusercontent.com/privacy-protection-tools/anti-AD/master/adblock-for-dnsmasq.conf`
+  → 2.99 MB / 102656 条 / `#VER=20261114074459`，与 `#TOTAL_LINES` 一致
+- 脚本改为按序尝试 GitHub → 官网，任一源 ≥5 万条即用
+
+### 12.2 修复三个导致库缩水的 bug
+
+用全量源首跑得到 cn 139 / sec 73 / kill 0 / 合计 545（原 564），逐个定位：
+
+| 现象 | 根因 | 修复 |
+|---|---|---|
+| kill 4→0 | kill 走了存活验证；`hao123.com`/`2345.*` 在本机网络下公共 DNS 返回 NXDOMAIN（换 `getent` 能解析） | kill 为用户强制项，**不过存活验证** |
+| sec 79→73 | sec 用 cn 的 `EXCLUDE_LABEL` 门禁，把 `down.360.cn`/`qstore.inner.api.sj.360.cn`/`u.api.look.360.cn`/`msg.shouji.360.cn`/`update.microsoft.com`/`ad.dev.360.cn` 全滤掉——这些正是要拦的目标 | sec 只做 `MS_NEVER`+`PER_DOMAIN_DROP` 排除，去掉 `ad.dev.360.cn` 的 per-domain 排除 |
+| cn 148→139 | ① 5 个 `*.ads.oppomobile.com` 子域在 anti-AD 新版源已删，但实测活（111.206.136.x）；② `cpro.baidustatic.com`/`h.trace.qq.com`/`adstrategy.biz.weibo.com`/`ad.xiaomi.com` 同样已从源删除 | 新增 `EXTRA_CN` 人工保留清单（10 条），不受存活验证影响 |
+
+### 12.3 复现结果
+
+修完重跑：**tv 218 / tv-ext 115 / cn 148 / sec 79 / kill 4 = 564**，与原库
+**逐条 diff 零差异**。`dnsmasq --test` OK，跨分类零重复，域名格式合法。
+
+结论：库现在完全可复现——下载全量源 + 跑脚本即可得到当前 564 条。
+
+### 12.4 脚本健壮性
+
+- `load_rules` 用 `errors=replace`，截断下载的半个多字节字符不再崩溃
+- 安全闸：源 <5 万条、或 cn/sec 跌幅 >30% 时**拒绝写入**（实测触发时库字节未变）
+- `tv`/`tv-ext` 从当前库读回，重跑不打乱电视档
+- `.cache/`（anti-AD + 存活缓存）已 gitignore；脚本不进固件
