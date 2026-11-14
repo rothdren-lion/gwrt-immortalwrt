@@ -386,6 +386,8 @@ jobs:
             .config
             feeds-revisions.txt
             logs/cs06-*
+            build_dir/target-aarch64*/linux-qualcommbe_ipq53xx/linux-[0-9]*/.config
+            build_dir/target-aarch64*/linux-qualcommbe_ipq53xx/linux-[0-9]*/include/config/kernel.release
           if-no-files-found: error
           retention-days: 7
 

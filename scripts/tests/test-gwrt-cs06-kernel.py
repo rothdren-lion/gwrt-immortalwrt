@@ -53,6 +53,39 @@ class KernelSelection(unittest.TestCase):
     def test_toolchain_alone_is_not_a_target(self):
         self.check(False, 'expected exactly one CS-06 target kernel; found: none')
 
+    def add_packages(self):
+        for name in ('linux-atm-2.5.2', 'linux-firmware-20261101', 'linux-tools'):
+            package = self.build / TARGET / name
+            package.mkdir(parents=True)
+            (package / '.config').write_text('CONFIG_PACKAGE=y\n')
+
+    def test_target_with_linux_prefixed_packages(self):
+        self.add_packages()
+        kernel = self.add_kernel()
+        result = self.check(True, str(kernel))
+        self.assertNotIn('linux-atm', result.stdout)
+        self.assertEqual(self.output.read_bytes(), (kernel / '.config').read_bytes())
+
+    def test_linux_prefixed_packages_alone_are_not_a_target(self):
+        self.add_packages()
+        self.check(False, 'expected exactly one CS-06 target kernel; found: none')
+
+    def test_packages_do_not_hide_wrong_kernel_version(self):
+        self.add_packages()
+        self.add_kernel(version='6.18.55')
+        self.check(False, 'expected Linux 6.18.62, found linux-6.18.55')
+
+    def test_multiple_kernel_versions_are_rejected(self):
+        self.add_packages()
+        self.add_kernel()
+        self.add_kernel(version='6.18.55')
+        self.check(False, 'expected exactly one CS-06 target kernel; found:')
+
+    def test_release_candidate_kernel_is_rejected(self):
+        self.add_packages()
+        self.add_kernel(version='6.19-rc1')
+        self.check(False, 'expected Linux 6.18.62, found linux-6.19-rc1')
+
     def test_wrong_target_cma_fails_even_with_valid_toolchain(self):
         self.add_kernel('toolchain-other_musl', cma=64)
         self.add_kernel(cma=32)

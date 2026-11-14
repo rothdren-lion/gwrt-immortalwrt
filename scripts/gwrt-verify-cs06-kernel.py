@@ -2,6 +2,7 @@
 """Verify the compiled CS-06 kernel, excluding toolchain header trees."""
 import argparse
 from pathlib import Path
+import re
 import shutil
 
 
@@ -11,8 +12,12 @@ SETTINGS = ('CONFIG_ARM64=y', 'CONFIG_CMA=y', 'CONFIG_DMA_CMA=y',
 
 
 def verify_kernel(build_dir):
+    # Kernel builds share this directory with packages such as linux-atm.
+    # Keep all kernel versions visible so an unexpected or duplicate one fails.
     candidates = sorted(path for path in build_dir.glob(
-        'target-aarch64*/linux-qualcommbe_ipq53xx/linux-*') if path.is_dir())
+        'target-aarch64*/linux-qualcommbe_ipq53xx/linux-*')
+        if path.is_dir() and re.fullmatch(
+            r'linux-[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:-rc[0-9]+)?', path.name))
     if len(candidates) != 1:
         raise ValueError('expected exactly one CS-06 target kernel; found: ' +
                          (', '.join(map(str, candidates)) or 'none'))

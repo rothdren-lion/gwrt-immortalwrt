@@ -69,3 +69,23 @@ workflow YAML 和各 run 块 shell 语法检查通过。未修改无线驱动补
 
 复现证据：`gwrt-cs06-recovery-261114-evidence/ci-kernel-selection-regression.log`。
 修正后继续同分支 CS-06 `261114-02`、`release=false`，运行编号随后追加。
+
+## 2026-11-15 再次失败：同目录的软件包被识别为内核
+
+运行 `43598266385` 的正式编译、镜像哈希和实际编译源的 32 项恢复 / 15 项
+MLO 回归全部成功；2026-11-14 15:05:13 UTC 末尾校验明确报出两个候选：
+`linux-6.18.62` 和同级软件包 `linux-atm-2.5.2`。此前 `linux-*` 通配过宽，
+这次失败发生在目录识别阶段，尚未检查实际目标内核 CMA，不能凭此确认 CMA 值。
+失败时已保留 `inspection` 镜像和配置证据包；原运行结论仍为失败。
+
+校验改为完整匹配数字版本的内核目录（含 rc 版本用于严格拒绝错误版本），
+排除 linux-atm / linux-firmware / linux-tools 软件包，保留重复内核、版本、
+实际编译 release 与 CMA64 的严格检查。新增真实 linux-atm 目录布局、只有软件包、
+错误版本与多个版本的回归；旧脚本 4/15 失败，修正后 15/15 通过。
+失败证据包同时补存原始目标内核 `.config` 和 `kernel.release`，避免校验失败后
+丢失核实实际配置所需证据。没有改无线实现、Linux 6.18.62、CMA64 或板级 MLO 策略。
+源码预检、workflow YAML 与全部 15 个 run 块 shell 语法检查通过。
+
+负对照、正向回归和源码预检分别保存在证据根目录的
+`ci-kernel-package-negative.log`、`ci-kernel-package-regression.log`、
+`ci-kernel-package-preflight.log`。继续原授权 CS-06 分支重编，运行编号和结果随后补记。
