@@ -81,6 +81,7 @@ def verify_dtb(kernel):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('target', type=Path)
+    parser.add_argument('--variant', choices=('daed', 'honk-easytier'), default='daed')
     args = parser.parse_args()
     profiles = json.loads((args.target / 'profiles.json').read_text())['profiles']
     require(set(profiles) == {'jdcloud_re-ss-01'}, 'unexpected device profiles')
@@ -183,6 +184,45 @@ def main():
         for section in ('gwrt-mesh-apmode', 'gwrt-mesh-led'):
             require(re.search(r'/etc/init\.d/' + section + r'\s*$', listing, re.M),
                     'missing mesh init: ' + section)
+
+        if args.variant == 'honk-easytier':
+            manifest_text = '\n'.join(p.read_text() for p in manifests)
+            required = (
+                'honk', 'luci-app-honk', 'luci-lib-daeuniverse',
+                'easytier', 'luci-app-easytier',
+                'luci-i18n-easytier-zh-cn', 'vmlinux-btf-builtin', 'sgdisk',
+            )
+            for package in required:
+                require(re.search(r'^' + re.escape(package) + r'\s+-\s+', manifest_text, re.M),
+                        'missing Honk + EasyTier package: ' + package)
+            forbidden = (
+                'dae', 'daed', 'luci-app-dae', 'luci-app-daed',
+                'luci-app-homeproxy', 'luci-app-openclash', 'luci-app-passwall',
+                'luci-app-ssr-plus', 'luci-app-v2raya', 'sing-box', 'xray-core',
+                'v2ray-core', 'trojan', 'hysteria', 'microsocks',
+            )
+            for package in forbidden:
+                require(not re.search(r'^' + re.escape(package) + r'\s+-\s+', manifest_text, re.M),
+                        'proxy package is still present: ' + package)
+            for path in ('etc/init.d/dae', 'etc/init.d/daed', 'etc/init.d/homeproxy',
+                         'etc/init.d/sing-box', 'etc/init.d/xray'):
+                require(not re.search(r'/' + re.escape(path) + r'\s*$', listing, re.M),
+                        'proxy service is still packaged: ' + path)
+            honk = read_file('usr/bin/honk-core')
+            require(honk[:6] == b'\x7fELF\x02\x01' and struct.unpack_from('<H', honk, 18)[0] == 183,
+                    'honk-core must be an aarch64 ELF executable')
+            require(b'index.html' in honk and b'doona' in honk,
+                    'honk-core does not contain the embedded Doona UI')
+            easytier = read_file('usr/bin/easytier-core')
+            require(easytier[:6] == b'\x7fELF\x02\x01' and struct.unpack_from('<H', easytier, 18)[0] == 183,
+                    'easytier-core must be an aarch64 ELF executable')
+            require(b"ui: 'embedded'" in read_file('etc/honk/config.dae'),
+                    'Honk default configuration must select standard Doona')
+            require(re.search(r'/usr/bin/easytier-web\s*$', listing, re.M),
+                    'EasyTier web console is missing')
+            print('PASS SS-01 Honk full + embedded Doona + EasyTier; proxy engines removed')
+            return
+
         manifest_text = '\n'.join(p.read_text() for p in manifests)
         runtime_version = b'daed-4d6a433_wing-dc50308_core-5db27a0-gwrt-runtime1'
         require(read_file('usr/share/daed/gwrt-runtime-version').strip() == runtime_version,
