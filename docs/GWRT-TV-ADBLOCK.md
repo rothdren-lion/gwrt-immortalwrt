@@ -184,3 +184,27 @@ nftset=/ad.hpplay.cn/4#inet#fw4#tvads
 库文件在 /etc（conffile），固件升级后仍保留；init 启动时若缺失会从
 固件模板自愈恢复。重新打包发版时复跑构建脚本覆盖
 `files/etc/gwrt-tv-adblock/ads-library.txt` 并 bump PKG_RELEASE。
+
+## 7. 重建规则库
+
+构建脚本随包保存：`package/gwrt-tv-adblock/build-ads-library.py`
+
+```sh
+cd package/gwrt-tv-adblock
+python3 build-ads-library.py      # 依赖 python3 + dig
+```
+
+为何要保存脚本：`/tmp` 会被清理，早期脚本只存在临时目录里（已丢失）。
+脚本本身**不进固件**（Makefile 只安装 `files/` 下的显式路径）。
+
+特性：
+- **幂等**：`tv` / `tv-ext` 从当前库读回原样保留，重跑不会打乱电视档
+- **安全闸**：anti-AD 来源不足 5 万条、或 `cn`/`sec` 数量骤降超 30%
+  时**拒绝写入**，避免来源截断把库缩水覆盖
+- **缓存**：anti-AD 清单与存活验证结果放 `.cache/`（已 gitignore）
+- 危险域门禁：裸根/CDN/功能域/`api.*` 标签过滤；微软侧硬排除
+  `crl.microsoft.com`、teredo/ipv6、corp.sts、`msftconnecttest.com`
+
+> anti-AD 站点限流严重（常在中途截断）。下载不完整时先手动拉全量：
+> `curl -L --retry 5 -o .cache/antiad-dnsmasq.conf https://anti-ad.net/anti-ad-for-dnsmasq.conf`
+> 确认 `grep -c '^address=/'` ≥ 10 万再重跑脚本。
