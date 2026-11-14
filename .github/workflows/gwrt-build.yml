@@ -211,6 +211,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p logs
+          python3 scripts/tests/test-gwrt-cs06-kernel.py 2>&1 | tee logs/cs06-kernel-selection-test.log
           taskset -c 0-5 make -j6 package/kernel/mac80211/download \
             REVISION="$(git rev-parse --short HEAD)" 2>&1 | tee logs/cs06-mac80211-download.log
           backports_version=$(sed -n 's/^PKG_SOURCE_VERSION:=//p' package/kernel/mac80211/Makefile)
@@ -270,10 +271,8 @@ jobs:
           python3 scripts/tests/test-gwrt-ath12k-group-recovery.py "$ath12k_dir" | tee logs/cs06-recovery-compiled-source.log
           python3 scripts/tests/test-gwrt-ath12k-mlo-policy.py "$ath12k_dir" | tee logs/cs06-mlo-compiled-source.log
           sha256sum "$ath12k_dir"/{core.c,core.h,ahb.c,pci.c} > logs/cs06-ath12k-compiled-source.sha256
-          kernel_dir=$(find build_dir -type d -name 'linux-6.18.62' -print -quit)
-          test -n "$kernel_dir"
-          grep -x 'CONFIG_CMA_SIZE_MBYTES=64' "$kernel_dir/.config"
-          cp "$kernel_dir/.config" logs/cs06-kernel.config
+          python3 scripts/gwrt-verify-cs06-kernel.py build_dir \
+            --output logs/cs06-kernel.config 2>&1 | tee logs/cs06-kernel-audit.log
 
       - name: Verify SS-01 packaged theme and Ethernet
         if: success() && inputs.device == 'ss01'
@@ -368,6 +367,25 @@ jobs:
             bin/targets/qualcommax/ipq60xx/*.manifest
             bin/targets/qualcommax/ipq60xx/profiles.json
             bin/targets/qualcommax/ipq60xx/sha256sums
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Preserve CS-06 images for failed verification
+        if: failure() && inputs.device == 'cs06' && steps.build_firmware.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gwrt-${{ inputs.device }}-${{ env.VER }}-inspection
+          include-hidden-files: true
+          path: |
+            bin/targets/qualcommbe/ipq53xx/*.bin
+            bin/targets/qualcommbe/ipq53xx/*.itb
+            bin/targets/qualcommbe/ipq53xx/*.manifest
+            bin/targets/qualcommbe/ipq53xx/profiles.json
+            bin/targets/qualcommbe/ipq53xx/sha256sums
+            bin/targets/qualcommbe/ipq53xx/*.buildinfo
+            .config
+            feeds-revisions.txt
+            logs/cs06-*
           if-no-files-found: error
           retention-days: 7
 

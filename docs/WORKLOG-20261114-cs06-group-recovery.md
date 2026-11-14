@@ -42,3 +42,30 @@
 
 证据目录：`/home/godsun/build/gwrt-cs06-recovery-261114-evidence/`。
 尚未连接设备、刷机或重启。提交、云端运行与产物状态在后续段追加。
+
+## 首轮云端编译与末尾校验失败
+
+恢复提交 `7bf511b23de0ff9f94466f3920e0eb995f33c1e0` 已推送到
+`cs06-recovery-261114`，运行
+https://github.com/rothdren-lion/gwrt-immortalwrt/actions/runs/43586551887 。
+`Build firmware` 在 2026-11-14 12:33:32 UTC 成功结束，随后包和镜像哈希检查通过。
+实际编译源上的 32 项恢复、15 项 MLO 测试全部通过，但同一步末尾的内核配置
+校验返回 1。后续固件上传被跳过，仅保留失败日志，不能把这次运行交付为成功。
+
+校验使用 `find build_dir -name linux-6.18.62 -print -quit`，未限制目标。
+工具链头文件树也有同名内核且默认 CMA 为 32 MiB；本地真实树也含其他板型。
+在本机 build 所在文件系统创建工具链 32 MiB 和 CS-06 64 MiB 两目录后，
+旧命令实际选中工具链并返回 1，新校验选中 CS-06 并通过。
+旧云端没有打印所选目录，无法仅凭旧日志直接证明当时选中了哪份配置；
+新运行保留所选路径、实际值和目标内核配置，用于确认最终编译结果。
+
+CI 修正只检查 `target-aarch64*/linux-qualcommbe_ipq53xx/linux-*`，拒绝缺失或
+多份目标内核；检查编译生成的 release 为 6.18.62，并保留 CMA/DMA_CMA 启用、
+64 MiB 与按 MiB 选择的严格验证。10 项目录选择/错误配置回归通过，覆盖同名
+工具链、其他目标、错误版本、重复目标及真实 CMA/release 不符；仓库源码预检、
+workflow YAML 和各 run 块 shell 语法检查通过。未修改无线驱动补丁或内核配置。
+同时在编译成功但后续检查失败时上传 CS-06 `inspection` 证据包，保留镜像、
+配置、清单和校验日志；此包不代表已通过验证的固件。
+
+复现证据：`gwrt-cs06-recovery-261114-evidence/ci-kernel-selection-regression.log`。
+修正后继续同分支 CS-06 `261114-02`、`release=false`，运行编号随后追加。
