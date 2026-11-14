@@ -112,12 +112,16 @@ u.description = translate("纯文本规则库的下载地址。留空则按钮�
 u.rmempty = true
 
 local has_button = (type(Button) == "table")
+-- Button.write 在 CBI 解析阶段就执行, 早于 uci commit:
+-- 直接在里面调 update 会拿到上一个 library_url。改为只置标记,
+-- 真正的下载放到 on_after_commit(提交之后)。
+local want_update = false
 if has_button then
 	local b = s:option(Button, "_updlib", translate("更新"))
 	b.inputtitle = translate("从库地址更新规则库")
 	b.description = translate("下载 → 内容与 dnsmasq 语法双重校验 → 备份原库(.bak) → 替换 → 重新生成。结果见 /tmp/gwrt-tv-adblock-update.log")
 	function b.write(self, section, value)
-		sys.call("/usr/libexec/gwrt-tv-adblock update noreload >/tmp/gwrt-tv-adblock-update.log 2>&1")
+		want_update = true
 	end
 end
 
@@ -148,6 +152,10 @@ function d.cfgvalue(self, section)
 end
 
 m.on_after_commit = function()
+	-- 先换库(带校验, 失败保留原库), 再按新库重建规则
+	if want_update then
+		sys.call("/usr/libexec/gwrt-tv-adblock update noreload >/tmp/gwrt-tv-adblock-update.log 2>&1")
+	end
 	sys.call("/etc/init.d/gwrt-tv-adblock reload >/dev/null 2>&1")
 end
 

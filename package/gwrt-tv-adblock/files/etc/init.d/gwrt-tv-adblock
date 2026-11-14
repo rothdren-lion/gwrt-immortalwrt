@@ -21,20 +21,28 @@ LIB_SHARE=/usr/share/gwrt-tv-adblock/ads-library.txt
 BEGIN="# --- gwrt-tv-adblock begin ---"
 END="# --- gwrt-tv-adblock end ---"
 LEGACY_TMP=/tmp/dnsmasq.dnsmasq.d/gwrt-tv-ads.conf
+RULES_TMP=/tmp/gwrt-tv-adblock.rules.$$
+
+# 布尔值解析: 缺省取 $2, 兼容 1/0 与 true/false/on/off
+bool_on() {
+	local v="$1" dflt="$2"
+	[ -z "$v" ] && v="$dflt"
+	case "$v" in
+		0|false|off|no|disabled) return 1 ;;
+	esac
+	return 0
+}
 
 # 总开关 (缺省视为开, 兼容旧配置)
 is_enabled() {
-	local e; e="$(uci -q get ${CFG}.config.enabled 2>/dev/null)"
-	[ -z "$e" ] && e=1
-	[ "$e" = 1 ]
+	bool_on "$(uci -q get ${CFG}.config.enabled 2>/dev/null)" 1
 }
 
 # 分类开关; cat_tv 缺省视为开(对齐旧 core 默认), 其余缺省关
 cat_on() {
-	local v; v="$(uci -q get ${CFG}.config.$1 2>/dev/null)"
 	case "$1" in
-		cat_tv) [ "$v" != 0 ] ;;
-		*) [ "$v" = 1 ] ;;
+		cat_tv) bool_on "$(uci -q get ${CFG}.config.$1 2>/dev/null)" 1 ;;
+		*) bool_on "$(uci -q get ${CFG}.config.$1 2>/dev/null)" 0 ;;
 	esac
 }
 
@@ -47,11 +55,12 @@ enabled_cats() {
 	echo $out
 }
 
-# 活动库: /etc 优先(可被用户替换/升级), 缺失时自愈自模板恢复
+# 活动库: /etc 优先(可被用户替换/升级), 缺失或空文件时自愈自模板恢复
+# 用 -s 而非 -f: 0 字节库会让规则全空, 等于静默放行
 use_library() {
-	if [ -f "$LIB_ETC" ]; then
+	if [ -s "$LIB_ETC" ]; then
 		echo "$LIB_ETC"
-	elif [ -f "$LIB_SHARE" ]; then
+	elif [ -s "$LIB_SHARE" ]; then
 		mkdir -p "$(dirname "$LIB_ETC")"
 		cp "$LIB_SHARE" "$LIB_ETC" 2>/dev/null && echo "$LIB_ETC" || echo "$LIB_SHARE"
 	else
@@ -69,7 +78,8 @@ gen_rules() {
 		n = split(cats, A, " ")
 		for (i = 1; i <= n; i++) en[A[i]] = 1
 		m = split(allow, W, " ")
-		for (i = 1; i <= m; i++) if (W[i] != "") wl[W[i]] = 1
+		# 放行项大小写归一: 下方 d 已 tolower, 不归一会导致大写白名单失效
+		for (i = 1; i <= m; i++) if (W[i] != "") wl[tolower(W[i])] = 1
 	}
 	# 域名 d 是否被某个放行项覆盖: 放行项等于 d 或为其父域
 	function allowed(d,    p, parts, i) {
@@ -97,16 +107,30 @@ gen_rules() {
 	' "$1"
 }
 
-gen_custom() {
+# 自定义域名归一与校验: 与 LuCI 侧规则一致(小写/去前导点/合法字符),
+# 非法项直接丢弃 —— 原样写入会让 dnsmasq 整份配置起不来, 等于全屋断 DNS
+norm_domain() {
 	local d
+	d=$(echo "$1" | tr 'A-Z' 'a-z')
+	while :; do case "$d" in .*) d="${d#.}" ;; *) break ;; esac; done
+	case "$d" in
+		""|"*..*"|*[!a-z0-9._-]*|*.) return 1 ;;
+	esac
+	echo "$d"
+}
+
+gen_custom() {
+	local d n
 	for d in $(uci -q get ${CFG}.config.custom_block 2>/dev/null); do
-		echo "address=/$d/"
+		n="$(norm_domain "$d")" || continue
+		echo "address=/$n/"
 	done
 	# 放行: 必须带目标。dnsmasq 的裸 server=/d/ 是"本地权威"语义(只查
 	# /etc/hosts 与 DHCP 租约, 不转发), 放行会等于继续拦死; 用 # 表示
 	# "按标准上游解析", 不依赖具体上游 IP, 换网络也不会失效。
 	for d in $(uci -q get ${CFG}.config.custom_allow 2>/dev/null); do
-		echo "server=/$d/#"
+		n="$(norm_domain "$d")" || continue
+		echo "server=/$n/#"
 	done
 }
 
@@ -139,40 +163,68 @@ cleanup_legacy() {
 		fi
 		uci commit dhcp
 	fi
-	rm -f "$LEGACY_TMP"
+	# conf-dir 名称随匿名节变化 (/tmp/dnsmasq.<id>.d), 用通配一次清干净
+	rm -f /tmp/dnsmasq*.d/gwrt-tv-ads.conf "$LEGACY_TMP"
 	rmdir /tmp/dnsmasq.dnsmasq.d 2>/dev/null
 	# v2 遗留: 旧分档规则文件已由库文件取代
 	rm -f /usr/share/gwrt-tv-adblock/tv-ads-core.conf \
 	      /usr/share/gwrt-tv-adblock/tv-ads-extended.conf
 }
 
+# 先在新文件里生成并校验, 通过后才替换旧块:
+# 库缺失/损坏/自定义项异常时保留上一次的有效规则, 不静默放行
 apply_mode() {
+	local on=1 lib n
 	cleanup_legacy
-	strip_block
-	if is_enabled; then
-		local lib
+	is_enabled || on=0
+
+	if [ "$on" = 1 ]; then
 		lib="$(use_library)"
-		if [ -n "$lib" ]; then
-			local allow
-			# 放行清单参与规则生成: address= 优先于 server=, 必须在生成阶段排除
-			allow="$(uci -q get ${CFG}.config.custom_allow 2>/dev/null)"
-			{
-				echo "$BEGIN"
-				# kill 档无开关: 总开关开启即始终拦截
-				gen_rules "$lib" "$(enabled_cats) kill" "$allow"
-				gen_custom
-				echo "$END"
-			} >> "$DNSCONF"
-		else
-			logger -t gwrt-tv-adblock "规则库缺失, 拦截未生成"
+		if [ -z "$lib" ]; then
+			logger -t gwrt-tv-adblock "规则库缺失, 保留原规则不变"
+			return 1
 		fi
+		# 放行清单参与规则生成: address= 优先于 server=, 必须在生成阶段排除
+		{
+			# kill 档无开关: 总开关开启即始终拦截
+			gen_rules "$lib" "$(enabled_cats) kill" \
+				"$(uci -q get ${CFG}.config.custom_allow 2>/dev/null)"
+			gen_custom
+		} > "$RULES_TMP"
+		n=$(grep -c . "$RULES_TMP" 2>/dev/null)
+		if [ "${n:-0}" -lt 1 ]; then
+			logger -t gwrt-tv-adblock "规则库无有效域名($lib), 保留原规则不变"
+			rm -f "$RULES_TMP"
+			return 1
+		fi
+		# 语法自检: 畸形自定义项不得写进 /etc/dnsmasq.conf
+		if command -v dnsmasq >/dev/null 2>&1 && \
+		   ! dnsmasq --test -C "$RULES_TMP" >/dev/null 2>&1; then
+			logger -t gwrt-tv-adblock "生成规则语法校验失败, 保留原规则不变"
+			rm -f "$RULES_TMP"
+			return 1
+		fi
+	fi
+
+	strip_block
+	if [ "$on" = 1 ]; then
+		{ echo "$BEGIN"; cat "$RULES_TMP"; echo "$END"; } >> "$DNSCONF"
+		rm -f "$RULES_TMP"
 	fi
 	sync
 }
 
-start() {
-	# START=18, 先于 dnsmasq(START=19) 写好规则, 开机无需重启 dnsmasq
+boot() {
+	# 开机由 rcS 在本服务(START=18)先于 dnsmasq(START=19) 调用,
+	# 规则先落盘, dnsmasq 启动即加载, 无需重启
 	apply_mode
+}
+
+start() {
+	# 运行期手动/uci-defaults 启动: dnsmasq 已在运行则让它重读, 否则下次启动自然生效
+	apply_mode
+	pgrep dnsmasq >/dev/null 2>&1 && /etc/init.d/dnsmasq restart 2>/dev/null
+	return 0
 }
 
 stop() {
@@ -186,5 +238,7 @@ stop() {
 # 运行期切换/改自定义/更新库后: CLI 与 LuCI 调用
 reload() {
 	apply_mode
-	/etc/init.d/dnsmasq restart
+	# 本服务不拥有 dnsmasq: 未运行时重启会把它拉起来
+	pgrep dnsmasq >/dev/null 2>&1 && /etc/init.d/dnsmasq restart 2>/dev/null
+	return 0
 }

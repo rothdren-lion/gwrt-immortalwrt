@@ -12,8 +12,8 @@ LIB_ETC=/etc/gwrt-tv-adblock/ads-library.txt
 LIB_SHARE=/usr/share/gwrt-tv-adblock/ads-library.txt
 
 lib() {
-	if [ -f "$LIB_ETC" ]; then echo "$LIB_ETC"
-	elif [ -f "$LIB_SHARE" ]; then echo "$LIB_SHARE"
+	if [ -s "$LIB_ETC" ]; then echo "$LIB_ETC"
+	elif [ -s "$LIB_SHARE" ]; then echo "$LIB_SHARE"
 	fi
 }
 
@@ -34,7 +34,10 @@ cat_count() {
 }
 
 lib_version() {
-	grep -m1 "^# 版本:" "$1" 2>/dev/null | sed "s/^# 版本: //" || echo 未知
+	local v
+	v=$(grep -m1 "^# 版本:" "$1" 2>/dev/null | sed "s/^# 版本:[[:space:]]*//")
+	v="${v%% *}"
+	[ -n "$v" ] && echo "$v" || echo 未知
 }
 
 cat_state() {
@@ -83,7 +86,7 @@ norm_cat() {
 
 set_cat() {
 	local opt; opt="$(norm_cat "$2")"
-	[ -n "$opt" ] || { echo "未知分类: $2 (tv|tv-ext|cn)"; exit 2; }
+	[ -n "$opt" ] || { echo "未知分类: $2 (tv|tv-ext|cn|sec)"; exit 2; }
 	uci set ${CFG}.config.$opt="$([ "$1" = on ] && echo 1 || echo 0)"
 	uci commit ${CFG}
 	"$INIT" reload
@@ -152,33 +155,41 @@ do_update() {
 		rm -f "$tmp"
 		exit 1
 	fi
-	# 校验: 至少 1 个分类头 + 10 条域名 + dnsmasq 语法通过
-	local nsec ndom
+	# 先把库编译成规则再校验: 计数落在真正会生效的 address 上,
+	# 否则一堆无效行也能通过行数检查, 换上去等于静默放行
+	local nsec nrules
 	nsec=$(grep -c "^\[" "$tmp" 2>/dev/null)
-	ndom=$(awk "/^#/ {next} /^\[/ {next} NF>0 {n++} END {print n+0}" "$tmp")
-	if [ "${nsec:-0}" -lt 1 ] || [ "${ndom:-0}" -lt 10 ]; then
-		echo "内容校验失败 (分类=$nsec 域名=$ndom), 保留原库"
-		rm -f "$tmp"
-		exit 1
-	fi
 	awk "
 		/^#/ { next }
 		/^\[/ { next }
 		{
 			d = tolower(\$1)
-			if (d ~ /^[a-z0-9_.-]+\$/ && d !~ /^[.-]/ && d !~ /[.-]\$/)
+			if (d ~ /^[a-z0-9_.-]+\$/ && d !~ /^[.-]/ && d !~ /[.-]\$/ && d !~ /\.\./)
 				print \"address=/\" d \"/\"
 		}
 	" "$tmp" > "${tmp}.rules"
-	if ! dnsmasq --test -C "${tmp}.rules" >/dev/null 2>&1; then
+	nrules=$(grep -c . "${tmp}.rules" 2>/dev/null)
+	if [ "${nsec:-0}" -lt 1 ] || [ "${nrules:-0}" -lt 10 ]; then
+		echo "内容校验失败 (分类=$nsec 有效域名=$nrules), 保留原库"
+		rm -f "$tmp" "${tmp}.rules"
+		exit 1
+	fi
+	if command -v dnsmasq >/dev/null 2>&1 && \
+	   ! dnsmasq --test -C "${tmp}.rules" >/dev/null 2>&1; then
 		echo "dnsmasq 语法校验失败, 保留原库"
 		rm -f "$tmp" "${tmp}.rules"
 		exit 1
 	fi
 	rm -f "${tmp}.rules"
-	[ -f "$LIB_ETC" ] && cp "$LIB_ETC" "$LIB_ETC.bak"
 	mkdir -p "$(dirname "$LIB_ETC")"
-	mv "$tmp" "$LIB_ETC"
+	[ -s "$LIB_ETC" ] && cp "$LIB_ETC" "$LIB_ETC.bak"
+	# 同目录内 rename 替换: /tmp 与 /etc 可能不同文件系统, mv 跨盘不是原子的
+	if ! { cp "$tmp" "$LIB_ETC.new.$$" && mv "$LIB_ETC.new.$$" "$LIB_ETC"; }; then
+		echo "写入失败: $LIB_ETC"
+		rm -f "$tmp" "$LIB_ETC.new.$$"
+		exit 1
+	fi
+	rm -f "$tmp"
 	if [ "$2" != noreload ]; then
 		"$INIT" reload
 	fi
