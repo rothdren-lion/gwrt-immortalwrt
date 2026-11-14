@@ -44,6 +44,7 @@ define Package/gwrt-device-defaults/install
 	$(INSTALL_BIN) ./files/99_gwrt-data-part $(1)/etc/uci-defaults/99_gwrt-data-part
 	$(INSTALL_BIN) ./files/99_gwrt-services-off $(1)/etc/uci-defaults/99_gwrt-services-off
 	$(INSTALL_BIN) ./files/99_gwrt-led-defaults $(1)/etc/uci-defaults/99_gwrt-led-defaults
+	$(INSTALL_BIN) ./files/99_gwrt-daed-dirs $(1)/etc/uci-defaults/99_gwrt-daed-dirs
 	$(INSTALL_BIN) ./files/gwrt-ssid-name $(1)/usr/libexec/gwrt-ssid-name
 	$(INSTALL_BIN) ./files/gwrt-ss01-firstboot $(1)/usr/libexec/gwrt-ss01-firstboot
 	$(INSTALL_DATA) ./files/apk/luci-app-wifiroam-*.apk ./files/apk/luci-i18n-wifiroam-*.apk ./files/apk/wifiroam-*.apk $(1)/usr/share/gwrt/apk/
