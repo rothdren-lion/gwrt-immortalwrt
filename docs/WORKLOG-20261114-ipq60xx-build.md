@@ -81,3 +81,34 @@ SS-01 校准保护及 Mesh 专项成功；四任务正在 `Build firmware` 步�
 监控/校验/归档进程 PID `73952`，日志 `finish-four-builds.log`；状态直接来自 GitHub，
 不会依赖旧 SS-01 的缓存监控文件。固定远端构建分支仍为实现提交 `5c0024cb`，
 后续仅文档提交不改变这四次运行的源码。
+
+
+---
+
+## 最终状态（覆盖上文历史的“构建中”记录）
+
+本节记录最终结果；上文的初始授权、预检和“正在构建”状态保留作历史追踪。源码固定为 5c0024cb14ea6562943a017afd6f32caaa764582，版本 261114-01，release=false，固定构建分支 build/ipq60xx-261114-01；镜像审计与复核修复提交为 7452f64668cdb9140e2e4ddf8194c8a9f5edc747。
+
+| 机型 | 原始 GitHub 运行 | 原始结论 | 修复后的复核 |
+| --- | --- | --- | --- |
+| SS-01 | 43482919662 | 成功 | 不需要复核 |
+| CS-02 | 43482945138 | 编译、包和哈希成功；末尾镜像审计误报 | 43532124001 成功 |
+| CS-02-GWRT2 | 43482974072 | 编译、包和哈希成功；末尾镜像审计误报 | 43532123823 成功 |
+| CS-07 | 43483003456 | 编译、包和哈希成功；末尾镜像审计误报 | 43532123981 成功 |
+
+三款 CS 的旧红色运行仍保留，复核运行直接读取这些原始运行留下的实际镜像，没有重新编译。旧审计把 factory 中的完整 rootfs 与 sysupgrade 中的 root 逐字节比较；mksquashfs -nopad 生成的有效 squashfs 本来相同，而 sysupgrade 会按 1 KiB 边界补零。四款有效 rootfs 均位于 12 MiB 偏移并与 factory 逐字节一致；CS-02、CS-02-GWRT2、CS-07 的 sysupgrade 补零分别为 303、227、481 字节。修复后的审计继续检查有效 payload、偏移、零填充、hash、DTB、DSA 驱动、daed、主题和 Mesh；基于真实 mksquashfs 的错误偏移、损坏、截断、无效长度及多余/非零填充等 7 项回归均通过。
+
+交付目录与镜像 SHA-256：
+
+| 机型 | sysupgrade | factory |
+| --- | --- | --- |
+| SS-01 | /home/godsun/build/gwrt-releases/ss01-12M/gwrt-261114-01-qualcommax-ipq60xx-jdcloud_re-ss-01-12M-squashfs-sysupgrade.bin — d79d8a8e5ffa4e5b23972fca30bcb5e4d84aefe050aa65bf8036889a6410366f | 9fce1e1af72593c5bc436e4d844ed8f4a0c4b273264ea06e2f06e35594cca7be |
+| CS-02 | /home/godsun/build/gwrt-releases/cs02-12M/gwrt-261114-01-qualcommax-ipq60xx-jdcloud_re-cs-02-12M-squashfs-sysupgrade.bin — f6b32206e0c953c9da82f7dd43bb8b307084078cf7df728005f96fc97f78e501 | 5a5769b8cefdbde08ab645f493b43cd79517a534e0fbff79491f2d0dd447c26e |
+| CS-02-GWRT2 | /home/godsun/build/gwrt-releases/cs02-gwrt2-12M/gwrt-261114-01-qualcommax-ipq60xx-jdcloud_re-cs-02-gwrt2-12M-squashfs-sysupgrade.bin — 4bd3140a463042754964fe052b4f886b7b572810654b43bd14bbe92f1b15c9d4 | d62400a0952f06e907b89858c26305bea7f442565c30abb15457a1a7ca6b1382 |
+| CS-07 | /home/godsun/build/gwrt-releases/cs07-12M/gwrt-261114-01-qualcommax-ipq60xx-jdcloud_re-cs-07-12M-squashfs-sysupgrade.bin — a66fdf293de5a7e3b52d7b9e804d8a60827ed5868a250133f01865a68a68b724 | 05349057d46e8b2416dba09dfd2d5eabf12c7835284b533d2ebbd45b6acf490c |
+
+四个目录均保留 factory、sysupgrade、manifest、profiles、sha256sums 和审计日志，归档校验已通过。四款镜像有 48 项公共 SS-01 应用及版本完全一致；板级 Wi-Fi/Athena/NSS 包按 DTS 合理不同，CS-07 保持无无线。四款 daed ARM64 程序 SHA-256 均为 fde527ce86b73fef061a437837eef2ef8c5069e423097ec325bba9e39db1cac9；从 SS-01 实际镜像提取后用 qemu-aarch64 与 Playwright 完成登录、CORS/GraphQL、流量和移动页面验证。
+
+元数据限制：SS-01 保留原始云端 .config、feeds-revisions 和 buildinfo；三款 CS 的原始 workflow 没有上传完整云端 .config/buildinfo，交付中的 .local-defconfig 是本地生成并明确标注的复核辅助文件，不能当作原始云端配置。原始 GitHub 运行日志、源 SHA 和固定 feeds 记录均已保留，可追溯原始结果。
+
+变更备份与回滚：NAS 变更前备份为 /home/godsun/build/gwrt-ipq60xx-261114-01/nas-before-audit-fix.tar.gz；隔离树和证据目录均保留原始失败日志、复核记录与镜像审计输出。若需回滚审计修复，可回退 7452f646；固定构建分支仍指向 5c0024cb，不应把文档提交混入固件构建。整个过程未刷机、未重启、未连接或修改任何设备；WAN 时钟、CS DSA 稳定性、Mesh 配对和长期运行仍需实机验证。
