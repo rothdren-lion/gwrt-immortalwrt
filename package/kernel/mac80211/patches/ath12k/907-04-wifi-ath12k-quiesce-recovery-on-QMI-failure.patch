@@ -1,0 +1,54 @@
+From: GWRT maintainers <gwrt@localhost>
+Subject: [PATCH] wifi: ath12k: drain recovery work when removing failed QMI
+
+QMI failure can occur after a device has joined an active group. Quiesce
+recovery before powering down and unassigning that group on either bus.
+
+---
+--- a/drivers/net/wireless/ath/ath12k/ahb.c
++++ b/drivers/net/wireless/ath/ath12k/ahb.c
+@@ -1372,12 +1372,14 @@
+ {
+ 	struct ath12k_base *ab = platform_get_drvdata(pdev);
+ 
++	/* QMI failure does not exclude already queued recovery work. */
++	ath12k_ahb_remove_prepare(ab);
++
+ 	if (test_bit(ATH12K_FLAG_QMI_FAIL, &ab->dev_flags)) {
+ 		ath12k_ahb_power_down(ab, false);
+ 		goto qmi_fail;
+ 	}
+ 
+-	ath12k_ahb_remove_prepare(ab);
+ 	ath12k_core_hw_group_cleanup(ab->ag);
+ qmi_fail:
+ 	ath12k_core_deinit(ab);
+--- a/drivers/net/wireless/ath/ath12k/pci.c
++++ b/drivers/net/wireless/ath/ath12k/pci.c
+@@ -1715,18 +1715,18 @@
+ 
+ 	ath12k_pci_set_irq_affinity_hint(ab_pci, NULL);
+ 
++	/* Serialize with group recovery even after QMI failure. */
++	mutex_lock(&ab->ag->mutex);
++	set_bit(ATH12K_FLAG_UNREGISTERING, &ab->dev_flags);
++	mutex_unlock(&ab->ag->mutex);
++
++	cancel_work_sync(&ab->reset_work);
++	cancel_work_sync(&ab->dump_work);
++
+ 	if (test_bit(ATH12K_FLAG_QMI_FAIL, &ab->dev_flags)) {
+ 		ath12k_pci_power_down(ab, false);
+ 		goto qmi_fail;
+ 	}
+-
+-	/* A group recovery may queue our reset work from another device. */
+-	mutex_lock(&ab->ag->mutex);
+-	set_bit(ATH12K_FLAG_UNREGISTERING, &ab->dev_flags);
+-	mutex_unlock(&ab->ag->mutex);
+-
+-	cancel_work_sync(&ab->reset_work);
+-	cancel_work_sync(&ab->dump_work);
+ 	ath12k_core_hw_group_cleanup(ab->ag);
+ 
+ qmi_fail:
