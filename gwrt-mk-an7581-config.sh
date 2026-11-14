@@ -22,7 +22,7 @@
 #   airoha-ponctl + airoha-pond，两边都会生效。
 #
 # 【体积预算 ~50MB】
-#   固件内：基础系统 + LuCI + 主题 + PON + npu/route-tool/easytier 面板 + zram。
+#   固件内：基础系统 + LuCI + 主题 + tv-adblock + daed(含内核 BTF) + PON + npu/route-tool/easytier 面板 + zram。
 #   固件外（后期设备自行安装）：gecoosac(15.6MB)、openclash 面板(带 ruby)、
 #   openclash/easytier 本体、docker/podman、kmod-wireguard。
 #   注意：gwrt-theme-V3/manifest/config.fragment 里带 openclash/bandix/
@@ -244,6 +244,25 @@ for p in \
 	bind-dig \
 	nping ; do
 	add_pkg "$p"
+done
+
+echo "[an7581] daed（GWRT runtime1 流量修复，源码构建 arm64）:"
+for p in \
+	daed \
+	daed-geoip \
+	daed-geosite \
+	luci-app-daed \
+	luci-i18n-daed-zh-cn \
+	kmod-sched-bpf \
+	kmod-xdp-sockets-diag ; do
+	add_pkg "$p"
+done
+
+# daed 需要内核 BTF：本树没有 vmlinux-btf 包，generic config 默认
+# CONFIG_DEBUG_INFO_BTF is not set，必须显式打开，否则 gwrt-validate-build-config.py 直接 fail。
+echo "[an7581] daed 依赖：内核 BTF:"
+for sym in CONFIG_KERNEL_DEBUG_INFO_BTF CONFIG_KERNEL_DEBUG_INFO_BTF_MODULES CONFIG_KERNEL_MODULE_ALLOW_BTF_MISMATCH; do
+	grep -q "^${sym}=y$" "$TOP/.config" || echo "${sym}=y" >>"$TOP/.config"
 done
 
 echo "[an7581] 清除（后期设备自行安装，固件不带）:"
