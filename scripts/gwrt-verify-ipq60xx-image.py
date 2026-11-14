@@ -21,6 +21,30 @@ DEVICES = {'ss01': 'jdcloud_re-ss-01', 'cs02': 'jdcloud_re-cs-02',
            'cs02-gwrt2': 'jdcloud_re-cs-02-gwrt2', 'cs07': 'jdcloud_re-cs-07'}
 
 
+def verify_factory_rootfs(factory, rootfs, offset):
+    """Compare the SquashFS payload and its permitted sysupgrade alignment."""
+    with rootfs.open('rb') as image:
+        header = image.read(96)
+        require(len(header) == 96 and header[:4] == b'hsqs', 'invalid sysupgrade SquashFS')
+        fs_size, = struct.unpack_from('<Q', header, 40)
+        image_size = rootfs.stat().st_size
+        require(96 <= fs_size <= image_size, 'invalid SquashFS size')
+        # IMAGE_ROOTFS is built with mksquashfs -nopad. sysupgrade-tar.sh
+        # pads it to 1 KiB, while factory appends metadata after the raw image.
+        require(image_size % 1024 == 0, 'sysupgrade rootfs is not 1 KiB aligned')
+        require(image_size - fs_size < 1024, 'unexpected sysupgrade rootfs padding')
+        image.seek(0)
+        factory.seek(offset)
+        remaining = fs_size
+        while remaining:
+            size = min(1024 * 1024, remaining)
+            require(factory.read(size) == image.read(size),
+                    'factory rootfs differs from sysupgrade at 12M')
+            remaining -= size
+        require(not any(image.read()), 'sysupgrade rootfs padding is not zero')
+    print(f'PASS factory rootfs at {offset} bytes; SquashFS={fs_size}, sysupgrade padding={image_size - fs_size}')
+
+
 def verify_dtb(blob, preset):
     nodes = fdt_nodes(blob)
     compatible = DEVICES[preset].replace('jdcloud_', 'jdcloud,').encode()
@@ -85,8 +109,7 @@ def main():
         require(len(kernel) <= limit, 'kernel exceeds 12M HLOS layout')
         with (args.target / images['factory']['name']).open('rb') as factory:
             require(factory.read(len(kernel)) == kernel, 'factory/sysupgrade kernel mismatch')
-            factory.seek(limit)
-            require(factory.read(rootfs.stat().st_size) == rootfs.read_bytes(), 'factory rootfs must start at 12M')
+            verify_factory_rootfs(factory, rootfs, limit)
         fit = fdt_nodes(kernel)
         blobs = [n['data'] for n in fit.values() if n.get('type') == b'flat_dt\0']
         require(len(blobs) == 1, 'expected one embedded DTB')
