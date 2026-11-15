@@ -1,0 +1,30 @@
+let status = { "ipv4-address": [{ address: "192.168.3.3", mask: 24 }] };
+let calls = 0, logs = [];
+let ubusc = { call: function(object, method) { calls++; return status; } };
+let state = { self: { ip: "192.168.3.3" }, lan_mask: 24, bcast: "192.168.3.255" };
+function log(message) { push(logs, message); }
+function check(ok, message) { if (!ok) { printf("FAIL: %s\n", message); exit(1); } }
+
+/* PRODUCTION:lan_broadcast */
+/* PRODUCTION:refresh_self_ip */
+
+refresh_self_ip();
+check(calls == 1 && state.self.ip == "192.168.3.3", "unchanged LAN status stays stable");
+check(state.bcast == "192.168.3.255" && length(logs) == 0, "unchanged address avoids needless update log");
+
+status = { "ipv4-address": [{ address: "192.168.9.152", mask: 24 }] };
+refresh_self_ip();
+check(state.self.ip == "192.168.9.152", "DHCP LAN address refreshes self identity");
+check(state.bcast == "192.168.9.255", "DHCP LAN address refreshes discovery broadcast");
+check(length(logs) == 1 && index(logs[0], "192.168.3.3 -> 192.168.9.152") >= 0, "address change is logged once");
+
+status = { "ipv4-address": [{ address: "192.168.9.152", mask: 20 }] };
+refresh_self_ip();
+check(state.self.ip == "192.168.9.152" && state.lan_mask == 20, "netmask refreshes with the same address");
+check(state.bcast == "192.168.15.255", "broadcast follows the updated netmask");
+check(length(logs) == 1, "netmask-only change does not report an IP change");
+
+status = { "ipv4-address": [] };
+refresh_self_ip();
+check(state.self.ip == null && state.bcast == "255.255.255.255", "missing LAN address clears stale identity safely");
+printf("PASS: Mesh LAN IP, netmask, broadcast and address-loss refresh cases\n");

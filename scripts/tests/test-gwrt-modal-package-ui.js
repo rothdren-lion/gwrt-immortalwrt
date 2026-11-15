@@ -19,6 +19,22 @@ const fixture=`<!doctype html><meta charset="utf-8"><meta name="viewport" conten
  const browser=await chromium.launch({headless:true,executablePath:process.env.GWRT_CHROME||'/usr/bin/google-chrome',args:['--no-sandbox']});
  try{
   const page=await browser.newPage();
+  async function assertFrameFit(label){
+   const fit=await page.locator('.gwrt-modal-body iframe').evaluate(frame=>{
+    const rect=frame.getBoundingClientRect(),body=frame.parentElement.getBoundingClientRect();
+    const scale=Number((frame.style.transform.match(/scale\(([^)]+)\)/)||[])[1]||1);
+    return {frame:{left:rect.left,right:rect.right,top:rect.top,bottom:rect.bottom,width:rect.width,height:rect.height},
+     body:{left:body.left,right:body.right,top:body.top,bottom:body.bottom,width:body.width,height:body.height},
+     scale,layoutWidth:frame.offsetWidth,layoutHeight:frame.offsetHeight,zoom:getComputedStyle(frame.contentDocument.body).zoom};
+   });
+   assert(Math.abs(fit.frame.left-fit.body.left)<=1&&Math.abs(fit.frame.top-fit.body.top)<=1,`${label}: iframe begins at the modal content edge`);
+   assert(Math.abs(fit.frame.width-fit.body.width)<=1&&Math.abs(fit.frame.height-fit.body.height)<=1,`${label}: scaled iframe fills the modal content box`);
+   assert(Math.abs(fit.layoutWidth*fit.scale-fit.body.width)<=2,`${label}: iframe CSS width is scaled to the available width`);
+   assert(Math.abs(fit.layoutHeight*fit.scale-fit.body.height)<=2,`${label}: iframe CSS height is scaled to the available height`);
+   assert(fit.scale>0&&fit.scale<=.95,`${label}: embedded page is reduced to fit`);
+   assert.equal(fit.zoom,'1',`${label}: embedded page does not apply a second independent zoom`);
+   return fit;
+  }
   for(const [width,height] of [[1440,900],[1280,600],[768,540],[390,640],[844,390],[320,480]]){
    await page.setViewportSize({width,height});
    await page.goto(base);
@@ -35,6 +51,7 @@ const fixture=`<!doctype html><meta charset="utf-8"><meta name="viewport" conten
    assert(layout.pageWidth<=layout.windowWidth+1,`${width}x${height}: frame has no horizontal overflow`);
    assert(layout.main.left<1,`${width}: removed sidebar leaves no blank margin`);
    assert(layout.main.width>layout.windowWidth*.95,`${width}: iframe uses available width`);
+   await assertFrameFit(`${width}x${height}`);
    for(const group of layout.groups){
     assert(group.scroll<=group.client+1,`${width}: controls fit in their group`);
     for(const item of group.items)assert(item.right<=group.box.right+1,`${width}: controls stay inside their group`);
@@ -54,8 +71,14 @@ const fixture=`<!doctype html><meta charset="utf-8"><meta name="viewport" conten
    assert.equal(await frame.evaluate(()=>actionCounts.reset),1,'parent reset action still reaches the frame');
    const box=await page.locator('.gwrt-modal-box').boundingBox();
    assert(box.x>=0&&box.y>=0&&box.x+box.width<=width+1&&box.y+box.height<=height+1,'window controls fit in short viewports');
+   await page.locator('.gwrt-modal-max').click();
+   await page.waitForTimeout(300);
+   await assertFrameFit(`${width}x${height} maximized`);
+   await page.locator('.gwrt-modal-max').click();
+   await page.waitForTimeout(300);
+   await assertFrameFit(`${width}x${height} restored`);
    await page.locator('.gwrt-modal-close').click();
-   console.log(`PASS package inputs, compact modal and action buttons ${width}x${height}`);
+   console.log(`PASS package inputs, modal fit/maximize/restore and action buttons ${width}x${height}`);
   }
  }finally{await browser.close();await new Promise(r=>server.close(r));}
 })().catch(e=>{console.error(e);process.exit(1)});

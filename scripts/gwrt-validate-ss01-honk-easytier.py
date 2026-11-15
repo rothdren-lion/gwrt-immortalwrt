@@ -12,7 +12,6 @@ REQUIRED = {
     "honk",
     "luci-app-honk",
     "luci-lib-daeuniverse",
-    "easytier",
     "luci-app-easytier",
     "luci-i18n-easytier-zh-cn",
     "vmlinux-btf-builtin",
@@ -20,6 +19,13 @@ REQUIRED = {
     "gwrt-device-defaults",
     "gwrt-mesh-apmode",
     "gwrt-mesh-led",
+    "gwrt-tv-adblock",
+    "luci-app-gwrt-tvadblock",
+    "luci-app-iptv",
+    "udpxy",
+    "luci-app-udpxy",
+    "vlmcsd",
+    "luci-app-vlmcsd",
 }
 
 FORBIDDEN_EXACT = {
@@ -30,9 +36,14 @@ FORBIDDEN_EXACT = {
     "daed",
     "daed-geoip",
     "daed-geosite",
+    "dns2socks",
     "dnscrypt-proxy",
     "dnscrypt-proxy2",
+    "easytier",
+    "easytier-noweb",
     "hysteria",
+    "geoview",
+    "ipt2socks",
     "luci-app-dae",
     "luci-app-daed",
     "luci-app-homeproxy",
@@ -65,6 +76,7 @@ FORBIDDEN_EXACT = {
     "v2ray-core",
     "v2raya",
     "v2ray-plugin",
+    "v2dat",
     "xray-core",
     "xray-plugin",
     "gwrt-ssr-plus-luci",
@@ -98,6 +110,9 @@ def check_config(path: Path) -> set[str]:
     missing = required - packages
     if missing:
         raise SystemExit("FAIL config missing: " + ", ".join(sorted(missing)))
+    built_in = set(re.findall(r"^CONFIG_PACKAGE_([^=]+)=y$", text, re.M))
+    if REQUIRED - built_in:
+        raise SystemExit("FAIL packages must be embedded (=y): " + ", ".join(sorted(REQUIRED - built_in)))
     forbidden = sorted(name for name in packages if package_is_forbidden(name))
     if forbidden:
         raise SystemExit("FAIL config still enables proxy packages: " + ", ".join(forbidden))
@@ -109,13 +124,14 @@ def check_config(path: Path) -> set[str]:
         "CONFIG_PACKAGE_kmod-ath11k-ahb=y",
         "CONFIG_PACKAGE_kmod-qca-nss-dp=y",
         "CONFIG_PACKAGE_kmod-qca-ssdk=y",
-        "CONFIG_EASYTIER_INCLUDE_WEBCONSOLE=y",
         "CONFIG_KERNEL_DEBUG_INFO_BTF=y",
         "CONFIG_KERNEL_CGROUP_BPF=y",
     ):
         if line not in text.splitlines():
             raise SystemExit("FAIL config missing: " + line)
-    print("PASS Honk + EasyTier config: SS-01 target, Mesh/NSS, embedded UI, no proxy engine")
+    if "CONFIG_EASYTIER_INCLUDE_WEBCONSOLE=y" in text.splitlines():
+        raise SystemExit("FAIL EasyTier web console must not be embedded")
+    print("PASS Honk + EasyTier LuCI-only config: SS-01 target, Mesh/NSS, adblock, IPTV/UDPXY, vlmcsd, no proxy engine")
     return packages
 
 
@@ -135,7 +151,7 @@ def check_manifests(manifest_dir: Path) -> None:
     forbidden = sorted(name for name in found if package_is_forbidden(name))
     if forbidden:
         raise SystemExit("FAIL manifest contains proxy packages: " + ", ".join(forbidden))
-    print("PASS Honk + EasyTier manifest packages:", ", ".join(sorted(REQUIRED)))
+    print("PASS Honk + EasyTier LuCI-only manifest packages:", ", ".join(sorted(REQUIRED)))
 
 
 def main() -> None:

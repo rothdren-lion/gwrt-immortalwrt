@@ -189,8 +189,11 @@ def main():
             manifest_text = '\n'.join(p.read_text() for p in manifests)
             required = (
                 'honk', 'luci-app-honk', 'luci-lib-daeuniverse',
-                'easytier', 'luci-app-easytier',
+                'luci-app-easytier',
                 'luci-i18n-easytier-zh-cn', 'vmlinux-btf-builtin', 'sgdisk',
+                'gwrt-tv-adblock', 'luci-app-gwrt-tvadblock',
+                'luci-app-iptv', 'udpxy', 'luci-app-udpxy',
+                'vlmcsd', 'luci-app-vlmcsd',
             )
             for package in required:
                 require(re.search(r'^' + re.escape(package) + r'\s+-\s+', manifest_text, re.M),
@@ -204,6 +207,9 @@ def main():
             for package in forbidden:
                 require(not re.search(r'^' + re.escape(package) + r'\s+-\s+', manifest_text, re.M),
                         'proxy package is still present: ' + package)
+            for package in ('easytier', 'easytier-noweb'):
+                require(not re.search(r'^' + re.escape(package) + r'\s+-\s+', manifest_text, re.M),
+                        'EasyTier runtime package must not be present: ' + package)
             for path in ('etc/init.d/dae', 'etc/init.d/daed', 'etc/init.d/homeproxy',
                          'etc/init.d/sing-box', 'etc/init.d/xray'):
                 require(not re.search(r'/' + re.escape(path) + r'\s*$', listing, re.M),
@@ -213,14 +219,22 @@ def main():
                     'honk-core must be an aarch64 ELF executable')
             require(b'index.html' in honk and b'doona' in honk,
                     'honk-core does not contain the embedded Doona UI')
-            easytier = read_file('usr/bin/easytier-core')
-            require(easytier[:6] == b'\x7fELF\x02\x01' and struct.unpack_from('<H', easytier, 18)[0] == 183,
-                    'easytier-core must be an aarch64 ELF executable')
             require(b"ui: 'embedded'" in read_file('etc/honk/config.dae'),
                     'Honk default configuration must select standard Doona')
-            require(re.search(r'/usr/bin/easytier-web\s*$', listing, re.M),
-                    'EasyTier web console is missing')
-            print('PASS SS-01 Honk full + embedded Doona + EasyTier; proxy engines removed')
+            for path in ('usr/bin/easytier-core', 'usr/bin/easytier-cli', 'usr/bin/easytier-web'):
+                require(not re.search(r'/' + re.escape(path) + r'\s*$', listing, re.M),
+                        'EasyTier runtime binary must not be present: ' + path)
+            adblock_config = read_file('etc/config/gwrt-tv-adblock')
+            require(b"option cat_360 '1'" in adblock_config,
+                    '360 DNS blocking must be enabled by default')
+            adblock = read_file('etc/gwrt-tv-adblock/ads-library.txt').decode()
+            roots = ('360.cn', '360safe.com', '360safe.cn', 'qhupdate.com',
+                     'mayi360.cn', 'ads360.cn', '360os.com')
+            section = re.search(r'^\[360\]\n(.*?)(?=^\[|\Z)', adblock, re.M | re.S)
+            require(section is not None, 'missing 360 DNS block category')
+            require(set(roots).issubset(set(section.group(1).split())),
+                    '360 DNS category must contain every root domain')
+            print('PASS SS-01 Honk + Doona, EasyTier LuCI only, DNS adblock/IPTV/UDPXY/Vlmcsd; proxy engines removed')
             return
 
         manifest_text = '\n'.join(p.read_text() for p in manifests)

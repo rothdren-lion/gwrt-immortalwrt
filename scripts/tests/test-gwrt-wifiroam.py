@@ -24,7 +24,7 @@ def production(match):
     return function.group(0)
 
 
-for name in ("mesh-behavior", "backhaul-behavior"):
+for name in ("mesh-behavior", "backhaul-behavior", "mesh-ip-refresh-behavior"):
     template = (ROOT / "scripts/tests" / (name + ".uc.in")).read_text()
     code = re.sub(r"/\* PRODUCTION:([a-z_]+) \*/", production, template)
     with tempfile.NamedTemporaryFile(mode="w", suffix=".uc") as fixture:

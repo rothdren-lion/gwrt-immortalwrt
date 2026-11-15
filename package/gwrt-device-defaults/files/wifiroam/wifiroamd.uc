@@ -319,6 +319,7 @@ function detect_self() {
 	let ip = st?.["ipv4-address"]?.[0]?.address ?? null;
 	let mask = st?.["ipv4-address"]?.[0]?.mask ?? 24;
 	state.bcast = lan_broadcast(ip, mask);
+	state.lan_mask = mask;
 	let mac = trim(fs.readfile(`/sys/class/net/${dev}/address`) ?? "");
 	if (length(macnorm(mac)) != 12) {
 		for (let f in fs.glob("/sys/class/net/*/address")) {
@@ -343,6 +344,19 @@ function detect_self() {
 	};
 	state.self.name = state.cfg.name != "" ? state.cfg.name : state.self.hostname;
 	log(sprintf("self: %s %s %s", state.self.mac, state.self.ip ?? "?", state.self.name));
+}
+
+function refresh_self_ip() {
+	let st = ubusc.call("network.interface.lan", "status");
+	let ip = st?.["ipv4-address"]?.[0]?.address ?? null;
+	let mask = st?.["ipv4-address"]?.[0]?.mask ?? 24;
+	if (ip == state.self.ip && mask == state.lan_mask) return;
+	let old = state.self.ip;
+	state.self.ip = ip;
+	state.lan_mask = mask;
+	state.bcast = lan_broadcast(ip, mask);
+	if (old != ip)
+		log(sprintf("LAN IPv4 changed: %s -> %s", old ?? "?", ip ?? "?"));
 }
 
 // 无线回程检测：优先看本插件托管的 STA 接口，其次看其它已关联的 STA。
@@ -451,6 +465,7 @@ function wifi_export() {
 }
 
 function self_info() {
+	refresh_self_ip();
 	return {
 		mac: state.self.mac, ip: state.self.ip,
 		name: state.self.name, hostname: state.self.hostname,
@@ -710,6 +725,7 @@ function send_hello() {
 	let gc = uci.cursor();
 	gc.load("gwrt");
 	if (gc.get("gwrt", "mesh_apmode", "enabled") == "0") return;
+	refresh_self_ip();
 	udp_send({
 		magic: MAGIC, ver: 1, role: state.cfg.role,
 		mac: state.self.mac, ip: advertise_ip(), lan_ip: state.self.ip,
@@ -852,6 +868,7 @@ function refresh_client_identity(c, mn, wired_peer, leases, neigh, names) {
 }
 
 function build_topology() {
+	refresh_self_ip();
 	let nodes = [];
 	let self_mn = macnorm(state.self.mac);
 	let myclients = local_clients();
@@ -1385,6 +1402,7 @@ function ssid_groups() {
 
 // 全网络 AP 概览：CAP 汇总后下发给 SAP，子 AP 的“开启前检查”与主 AP 保持一致
 function ap_overview() {
+	refresh_self_ip();
 	let self_mn = macnorm(state.self.mac);
 	let aps = [ {
 		id: self_mn, name: state.self.name, role: state.cfg.role,
@@ -1945,6 +1963,7 @@ let api_obj = {
 	status: {
 		args: { ubus_rpc_session: "" },
 		call: function(req) {
+			refresh_self_ip();
 			let online = 0, nclients = 0;
 			for (let mn, p in state.peers) {
 				if (p.authed) online++;

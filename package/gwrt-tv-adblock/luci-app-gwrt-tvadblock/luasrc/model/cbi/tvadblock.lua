@@ -23,8 +23,8 @@ local function cat_count(path, cat)
 	return tonumber(sys.exec(cmd):match("%d+")) or 0
 end
 
-m = Map("gwrt-tv-adblock", translate("广告拦截（电视/国内通用/安全软件）"),
-	translate("基于纯文本规则库（无数据库）在 dnsmasq 域名层拦截：电视开机广告与视频App广告SDK（tv）、应用商店/升级/语音/投屏（tv-ext，有副作用）、百度/腾讯/字节等国内Web与APP广告及统计（cn）、360全家桶/腾讯管家/微软Defender与遥测/Windows Update（sec，有副作用）。hao123/2345 导航劫持为预置必拦项，无单独开关，总开关开启即生效。对局域网内所有使用本机 DNS 的设备生效。注意：视频贴片广告与正片同一内容域名，DNS 层拦不住；改动生效后建议清理设备端缓存并重启。"))
+m = Map("gwrt-tv-adblock", translate("广告拦截（电视/国内通用/360）"),
+	translate("基于纯文本规则库在 dnsmasq 域名层拦截，A 与 AAAA 查询均受规则控制：电视广告（tv）、应用商店/升级/语音/投屏（tv-ext）、百度/腾讯/字节等国内Web与APP广告（cn）、360全家桶注册域整域拦截（360）、腾讯管家/微软Defender与Windows Update（sec）。360 分类默认开启，会阻断 360 官网和旗下服务；可单独关闭。hao123/2345 为预置必拦项。只对使用本机 DNS 的设备生效；Mesh 子 AP 模式下 DNS 由主 AP 提供，应在主 AP 配置拦截。自动下发的运营商 IPv6 DNS 也可能绕过本机规则；DoH/DoT、外部 DNS、缓存地址或直连 IP 不受 DNS 规则控制。"))
 
 s = m:section(NamedSection, "config", "gwrt-tv-adblock", translate("开关"))
 s.addremove = false
@@ -52,11 +52,17 @@ o:value("0", translate("关"))
 o.default = "0"
 o.description = translate("百度/腾讯/字节/快手/网易/新浪微博/友盟/华为/OPPO/vivo/小米手机等广告SDK与统计、主流广告联盟。默认关，开启后若某App异常可加自定义放行。")
 
+o = s:option(ListValue, "cat_360", translate("360 全家桶整域拦截（360）"))
+o:value("1", translate("开"))
+o:value("0", translate("关"))
+o.default = "1"
+o.description = translate("360.cn、360safe.com、360safe.cn、qhupdate.com、mayi360.cn、ads360.cn、360os.com 根域及所有子域；A/AAAA 均返回 NXDOMAIN，包含 www.360.cn。会阻断 360 官网及相关服务，默认开启。")
+
 o = s:option(ListValue, "cat_sec", translate("安全软件与更新档（sec）"))
 o:value("1", translate("开"))
 o:value("0", translate("关"))
 o.default = "0"
-o.description = translate("360 全家桶（卫士/杀毒/手机助手/驱动/更新器等推广与遥测）、腾讯管家/风控（guanjia/pcmgr/sec/aegis）、微软 Defender 云查杀与遥测、Windows Update 更新域、Office 更新 CDN。默认关；开启后 360 组件与 Windows 更新将失效（这正是拦截目的），恢复时关闭本档即可。hao123/2345 为预置必拦，不在此开关内。")
+o.description = translate("腾讯管家/风控（guanjia/pcmgr/sec/aegis）、微软 Defender 云查杀与遥测、Windows Update 更新域、Office 更新 CDN。默认关；开启后相关安全组件与 Windows 更新将失效。360 由独立的 360 分类控制。")
 
 -- 用户自定义拦截域名
 local function filter_domains(self, value)
@@ -66,9 +72,17 @@ local function filter_domains(self, value)
 	for _, raw in ipairs(src) do
 		local d = tostring(raw):lower():gsub("^%s+", ""):gsub("%s+$", ""):gsub("^%.+", "")
 		if d ~= "" then
-			if not d:match("^([a-z0-9]([a-z0-9%-]*)?%.)+[a-z][a-z0-9%-]*$") then
+			-- Lua patterns cannot repeat captured groups as a regular expression can.
+			if #d > 253 or not d:find("%.") or d:find("[^a-z0-9.%-]") or
+			   d:find("..", 1, true) or d:sub(-1) == "." then
 				return nil
 			end
+			for label in d:gmatch("[^.]+") do
+				if #label > 63 or label:sub(1, 1) == "-" or label:sub(-1) == "-" then
+					return nil
+				end
+			end
+			if not d:match("%.([a-z][a-z0-9%-]*)$") then return nil end
 			out[#out+1] = d
 		end
 	end
@@ -82,7 +96,7 @@ function cb.validate(self, value)
 end
 
 ca = s:option(DynamicList, "custom_allow", translate("自定义放行域名（白名单）"))
-ca.description = translate("误拦时把对应域名加在这里：dnsmasq 最长匹配优先，等于或长于拦截条目的放行项会覆盖拦截并转发到正常 DNS。")
+ca.description = translate("放行项会从生成的 address 规则中移除自身及其子域，再转发到正常 DNS。被更宽的父域拦截时，较窄的子域放行无法覆盖它；例如放行 www.360.cn 不能覆盖 360.cn，需放行 360.cn（会放行该根域及所有子域）。")
 function ca.validate(self, value)
 	return filter_domains(self, value)
 end
@@ -98,8 +112,8 @@ function d.cfgvalue(self, section)
 	local html = { string.format(
 		"<div>活动库：<code>%s</code>（版本 <b>%s</b>）</div>", p, lib_version(p)) }
 	html[#html+1] = string.format(
-		"<div>条目：tv <b>%d</b> / tv-ext <b>%d</b> / cn <b>%d</b> / sec <b>%d</b> / 必拦 <b>%d</b></div>",
-		cat_count(p, "tv"), cat_count(p, "tv-ext"), cat_count(p, "cn"),
+		"<div>条目：tv <b>%d</b> / tv-ext <b>%d</b> / cn <b>%d</b> / 360 <b>%d</b> / sec <b>%d</b> / 必拦 <b>%d</b></div>",
+		cat_count(p, "tv"), cat_count(p, "tv-ext"), cat_count(p, "cn"), cat_count(p, "360"),
 		cat_count(p, "sec"), cat_count(p, "kill"))
 	html[#html+1] = translate("升级方式：填库地址后点下方按钮；或直接替换库文件后执行 /etc/init.d/gwrt-tv-adblock reload。固件升级不影响已替换的库（位于 /etc）。")
 	return table.concat(html, "")
@@ -112,12 +126,16 @@ u.description = translate("纯文本规则库的下载地址。留空则按钮�
 u.rmempty = true
 
 local has_button = (type(Button) == "table")
+-- Button.write 在 CBI 解析阶段就执行, 早于 uci commit:
+-- 直接在里面调 update 会拿到上一个 library_url。改为只置标记,
+-- 真正的下载放到 on_after_commit(提交之后)。
+local want_update = false
 if has_button then
 	local b = s:option(Button, "_updlib", translate("更新"))
 	b.inputtitle = translate("从库地址更新规则库")
 	b.description = translate("下载 → 内容与 dnsmasq 语法双重校验 → 备份原库(.bak) → 替换 → 重新生成。结果见 /tmp/gwrt-tv-adblock-update.log")
 	function b.write(self, section, value)
-		sys.call("/usr/libexec/gwrt-tv-adblock update noreload >/tmp/gwrt-tv-adblock-update.log 2>&1")
+		want_update = true
 	end
 end
 
@@ -129,25 +147,35 @@ function d.cfgvalue(self, section)
 	end
 	local en = m.uci:get("gwrt-tv-adblock", "config", "enabled") or "1"
 	local html = { string.format("<div>总开关：<b>%s</b></div>", onoff(en)) }
-	html[#html+1] = string.format("<div>分类：tv <b>%s</b>；tv-ext <b>%s</b>；cn <b>%s</b>；sec <b>%s</b>（必拦 hao123/2345 固定生效）</div>",
+	html[#html+1] = string.format("<div>分类：tv <b>%s</b>；tv-ext <b>%s</b>；cn <b>%s</b>；360 <b>%s</b>；sec <b>%s</b>（hao123/2345 固定拦截）</div>",
 		onoff(m.uci:get("gwrt-tv-adblock", "config", "cat_tv") or "1"),
 		onoff(m.uci:get("gwrt-tv-adblock", "config", "cat_tv_ext") or "0"),
 		onoff(m.uci:get("gwrt-tv-adblock", "config", "cat_cn") or "0"),
+		onoff(m.uci:get("gwrt-tv-adblock", "config", "cat_360") or "1"),
 		onoff(m.uci:get("gwrt-tv-adblock", "config", "cat_sec") or "0"))
 	local bl = m.uci:get_list("gwrt-tv-adblock", "config", "custom_block") or {}
 	local al = m.uci:get_list("gwrt-tv-adblock", "config", "custom_allow") or {}
 	html[#html+1] = string.format("<div>自定义：拦截 <b>%d</b> 条 / 放行 <b>%d</b> 条</div>", #bl, #al)
-	local function test(dom)
-		local out = sys.exec("nslookup " .. dom .. " 127.0.0.1 2>&1 | grep -E '^Address' | grep -v '127.0.0.1'")
-		return (out:match("%S") == nil) and "已拦截" or "未拦截"
+	local function test(dom, qtype)
+		local state = sys.exec("/usr/libexec/gwrt-tv-adblock-query " .. dom .. " " .. qtype):gsub("%s+$", "")
+		if state == "blocked" then return "已拦截" end
+		if state == "unblocked" then return "未拦截" end
+		if state == "no-record" then return "未拦截（无此类型记录）" end
+		if state == "dns-error" then return "DNS异常" end
+		return "结果不明"
 	end
 	html[#html+1] = string.format(
-		"<div>实测：api.ad.xiaomi.com（电视）<b>%s</b>；hm.baidu.com（cn）<b>%s</b>；s.360.cn（sec）<b>%s</b>；hao123.com（必拦）<b>%s</b></div>",
-		test("api.ad.xiaomi.com"), test("hm.baidu.com"), test("s.360.cn"), test("hao123.com"))
+		"<div>360 实测：www.360.cn A <b>%s</b> / AAAA <b>%s</b>；s.360.cn A <b>%s</b> / AAAA <b>%s</b></div>",
+		test("www.360.cn", "A"), test("www.360.cn", "AAAA"),
+		test("s.360.cn", "A"), test("s.360.cn", "AAAA"))
 	return table.concat(html, "")
 end
 
 m.on_after_commit = function()
+	-- 先换库(带校验, 失败保留原库), 再按新库重建规则
+	if want_update then
+		sys.call("/usr/libexec/gwrt-tv-adblock update noreload >/tmp/gwrt-tv-adblock-update.log 2>&1")
+	end
 	sys.call("/etc/init.d/gwrt-tv-adblock reload >/dev/null 2>&1")
 end
 

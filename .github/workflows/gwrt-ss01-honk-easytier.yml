@@ -1,30 +1,28 @@
-name: GWRT SS-01 Honk + EasyTier (dedicated)
+name: GWRT IPQ60xx Honk + EasyTier LuCI-only
 
 on:
   workflow_dispatch:
     inputs:
       version:
         description: 'Version (YYMMDD-NN)'
-        required: false
-        default: '261115-01'
-      release:
-        description: 'Publish images to a GitHub Release'
-        required: false
-        default: false
-        type: boolean
+        required: true
+        default: '261115-04'
 
 permissions:
-  contents: write
-
-concurrency:
-  group: gwrt-ss01-honk-easytier
-  cancel-in-progress: false
+  contents: read
 
 jobs:
   build:
-    name: SS-01 Honk + EasyTier firmware
+    name: ${{ matrix.device }} Honk firmware
     runs-on: ubuntu-24.04
     timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [ss01, cs02, cs02-gwrt2, cs07]
+    concurrency:
+      group: gwrt-ipq60xx-honk-${{ matrix.device }}
+      cancel-in-progress: false
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -53,7 +51,7 @@ jobs:
             g++-multilib gettext git libbpf-dev libclang-dev libncurses-dev \
             libssl-dev pkg-config python3-setuptools python3-pyelftools rsync \
             squashfs-tools unzip util-linux zlib1g-dev file wget swig xz-utils \
-            zstd cmake
+            zstd cmake dnsmasq-base dnsutils lua5.1
           LLVM_BIN="$(dirname "$(readlink -f "$(command -v clang)")")"
           for tool in llvm-strip llc opt llvm-dis; do
             [ -x "$LLVM_BIN/$tool" ] && sudo ln -sf "$LLVM_BIN/$tool" "/usr/local/bin/$tool"
@@ -76,7 +74,7 @@ jobs:
           restore-keys: |
             gwrt-tc-2404-
 
-      - name: Fetch locked Honk source and resolve toolchains
+      - name: Fetch pinned Honk source and resolve toolchains
         id: honk_source
         run: |
           set -euo pipefail
@@ -140,7 +138,7 @@ jobs:
           zstd -dc "$archive" | tar -xf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
           bpf-linker --version
 
-      - name: Install feeds and Honk source
+      - name: Install pinned feeds and Honk source
         run: |
           set -euo pipefail
           cp configs/ss01-honk-easytier-feeds.conf feeds.conf
@@ -157,19 +155,32 @@ jobs:
           sed -i 's|^  DEPENDS:=+libpython3$|  DEPENDS:=+libpython3 +libffi|' \
             feeds/packages/lang/python/python3/Makefile
 
-      - name: Generate isolated SS-01 config
+      - name: Generate and validate board configuration
         env:
+          DEVICE: ${{ matrix.device }}
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          python3 scripts/gwrt-mk-ss01-honk-easytier-config.py "$VERSION"
+          python3 scripts/gwrt-mk-ipq60xx-honk-config.py "$DEVICE" --version "$VERSION"
           make defconfig
-          sh gwrt-check-target.sh .config ss01
-          python3 scripts/gwrt-validate-ss01-honk-easytier.py .config
+          sh gwrt-check-target.sh .config "$DEVICE"
+          python3 scripts/gwrt-validate-ipq60xx-honk.py "$DEVICE" .config
           sh scripts/gwrt-source-preflight.sh
           grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)|^CONFIG_VERSION_NUMBER|^CONFIG_PACKAGE_(honk|luci-app-honk|easytier|luci-app-easytier|vmlinux-btf-builtin)' .config
 
-      - name: Test SS-01 calibration and Mesh presets
+      - name: Test adblock, modal UI, factory layout and Mesh regressions
+        run: |
+          set -euo pipefail
+          python3 scripts/tests/test-gwrt-tv-adblock-query.py
+          python3 scripts/tests/test-gwrt-tv-adblock-runtime.py
+          lua5.1 scripts/tests/test-gwrt-tv-adblock-luci.lua package/gwrt-tv-adblock/luci-app-gwrt-tvadblock/luasrc/model/cbi/tvadblock.lua
+          node scripts/tests/test-gwrt-modal-package-ui.js
+          python3 scripts/tests/test-ipq60xx-factory-rootfs.py
+          python3 scripts/tests/test-gwrt-wifiroam.py
+          python3 scripts/tests/test-gwrt-wifiroam-autopair.py
+
+      - name: Test SS-01 calibration and first-boot Mesh
+        if: matrix.device == 'ss01'
         run: |
           set -euo pipefail
           GWRT_SS01_TEST_BUSYBOX="$(command -v busybox)"
@@ -177,13 +188,11 @@ jobs:
           sh scripts/tests/test-gwrt-caldata-reboot.sh
           sh scripts/tests/test-ss01-mesh-preset.sh
           python3 scripts/tests/test-ss01-firstboot.py
-          python3 scripts/tests/test-gwrt-wifiroam-autopair.py
 
-      - name: Build dedicated Honk + EasyTier firmware
-        id: build_firmware
+      - name: Build firmware
+        shell: bash
         env:
           VERSION: ${{ inputs.version }}
-        shell: bash
         run: |
           set -euo pipefail
           mkdir -p logs
@@ -201,11 +210,13 @@ jobs:
             CONFIG_VERSION_DIST=GWRT \
             CONFIG_VERSION_NUMBER="$VERSION" 2>&1 | tee -a logs/build.log
 
-      - name: Verify dedicated config, packages and image
+      - name: Verify package manifest, hashes and firmware image
+        env:
+          DEVICE: ${{ matrix.device }}
         run: |
           set -euo pipefail
           target=bin/targets/qualcommax/ipq60xx
-          python3 scripts/gwrt-validate-ss01-honk-easytier.py .config --manifests "$target"
+          python3 scripts/gwrt-validate-ipq60xx-honk.py "$DEVICE" .config --manifests "$target"
           python3 - <<'PY'
           from pathlib import Path
           import subprocess
@@ -214,38 +225,26 @@ jobs:
           for path in sums:
               subprocess.run(['sha256sum', '-c', path.name], cwd=path.parent, check=True)
           PY
-          python3 scripts/gwrt-verify-ss01-image.py "$target" --variant honk-easytier | tee logs/ss01-honk-image-audit.log
+          python3 scripts/gwrt-verify-ipq60xx-image.py "$target" "$DEVICE" --variant honk-easytier | tee logs/image-audit.log
           cp honk-source.txt logs/honk-source.txt
-          printf 'Dedicated build: SS-01 Honk + EasyTier; standard Doona default, embedded-lite available\n' > logs/build-label.txt
+          cp feeds-revisions.txt logs/feeds-revisions.txt
+          cp .config logs/config.buildinfo
+          printf 'GWRT %s Honk + Doona; EasyTier LuCI only; adblock; IPTV/UDPXY/Vlmcsd\n' "$DEVICE" > logs/build-label.txt
 
-      - name: Upload dedicated firmware artifact
+      - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: gwrt-ss01-honk-easytier-${{ inputs.version }}
+          name: gwrt-${{ matrix.device }}-honk-easytier-${{ inputs.version }}
           path: |
             bin/targets/qualcommax/ipq60xx/*factory*.bin
             bin/targets/qualcommax/ipq60xx/*sysupgrade*.bin
             bin/targets/qualcommax/ipq60xx/*.manifest
+            bin/targets/qualcommax/ipq60xx/*.buildinfo
             bin/targets/qualcommax/ipq60xx/sha256sums
             bin/targets/qualcommax/ipq60xx/profiles.json
             honk-source.txt
+            feeds-revisions.txt
             logs/*
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
-
-      - name: Publish dedicated release
-        if: success() && inputs.release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p release
-          cp bin/targets/qualcommax/ipq60xx/*factory*.bin release/
-          cp bin/targets/qualcommax/ipq60xx/*sysupgrade*.bin release/
-          cp bin/targets/qualcommax/ipq60xx/*.manifest bin/targets/qualcommax/ipq60xx/sha256sums release/
-          cp honk-source.txt release/
-          sha256sum release/* > release/ss01-honk-easytier-${{ inputs.version }}.sha256sums
-          gh release create "gwrt-ss01-honk-easytier-${{ inputs.version }}" release/* \
-            --title "GWRT SS-01 Honk + EasyTier ${{ inputs.version }}" \
-            --notes "Dedicated SS-01 build: Honk v0.1.0-beta.6 with embedded Doona editions and EasyTier; all other proxy engines removed."

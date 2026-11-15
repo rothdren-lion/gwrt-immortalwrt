@@ -19,9 +19,12 @@ PROXY_NAMES = {
     "daed",
     "daed-geoip",
     "daed-geosite",
+    "dns2socks",
     "dnscrypt-proxy",
     "dnscrypt-proxy2",
     "hysteria",
+    "geoview",
+    "ipt2socks",
     "gwrt-ssr-plus-luci",
     "luci-app-dae",
     "luci-app-daed",
@@ -55,6 +58,7 @@ PROXY_NAMES = {
     "v2ray-core",
     "v2raya",
     "v2ray-plugin",
+    "v2dat",
     "xray-core",
     "xray-plugin",
 }
@@ -82,7 +86,7 @@ def set_value(source: str, name: str, value: str | None) -> str:
 
 
 def main() -> int:
-    version = sys.argv[1] if len(sys.argv) == 2 else "261115-01"
+    version = sys.argv[1] if len(sys.argv) == 2 else "261115-03"
     if not re.fullmatch(r"\d{6}-\d{2}", version):
         raise SystemExit("usage: gwrt-mk-ss01-honk-easytier-config.py [YYMMDD-NN]")
 
@@ -91,20 +95,27 @@ def main() -> int:
         if package_is_proxy(name):
             source = set_value(source, "PACKAGE_" + name, None)
 
-    # The previous SS-01 seed selected the EasyTier LuCI page but left its
-    # architecture-specific core for runtime download. This build embeds both
-    # aarch64 binaries and the web console so it is usable offline.
+    # Keep the EasyTier management page only. The user installs or uploads the
+    # architecture-specific runtime when they choose to run an EasyTier node.
     for name in (
-        "easytier",
         "luci-app-easytier",
         "luci-i18n-easytier-zh-cn",
         "honk",
         "luci-app-honk",
         "luci-lib-daeuniverse",
         "vmlinux-btf-builtin",
+        "gwrt-tv-adblock",
+        "luci-app-gwrt-tvadblock",
+        "luci-app-iptv",
+        "udpxy",
+        "luci-app-udpxy",
+        "vlmcsd",
+        "luci-app-vlmcsd",
     ):
         source = set_value(source, "PACKAGE_" + name, "y")
-    source = set_value(source, "EASYTIER_INCLUDE_WEBCONSOLE", "y")
+    for name in ("easytier", "easytier-noweb"):
+        source = set_value(source, "PACKAGE_" + name, None)
+    source = set_value(source, "EASYTIER_INCLUDE_WEBCONSOLE", None)
 
     # Honk's Makefile depends on the virtual vmlinux-btf provider. ImmortalWrt
     # already puts BTF in the kernel, so the empty builtin provider is correct;
@@ -121,7 +132,6 @@ def main() -> int:
         "PACKAGE_kmod-nfnetlink-queue",
         "PACKAGE_kmod-nf-conntrack",
     ):
-        prefix, symbol = name.split("_", 1) if name.startswith("PACKAGE_") else ("", name)
         source = set_value(source, name, "y")
 
     source = set_value(source, "VERSION_NUMBER", f'"{version}"')
@@ -135,7 +145,7 @@ def main() -> int:
     source = set_value(source, "CS02_KERNEL_SIZE", '"12288k"')
     (ROOT / ".config").write_text(source)
     print("Generated isolated SS-01 Honk + EasyTier configuration:", version)
-    print("Removed proxy packages; retained EasyTier and added Honk full + Doona UI")
+    print("Removed proxy engines; selected Honk + Doona, EasyTier LuCI only, adblock, IPTV/UDPXY, and vlmcsd")
     return 0
 
 

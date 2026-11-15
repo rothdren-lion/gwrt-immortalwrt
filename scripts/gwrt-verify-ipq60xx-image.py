@@ -79,6 +79,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('target', type=Path)
     parser.add_argument('preset', choices=DEVICES)
+    parser.add_argument('--variant', choices=('daed', 'honk-easytier'), default='daed')
     parser.add_argument('--dtb', action='store_true', help='verify a standalone compiled DSA DTB')
     args = parser.parse_args()
     if args.dtb:
@@ -86,7 +87,8 @@ def main():
         verify_dtb(args.target.read_bytes(), args.preset)
         return
     if args.preset == 'ss01':
-        subprocess.run(['python3', str(ROOT / 'scripts/gwrt-verify-ss01-image.py'), str(args.target)], check=True)
+        subprocess.run(['python3', str(ROOT / 'scripts/gwrt-verify-ss01-image.py'),
+                        str(args.target), '--variant', args.variant], check=True)
         return
     device = DEVICES[args.preset]
     profiles = json.loads((args.target / 'profiles.json').read_text())['profiles']
@@ -126,12 +128,42 @@ def main():
         for module in ('qca_ppe', 'qca_edma'):
             require(re.search(r'/' + module + r'\.ko(?:\s|$|\.)', listing), 'missing Ethernet module: ' + module)
         require(not re.search(r'/(?:qca-nss-dp|qca-ssdk)\.ko(?:\s|$|\.)', listing), 'NSS/SSDK modules present in DSA image')
-        marker = b'daed-4d6a433_wing-dc50308_core-5db27a0-gwrt-runtime1'
-        require(read('usr/share/daed/gwrt-runtime-version').strip() == marker, 'wrong daed repair version')
-        daemon = read('usr/bin/daed')
-        require(daemon[:6] == b'\x7fELF\x02\x01' and struct.unpack_from('<H', daemon, 18)[0] == 183 and marker in daemon,
-                'wrong daed ARM64 executable')
-        require(not re.search(r'/etc/init\.d/homeproxy\s*$', listing, re.M), 'HomeProxy remains installed')
+        manifest_text = '\n'.join(path.read_text() for path in args.target.glob('*.manifest'))
+        if args.variant == 'honk-easytier':
+            honk = read('usr/bin/honk-core')
+            require(honk[:6] == b'\x7fELF\x02\x01' and struct.unpack_from('<H', honk, 18)[0] == 183,
+                    'honk-core must be an aarch64 ELF executable')
+            require(b'index.html' in honk and b'doona' in honk,
+                    'honk-core does not contain the embedded Doona UI')
+            require(b"ui: 'embedded'" in read('etc/honk/config.dae'),
+                    'Honk default configuration must select standard Doona')
+            for path in ('usr/bin/easytier-core', 'usr/bin/easytier-cli', 'usr/bin/easytier-web'):
+                require(not re.search(r'/' + re.escape(path) + r'\s*$', listing, re.M),
+                        'EasyTier runtime binary must not be present: ' + path)
+            adblock_config = read('etc/config/gwrt-tv-adblock')
+            require(b"option cat_360 '1'" in adblock_config,
+                    '360 DNS blocking must be enabled by default')
+            library = read('etc/gwrt-tv-adblock/ads-library.txt').decode()
+            roots = ('360.cn', '360safe.com', '360safe.cn', 'qhupdate.com',
+                     'mayi360.cn', 'ads360.cn', '360os.com')
+            section = re.search(r'^\[360\]\n(.*?)(?=^\[|\Z)', library, re.M | re.S)
+            require(section is not None and set(roots).issubset(set(section.group(1).split())),
+                    '360 DNS category must contain every root domain')
+            for package in ('honk', 'luci-app-honk', 'luci-lib-daeuniverse',
+                            'luci-app-easytier', 'luci-i18n-easytier-zh-cn',
+                            'vmlinux-btf-builtin', 'gwrt-tv-adblock',
+                            'luci-app-gwrt-tvadblock', 'luci-app-iptv', 'udpxy',
+                            'luci-app-udpxy', 'vlmcsd', 'luci-app-vlmcsd'):
+                require(re.search(r'^' + re.escape(package) + r'\s+-\s+', manifest_text, re.M),
+                        'missing Honk application package: ' + package)
+            print('PASS Honk + Doona, EasyTier LuCI only, 360 DNS adblock, IPTV/UDPXY/Vlmcsd')
+        else:
+            marker = b'daed-4d6a433_wing-dc50308_core-5db27a0-gwrt-runtime1'
+            require(read('usr/share/daed/gwrt-runtime-version').strip() == marker, 'wrong daed repair version')
+            daemon = read('usr/bin/daed')
+            require(daemon[:6] == b'\x7fELF\x02\x01' and struct.unpack_from('<H', daemon, 18)[0] == 183 and marker in daemon,
+                    'wrong daed ARM64 executable')
+            require(not re.search(r'/etc/init\.d/homeproxy\s*$', listing, re.M), 'HomeProxy remains installed')
         theme = ROOT / 'gwrt-theme-V3/theme/luci-theme-gwrt'
         for installed, source in {
             'www/luci-static/gwrt/css/cascade.css': 'htdocs/luci-static/gwrt/css/cascade.css',
@@ -142,7 +174,7 @@ def main():
             require(read(installed) == (theme / source).read_bytes(), 'packaged theme source mismatch: ' + installed)
         for name in ('gwrt-mesh-apmode', 'gwrt-mesh-led', 'gwrt-wifiroam-autopair'):
             require(re.search(r'/etc/init\.d/' + name + r'\s*$', listing, re.M), 'missing Mesh service: ' + name)
-        print('PASS 12M factory/sysupgrade, DSA modules, daed runtime1, current theme and Mesh:', device)
+        print('PASS 12M factory/sysupgrade, DSA modules, current theme and Mesh:', device)
 
 
 if __name__ == '__main__':
