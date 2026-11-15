@@ -57,4 +57,8 @@ the jobs then reached `test-gwrt-wifiroam.py`, which needs an aarch64 ucode
 sysroot and QEMU not provided before firmware compilation. The Mesh behavior
 test passed locally against the target environment, so the cloud workflow now
 keeps the target-independent Mesh autopair test and removes that early
-sysroot-dependent test. The next `261115-04` run is pending.
+sysroot-dependent test. A third run (`43703633044`, commit `100d3229`) passed
+adblock, Lua, Chromium UI, and factory layout, but its autopair test selected
+Ubuntu Dash, which rejects the OpenWrt `export -n` extension. The workflow now
+explicitly selects the installed BusyBox ash supported by that test. Another
+`261115-04` run is pending.
