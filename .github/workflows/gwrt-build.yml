@@ -45,6 +45,11 @@ on:
         type: choice
         options:
           - flashable
+      cs06_minimal:
+        description: 'CS-06 only: minimal authentication diagnostic image'
+        required: false
+        default: false
+        type: boolean
       release:
         description: 'Publish images to GitHub Releases'
         required: false
@@ -67,6 +72,9 @@ on:
       images:
         default: 'flashable'
         type: string
+      cs06_minimal:
+        default: false
+        type: boolean
       release:
         default: false
         type: boolean
@@ -147,6 +155,9 @@ jobs:
         env:
           GWRT_MODELS: ${{ inputs.models || inputs.model }}
         run: |
+          if [ "${{ inputs.cs06_minimal }}" = true ] && [ "${{ inputs.device }}" != cs06 ]; then
+            echo 'cs06_minimal is restricted to CS-06'; exit 1
+          fi
           VER="${{ inputs.version }}"
           [ -n "$VER" ] || VER="$(date -u +%y%m%d)-01"
           echo "VER=$VER" >> "$GITHUB_ENV"
@@ -163,7 +174,12 @@ jobs:
           echo "MODEL_NAME=$MN" >> "$GITHUB_ENV"
           case "${{ inputs.device }}" in
             ss01|cs02|cs02-gwrt2|cs07) python3 scripts/gwrt-mk-ipq60xx-config.py "${{ inputs.device }}" --version "$VER" ;;
-            cs06) OUT=.config VER="$VER" sh gwrt-mk-cs06-config.sh ;;
+            cs06)
+              if [ "${{ inputs.cs06_minimal }}" = true ]; then
+                OUT=.config VER="$VER" sh gwrt-mk-cs06-minimal-config.sh
+              else
+                OUT=.config VER="$VER" sh gwrt-mk-cs06-config.sh
+              fi ;;
             cs08) OUT=.config VER="$VER" sh gwrt-mk-cs08-config.sh ;;
             be6500) OUT=.config VER="$VER" sh gwrt-mk-be6500-config.sh ;;
             xer5) cp configs/config.xer5-261011-built .config ;;
@@ -185,6 +201,10 @@ jobs:
           # 一个预设只允许一个 SoC 序列（多 board = make world 串台）
           sh gwrt-check-target.sh .config "${{ inputs.device }}"
           python3 scripts/gwrt-validate-build-config.py .config "${{ inputs.device }}" --models "$GWRT_MODELS"
+          if [ "${{ inputs.cs06_minimal }}" = true ]; then
+            python3 scripts/tests/test-gwrt-cs06-minimal.py
+            python3 scripts/gwrt-verify-cs06-minimal.py .config
+          fi
           sh scripts/gwrt-source-preflight.sh
           grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)|^CONFIG_VERSION_NUMBER|^CONFIG_PACKAGE_(gwrt-agent|gwrt-mesh-apmode|gwrt-device-defaults|ucode-mod-socket)' .config
 
@@ -221,6 +241,7 @@ jobs:
           ath12k_dir="$prepared/backports-$backports_version/drivers/net/wireless/ath/ath12k"
           python3 scripts/tests/test-gwrt-ath12k-group-recovery.py "$ath12k_dir" | tee logs/cs06-recovery-before-build.log
           python3 scripts/tests/test-gwrt-ath12k-mlo-policy.py "$ath12k_dir" | tee logs/cs06-mlo-before-build.log
+          python3 scripts/tests/test-gwrt-ath12k-tx-encap.py "$ath12k_dir" | tee logs/cs06-tx-encap-before-build.log
           python3 scripts/tests/test-gwrt-cs06-radio-config.py | tee logs/cs06-radio-config.log
 
       - name: Build firmware
@@ -251,6 +272,9 @@ jobs:
           GWRT_MODELS: ${{ inputs.models || inputs.model }}
         run: |
           python3 scripts/gwrt-validate-build-config.py .config "${{ inputs.device }}" --models "$GWRT_MODELS" --manifests bin/targets
+          if [ "${{ inputs.cs06_minimal }}" = true ]; then
+            python3 scripts/gwrt-verify-cs06-minimal.py .config --manifests bin/targets
+          fi
           python3 - <<'PY'
           from pathlib import Path
           import subprocess
@@ -270,7 +294,8 @@ jobs:
           ath12k_dir=$(dirname "$core")
           python3 scripts/tests/test-gwrt-ath12k-group-recovery.py "$ath12k_dir" | tee logs/cs06-recovery-compiled-source.log
           python3 scripts/tests/test-gwrt-ath12k-mlo-policy.py "$ath12k_dir" | tee logs/cs06-mlo-compiled-source.log
-          sha256sum "$ath12k_dir"/{core.c,core.h,ahb.c,pci.c} > logs/cs06-ath12k-compiled-source.sha256
+          python3 scripts/tests/test-gwrt-ath12k-tx-encap.py "$ath12k_dir" | tee logs/cs06-tx-encap-compiled-source.log
+          sha256sum "$ath12k_dir"/{core.c,core.h,ahb.c,pci.c,mac.c} > logs/cs06-ath12k-compiled-source.sha256
           python3 scripts/gwrt-verify-cs06-kernel.py build_dir \
             --output logs/cs06-kernel.config 2>&1 | tee logs/cs06-kernel-audit.log
 

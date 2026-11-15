@@ -231,6 +231,7 @@
 	 * Keep the WSI graph for shared-memory ownership and group recovery.
 	 */
 	qcom,ath12k-disable-mlo;
+	qcom,ath12k-disable-tx-encap-offload;
 	qcom,board-id = <22>;
 	nvmem-cells = <&lan_macaddr 2>;
 	nvmem-cell-names = "mac-address";
@@ -238,6 +239,7 @@
 
 &wifi1 {
 	qcom,ath12k-disable-mlo;
+	qcom,ath12k-disable-tx-encap-offload;
 	qcom,board-id = <2>;
 	nvmem-cells = <&lan_macaddr 3>;
 	nvmem-cell-names = "mac-address";

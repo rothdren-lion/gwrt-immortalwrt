@@ -1,0 +1,51 @@
+Subject: [PATCH] wifi: ath12k: allow board-specific TX encap offload opt-out
+
+CS-06/WBE.1.6 asserts during authentication. Test native host TX frames
+without changing RX decap, PPE-DS, MLO, memory or firmware. This is a
+diagnostic workaround, not a proven fix for the closed firmware assertion.
+
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -7,6 +7,7 @@
+ #include <net/mac80211.h>
+ #include <net/cfg80211.h>
+ #include <linux/etherdevice.h>
++#include <linux/of.h>
+ 
+ #include "mac.h"
+ #include "core.h"
+@@ -15097,6 +15098,24 @@
+ 	return 0;
+ }
+ 
++static void ath12k_mac_set_tx_encap_offload(struct ieee80211_hw *hw,
++					   struct ath12k *ar)
++{
++	struct ath12k_base *ab = ar->ab;
++
++	/* Keep RX decapsulation and the separate PPE-DS bank policy unchanged.
++	 * The CPU TX path uses native Wi-Fi frames when this is not advertised.
++	 */
++	if (of_property_read_bool(ab->dev->of_node,
++				  "qcom,ath12k-disable-tx-encap-offload")) {
++		ath12k_info(ab, "TX encapsulation offload disabled by board policy\n");
++		return;
++	}
++
++	if (test_bit(WMI_TLV_SERVICE_ETH_OFFLOAD, ar->wmi->wmi_ab->svc_map))
++		ieee80211_hw_set(hw, SUPPORTS_TX_ENCAP_OFFLOAD);
++}
++
+ static int ath12k_mac_hw_register(struct ath12k_hw *ah)
+ {
+ 	struct ieee80211_hw *hw = ah->hw;
+@@ -15207,8 +15226,7 @@
+ 	ieee80211_hw_set(hw, REPORTS_LOW_ACK);
+ 	ieee80211_hw_set(hw, NO_VIRTUAL_MONITOR);
+ 
+-	if (test_bit(WMI_TLV_SERVICE_ETH_OFFLOAD, ar->wmi->wmi_ab->svc_map))
+-		ieee80211_hw_set(hw, SUPPORTS_TX_ENCAP_OFFLOAD);
++	ath12k_mac_set_tx_encap_offload(hw, ar);
+ 	if (test_bit(WMI_TLV_SERVICE_ETH_OFFLOAD, ar->wmi->wmi_ab->svc_map) ||
+ 	    (ab->hw_rev == ATH12K_HW_QCN9274_HW10 &&
+ 	     ab->wow.wmi_conf_rx_decap_mode == TARGET_DECAP_MODE_ETH))
