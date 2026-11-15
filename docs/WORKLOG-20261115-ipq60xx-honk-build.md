@@ -49,8 +49,12 @@ kernel and root members.
 The local checkout has about 17 GB free, so no full local firmware build was
 attempted. The first cloud run (`43702231396`, commit `b598a7a4`) checked out the
 branch, passed config/source preflight and both adblock regressions on all four
-jobs, and passed the Lua 5.1 CBI test on the first job. All four jobs then
-stopped before compilation because the browser regression's hard-coded local
-Playwright path was absent on GitHub runners. The workflow now installs pinned
-Playwright 1.62.1 and Chromium in the SS-01 matrix job, where the shared theme
-modal regression runs once. A second `261115-04` cloud attempt is pending.
+jobs, and passed the Lua 5.1 CBI test on the first job. All jobs stopped before
+compilation because the browser regression's hard-coded local Playwright path
+was absent on GitHub runners. A follow-up run (`43702951264`, commit
+`699e3596`) installed Playwright 1.62.1 and Chromium; those tests passed, but
+the jobs then reached `test-gwrt-wifiroam.py`, which needs an aarch64 ucode
+sysroot and QEMU not provided before firmware compilation. The Mesh behavior
+test passed locally against the target environment, so the cloud workflow now
+keeps the target-independent Mesh autopair test and removes that early
+sysroot-dependent test. The next `261115-04` run is pending.

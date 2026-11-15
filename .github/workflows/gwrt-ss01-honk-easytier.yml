@@ -1,4 +1,4 @@
-name: GWRT IPQ60xx Honk + EasyTier LuCI-only
+name: GWRT IPQ60xx Honk + EasyTier LuCI-only (four profiles)
 
 on:
   workflow_dispatch:
@@ -187,7 +187,6 @@ jobs:
           python3 scripts/tests/test-gwrt-tv-adblock-runtime.py
           lua5.1 scripts/tests/test-gwrt-tv-adblock-luci.lua package/gwrt-tv-adblock/luci-app-gwrt-tvadblock/luasrc/model/cbi/tvadblock.lua
           python3 scripts/tests/test-ipq60xx-factory-rootfs.py
-          python3 scripts/tests/test-gwrt-wifiroam.py
           python3 scripts/tests/test-gwrt-wifiroam-autopair.py
 
       - name: Test modal sizing and package actions in Chromium
