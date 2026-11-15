@@ -58,6 +58,18 @@ jobs:
           done
           command -v llvm-strip
 
+      - name: Install Playwright browser for modal regression
+        if: matrix.device == 'ss01'
+        run: |
+          set -euo pipefail
+          browser_dir="$RUNNER_TEMP/gwrt-browser"
+          npm install --prefix "$browser_dir" --no-save playwright@1.62.1
+          "$browser_dir/node_modules/.bin/playwright" install --with-deps chromium
+          playwright_path="$browser_dir/node_modules/playwright"
+          chrome_path="$(node -e 'console.log(require(process.argv[1]).chromium.executablePath())' "$playwright_path")"
+          echo "GWRT_PLAYWRIGHT=$playwright_path" >> "$GITHUB_ENV"
+          echo "GWRT_CHROME=$chrome_path" >> "$GITHUB_ENV"
+
       - name: Cache downloads
         uses: actions/cache@v4
         with:
@@ -174,10 +186,13 @@ jobs:
           python3 scripts/tests/test-gwrt-tv-adblock-query.py
           python3 scripts/tests/test-gwrt-tv-adblock-runtime.py
           lua5.1 scripts/tests/test-gwrt-tv-adblock-luci.lua package/gwrt-tv-adblock/luci-app-gwrt-tvadblock/luasrc/model/cbi/tvadblock.lua
-          node scripts/tests/test-gwrt-modal-package-ui.js
           python3 scripts/tests/test-ipq60xx-factory-rootfs.py
           python3 scripts/tests/test-gwrt-wifiroam.py
           python3 scripts/tests/test-gwrt-wifiroam-autopair.py
+
+      - name: Test modal sizing and package actions in Chromium
+        if: matrix.device == 'ss01'
+        run: node scripts/tests/test-gwrt-modal-package-ui.js
 
       - name: Test SS-01 calibration and first-boot Mesh
         if: matrix.device == 'ss01'

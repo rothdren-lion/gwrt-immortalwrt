@@ -47,6 +47,10 @@ kernel and root members.
   interpreter is installed; the cloud workflow installs Lua 5.1 and runs it.
 
 The local checkout has about 17 GB free, so no full local firmware build was
-attempted. No cloud build has been started yet; the next step is to commit only
-the firmware-related candidate changes, push the build branch, and dispatch
-version `261115-04` with the four profiles.
+attempted. The first cloud run (`43702231396`, commit `b598a7a4`) checked out the
+branch, passed config/source preflight and both adblock regressions on all four
+jobs, and passed the Lua 5.1 CBI test on the first job. All four jobs then
+stopped before compilation because the browser regression's hard-coded local
+Playwright path was absent on GitHub runners. The workflow now installs pinned
+Playwright 1.62.1 and Chromium in the SS-01 matrix job, where the shared theme
+modal regression runs once. A second `261115-04` cloud attempt is pending.
