@@ -20,6 +20,10 @@ FORBIDDEN = re.compile(r'^(?:gwrt-(?!cs06-diag-defaults$)|athena-led$|wifiroam$|
 
 def check(packages, label):
     missing = REQUIRED - packages
+    # The qualcommbe target defaults to dnsmasq-full, which provides the same
+    # DHCP/DNS service and replaces dnsmasq in the installed manifest.
+    if 'dnsmasq-full' in packages:
+        missing.discard('dnsmasq')
     forbidden = sorted(p for p in packages if FORBIDDEN.search(p) or
                        (p.startswith('luci-app-') and p not in ALLOWED_LUCI_APPS))
     if missing or forbidden:

@@ -17,6 +17,13 @@ class MinimalTests(unittest.TestCase):
     def test_essentials(self):
         minimal.check(minimal.REQUIRED | {'luci-app-firewall'}, 'test')
 
+    def test_dnsmasq_full_provides_dhcp_dns(self):
+        minimal.check((minimal.REQUIRED - {'dnsmasq'}) | {'dnsmasq-full'}, 'test')
+
+    def test_dnsmasq_similar_name_is_not_a_provider(self):
+        with self.assertRaises(ValueError):
+            minimal.check((minimal.REQUIRED - {'dnsmasq'}) | {'dnsmasq-extra'}, 'test')
+
     def test_missing_essentials(self):
         for name in minimal.REQUIRED:
             with self.subTest(name=name), self.assertRaises(ValueError):

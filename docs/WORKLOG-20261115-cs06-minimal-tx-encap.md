@@ -47,3 +47,67 @@
 
 回滚源码：独立分支退回基线 0580ee9a；不影响 NAS 上其它机型和并发工作。
 云端运行、实际编译与交付状态随后记录；本记录写入时尚未产生新成品。
+
+## 云端启动与源码同步（2026-11-15 07:40 UTC 起）
+
+实现提交 `1d5d9ba18f36b59d2d088bb99a5e33bf2897df3b` 已推送独立分支，
+GitHub 运行 `43690954669`：CS-06 / `261115-01` / `cs06_minimal=true` /
+release=false。任务实际已启动，并在 07:44 UTC 前进入 Generate config。
+云端并非仅上传源码；后续状态以证据目录 delivery-status.json 为准。
+
+本轮实现已选择性同步 NAS；保留 NAS-only R68S 预设及 python3-pyelftools 依赖，
+未覆盖 SS-01、其它机型、未提交插件和日志。同步后 6 项最小配置测试通过。
+旧版 261114-02 已被用户日志确认认证故障，核对旧 audit 的 0580ee9a/43619639969 后，
+将该交付 bundle 移入系统废纸篓，移出可交付固件目录；诊断日志/转储/源码仍保留。
+
+本轮只针对此运行的下载/审计/归档进程已启动：watch-cloud.py、finish-delivery.py。
+下载采用临时目录及完整来源标记，拒绝部分包复用/覆盖。审计将核对 mac.c 等 5 份
+编译源码哈希、两路 DTB 的 MLO/TX opt-out、ARM64/6.18.62 模块、两个芯片固件、
+7M 镜像布局、最小 manifest 与无 APK 恢复入口。通过后交付至
+`/home/godsun/build/gwrt-releases/cs06-7M-minimal/`；失败不会自动交付或刷机。
+启动时 finisher 先于 collector 状态文件产生而退出，已加等待保护并重新启动，
+状态确认 waiting_for_verified_download。无构建代码/云端失败由此发生。
+
+## 正式编译阶段确认
+
+再次通过 GitHub API 回读确认：Generate config 与 Test CS-06 ath12k recovery before compilation
+均 success；Build firmware 于 **2026-11-15T07:43:55Z** 启动，当前 in_progress。
+源码 SHA 与推送的 1d5d9ba1 完全一致，尚未宣称构建/镜像或实机认证成功。
+证据：cloud-build-start-confirmed.json。
+
+## 2026-11-16 成品恢复审计与交付
+
+云端 `43690954669` 正式 Build firmware **成功**，但整个运行结论仍是 failure：
+末尾最小包检查要求名称 `dnsmasq`，而 qualcommbe 默认安装的实际提供者是
+`dnsmasq-full`；这是校验脚本的提供者误判。后续编译源码专项/哈希步骤因该失败被跳过，
+原自动交付正确停止，未将失败状态当作成功。
+
+本次补认精确的 `dnsmasq-full` 提供者，并增加完整包接受/相似名称拒绝测试，8 项
+最小包测试通过。使用原 run 的 inspection artifact，来源标记、commit、版本和
+所有原始 sha256sums 回读核对后进行本地恢复审计，没有重编/改写已有镜像：
+
+- 实际 manifest 222 个包，配置 232 个选择，必需无线/管理包与无大型插件检查通过。
+- 原始目标内核配置及 kernel.release 验证 Linux 6.18.62、ARM64、CMA64；
+  FIT 里的真实内核 banner 同样为 6.18.62，没有降级。
+- factory/sysupgrade 7 MiB 边界和 padding 一致；实际嵌入 DTB 的 AHB/PCI 及父节点启用，
+  两路均有 MLO 与 TX encap opt-out。
+- rootfs 版本 261115-01 / revision 1d5d9ba、绑定迁移/hotplug 与最小 defaults
+  内容匹配；不带 APK 恢复载荷/入口或 Mesh/代理插件。
+- 实际 ARM64 ath12k/ath12k_wifi7 模块及 6.18.62 vermagic 通过，
+  主驱动包含 TX offload 关闭策略和整组恢复标记；两个芯片的固件载荷齐全。
+- 云端编译前 32 恢复/15 MLO/5 绑定/12 TX 与 113 补丁应用记录核对通过。
+  **没有编译后源文件哈希，不声称这些哈希或编译后专项在云端已通过**；
+  本次以保存的原始内核配置和实际打包 FIT/DTB/驱动/文件内容补做成品审计。
+
+已归档 `/home/godsun/build/gwrt-releases/cs06-7M-minimal/`，原始云端 failure 与
+本地恢复检查边界保存在 README、audit.json、cloud-status.json 和 verification 中。
+最终交付文件：
+
+- `gwrt-261115-01-赵云cs-06-7M-minimal-sysupgrade.bin`
+  SHA-256 `108cff21fecf3f918c1365a49ed818fd618fb53a41509a0b63e66fb014a39df6`
+- `gwrt-261115-01-赵云cs-06-7M-minimal-factory.bin`
+  SHA-256 `53d859d791b3c4096e2fc2b45fbedf97b224e702e667477a653b30a7c38bacff`
+
+校验修复与本记录已选择性同步 NAS；固件实现仍为原编译提交 1d5d9ba1。
+本轮只修源码检查/离线审计和归档，未连接/刷入/重启路由器。
+此为认证故障的最小插件 **测试固件**，实机认证是否恢复尚未确认。
