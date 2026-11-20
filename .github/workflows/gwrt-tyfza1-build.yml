@@ -346,12 +346,9 @@ jobs:
           revision="$(git rev-parse --short HEAD)"
           taskset -c 0-5 make -j6 download REVISION="$revision" 2>&1 | tee logs/download.log
           args=(REVISION="$revision" CONFIG_VERSION_DIST=GWRT CONFIG_VERSION_NUMBER="$VER")
-          if taskset -c 0-5 make -j6 "${args[@]}" 2>&1 | tee logs/build.log; then
-            exit 0
-          else
-            printf '\nTYFZA1 parallel build exited %s; retrying serially with V=s\n' "$?" | tee -a logs/build.log
-          fi
-          taskset -c 0-5 make -j1 V=s "${args[@]}" 2>&1 | tee -a logs/build.log
+          # Do not relink on this tree after image generation: the embedded
+          # recovery build can leave CONFIG_INITRAMFS_SOURCE set in .config.
+          taskset -c 0-5 make -j6 V=s "${args[@]}" 2>&1 | tee logs/build.log
 
       - name: Verify kernel BTF and image contents
         run: |
@@ -451,6 +448,10 @@ jobs:
             printf 'device=%s\nshared=not-synced\n' "$(git rev-parse HEAD 2>/dev/null || printf unavailable)" > logs/source-revisions.txt
           fi
           df -h . > logs/failure-disk.txt || true
+          shopt -s nullglob
+          for kernel_config in build_dir/target-*/linux-rtl9617c_generic/linux-6.18.62/.config{,.set}; do
+            cp "$kernel_config" "logs/kernel${kernel_config##*/}"
+          done
           python3 - <<'PY' | tee logs/tyfza1-image-sizes.tsv
           from pathlib import Path
           import hashlib
@@ -491,6 +492,41 @@ jobs:
                   print(f'{kind}\t{status}\t{size}\t{limit or "-"}\t{path}\t{detail}')
           PY
 
+      - name: Measure smaller SquashFS candidates without changing packages
+        if: failure() && steps.build_firmware.outcome != 'skipped'
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          roots=(build_dir/target-*/linux-rtl9617c_generic/root.squashfs+pkg=*)
+          [ "${#roots[@]}" -eq 1 ] || exit 0
+          baseline="${roots[0]}"
+          limit=33648640
+          [ "$(stat -c %s "$baseline")" -gt "$limit" ] || exit 0
+          tree="${baseline%/*}/target-dir-${baseline##*+pkg=}"
+          tool="$PWD/staging_dir/host/bin/mksquashfs4"
+          [ -d "$tree" ] && [ -x "$tool" ] || exit 0
+          work="$(mktemp -d "$RUNNER_TEMP/tyfza1-rootfs.XXXXXX")"
+          report=logs/tyfza1-squashfs-candidates.tsv
+          printf 'block_kib\tbcj\tbytes\tresult\n' > "$report"
+          printf '256\tno\t%s\tover-limit\n' "$(stat -c %s "$baseline")" >> "$report"
+          for spec in 512:no 1024:no 512:arm64 1024:arm64; do
+            IFS=: read -r block bcj <<< "$spec"
+            filters=()
+            if [ "$bcj" = arm64 ]; then filters=(-Xbcj arm64); fi
+            image="$work/$block-$bcj.squashfs"
+            if "$tool" "$tree" "$image" -nopad -noappend -root-owned \
+                -comp xz -Xpreset 9 -Xe -Xlc 0 -Xlp 2 -Xpb 2 "${filters[@]}" \
+                -b "${block}k" -p '/dev d 755 0 0' -p '/dev/console c 600 0 0 5 1' \
+                -no-xattrs -block-readers 4 -small-readers 4 > "logs/squashfs-$block-$bcj.log" 2>&1; then
+              size="$(stat -c %s "$image")"
+              result=over-limit
+              if [ "$size" -le "$limit" ]; then result=fits; fi
+              printf '%s\t%s\t%s\t%s\n' "$block" "$bcj" "$size" "$result" >> "$report"
+            else
+              printf '%s\t%s\t-\tcompression-failed\n' "$block" "$bcj" >> "$report"
+            fi
+          done
+
       - name: Upload build logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -501,6 +537,7 @@ jobs:
             honk-source.txt
             feeds-revisions.txt
             build_dir/target-*/linux-rtl9617c_generic/Image
+            build_dir/target-*/linux-rtl9617c_generic/root.squashfs+pkg=*
           if-no-files-found: ignore
           retention-days: 7
 
