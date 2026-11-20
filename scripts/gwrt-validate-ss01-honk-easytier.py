@@ -8,6 +8,12 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 
+NSS_KERNEL_API = {
+    "qca_edma": ("qca_edma_cpu_queues_to_host", "qca_edma_cpu_queues_to_ring"),
+    "qca_ppe": ("qca_ppe_fw_booted", "qca_ppe_fw_ports_set", "qca_ppe_fw_carrier_set"),
+}
+NSS_WIFI_PACKAGE = "kmod-nss-wifi-drv"
+
 REQUIRED = {
     "honk",
     "luci-app-honk",
@@ -94,6 +100,7 @@ def read_enabled(path: Path) -> set[str]:
 def check_config(path: Path) -> set[str]:
     text = path.read_text()
     packages = read_enabled(path)
+    selected = set(text.splitlines())
     required = set(REQUIRED)
     missing = required - packages
     if missing:
@@ -107,19 +114,61 @@ def check_config(path: Path) -> set[str]:
         "CONFIG_PACKAGE_ipq-wifi-jdcloud_re-ss-01=y",
         "CONFIG_PACKAGE_ath11k-firmware-ipq6018-ddwrt=y",
         "CONFIG_PACKAGE_kmod-ath11k-ahb=y",
-        "CONFIG_PACKAGE_kmod-qca-nss-dp=y",
-        "CONFIG_PACKAGE_kmod-qca-ssdk=y",
         "CONFIG_EASYTIER_INCLUDE_WEBCONSOLE=y",
         "CONFIG_KERNEL_DEBUG_INFO_BTF=y",
         "CONFIG_KERNEL_CGROUP_BPF=y",
     ):
-        if line not in text.splitlines():
+        if line not in selected:
             raise SystemExit("FAIL config missing: " + line)
-    print("PASS Honk + EasyTier config: SS-01 target, Mesh/NSS, embedded UI, no proxy engine")
+    if NSS_WIFI_PACKAGE not in packages:
+        for package in ("kmod-qca-nss-dp", "kmod-qca-ssdk"):
+            if f"CONFIG_PACKAGE_{package}=y" not in selected:
+                raise SystemExit(f"FAIL config missing wired QSDK package: {package}")
+    print("PASS Honk + EasyTier base config: SS-01 target, Mesh, embedded UI, no proxy engine")
     return packages
 
 
-def check_manifests(manifest_dir: Path) -> None:
+def check_nss_wifi_abi(
+    packages: set[str], *, root: Path = ROOT, symvers: Path | None = None
+) -> None:
+    if NSS_WIFI_PACKAGE not in packages:
+        raise SystemExit(f"FAIL config does not select {NSS_WIFI_PACKAGE}")
+
+    overlay = root / "target/linux/qualcommax/files"
+    errors = []
+    if "kmod-qca-nss-dp" in packages:
+        errors.append("QSDK kmod-qca-nss-dp conflicts with the EDMA conduit required by nss-wifi-drv on SS-01")
+    if "kmod-qca-nss-drv" in packages:
+        errors.append("QSDK kmod-qca-nss-drv and nss-wifi-drv cannot both own the NSS cores on SS-01")
+    for driver, symbols in NSS_KERNEL_API.items():
+        header = overlay / f"include/linux/soc/qcom/{driver}.h"
+        implementation = overlay / "drivers/net/ethernet/qualcomm" / (
+            "qca_ppe_main.c" if driver == "qca_ppe" else "qca_edma.c"
+        )
+        declarations = header.read_text() if header.is_file() else ""
+        exports = implementation.read_text() if implementation.is_file() else ""
+        if not header.is_file():
+            errors.append(f"missing public header {header.relative_to(root)}")
+        for symbol in symbols:
+            if header.is_file() and not re.search(rf"\b{symbol}\s*\(", declarations):
+                errors.append(f"{header.name} does not declare {symbol}")
+            if not re.search(rf"\bEXPORT_SYMBOL(?:_GPL)?\s*\(\s*{symbol}\s*\)", exports):
+                errors.append(f"{implementation.name} does not export {symbol}")
+
+    if symvers is not None:
+        exported = {
+            fields[1] for line in symvers.read_text().splitlines()
+            if len(fields := line.split()) >= 4
+        }
+        for symbols in NSS_KERNEL_API.values():
+            errors.extend(f"{symvers.name} lacks {symbol}" for symbol in symbols if symbol not in exported)
+
+    if errors:
+        raise SystemExit("FAIL SS-01 NSS Wi-Fi ABI:\n  " + "\n  ".join(errors))
+    print("PASS SS-01 NSS Wi-Fi ABI preflight (not a runtime offload test)")
+
+
+def check_manifests(manifest_dir: Path, *, require_nss_wifi: bool = False) -> None:
     manifests = sorted(manifest_dir.glob("*.manifest"))
     if not manifests:
         raise SystemExit("FAIL no package manifest in " + str(manifest_dir))
@@ -129,23 +178,33 @@ def check_manifests(manifest_dir: Path) -> None:
             match = re.match(r"^([^\s]+)\s+-\s+", line)
             if match:
                 found.add(match.group(1))
-    missing = REQUIRED - found
+    required = REQUIRED | ({NSS_WIFI_PACKAGE} if require_nss_wifi else set())
+    missing = required - found
     if missing:
         raise SystemExit("FAIL manifest missing: " + ", ".join(sorted(missing)))
     forbidden = sorted(name for name in found if package_is_forbidden(name))
     if forbidden:
         raise SystemExit("FAIL manifest contains proxy packages: " + ", ".join(forbidden))
-    print("PASS Honk + EasyTier manifest packages:", ", ".join(sorted(REQUIRED)))
+    print("PASS Honk + EasyTier manifest packages:", ", ".join(sorted(required)))
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("config", type=Path)
     parser.add_argument("--manifests", type=Path)
+    parser.add_argument("--require-nss-wifi", action="store_true")
+    parser.add_argument("--kernel-symvers", type=Path)
     args = parser.parse_args()
-    check_config(args.config)
+    packages = check_config(args.config)
+    require_nss_wifi = (
+        args.require_nss_wifi or args.kernel_symvers is not None or NSS_WIFI_PACKAGE in packages
+    )
+    if require_nss_wifi:
+        if not re.search(rf"^CONFIG_PACKAGE_{re.escape(NSS_WIFI_PACKAGE)}=y$", args.config.read_text(), re.M):
+            raise SystemExit(f"FAIL config does not embed {NSS_WIFI_PACKAGE} (expected =y)")
+        check_nss_wifi_abi(packages, symvers=args.kernel_symvers)
     if args.manifests:
-        check_manifests(args.manifests)
+        check_manifests(args.manifests, require_nss_wifi=require_nss_wifi)
 
 
 if __name__ == "__main__":

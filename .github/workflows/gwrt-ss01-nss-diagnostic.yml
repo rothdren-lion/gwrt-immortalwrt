@@ -1,5 +1,5 @@
 name: GWRT SS-01 NSS driver diagnostic
-run-name: ss-01-261120-02 (NSS diagnostic)
+run-name: ss-01-261120-03 (NSS diagnostic)
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
       - build/ss01-nss-261120
 
 env:
-  VERSION: '261120-02'
+  VERSION: '261120-03'
   KERNEL_VERSION: '6.18.62'
 
 permissions:
@@ -74,16 +74,16 @@ jobs:
           sh gwrt-theme-V3/scripts/integrate.sh --no-config
           sh scripts/gwrt-apply-feed-overlays.sh
           ./scripts/feeds install -a
-          test -f target/linux/qualcommax/files/drivers/net/ethernet/qualcomm/qca_edma.h
-          test -f target/linux/qualcommax/files/include/linux/soc/qcom/qca_ppe.h
 
-      - name: Generate and validate SS-01 config
+      - name: Generate config and preflight NSS Wi-Fi ABI
         run: |
           set -euo pipefail
           python3 scripts/gwrt-mk-ss01-honk-easytier-config.py "$VERSION"
           make defconfig
           sh gwrt-check-target.sh .config ss01
-          python3 scripts/gwrt-validate-ss01-honk-easytier.py .config
+          mkdir -p logs
+          python3 scripts/gwrt-validate-ss01-honk-easytier.py .config --require-nss-wifi \
+            2>&1 | tee logs/nss-wifi-preflight.log
           grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)|^CONFIG_LINUX_VERSION|^CONFIG_PACKAGE_kmod-nss-wifi-drv|^CONFIG_PACKAGE_kmod-qca-nss-dp|^CONFIG_PACKAGE_kmod-qca-ssdk|^CONFIG_KERNEL_DEBUG_INFO_BTF' .config | tee diagnostics-config.txt
 
       - name: Record exact kernel inputs
@@ -122,6 +122,9 @@ jobs:
           cp "$kernel_dir/.config" logs/kernel.config
           cp "$kernel_dir/Module.symvers" logs/kernel-module.symvers
           cp "$kernel_dir/include/config/kernel.release" logs/kernel.release
+          python3 scripts/gwrt-validate-ss01-honk-easytier.py .config \
+            --kernel-symvers logs/kernel-module.symvers \
+            2>&1 | tee logs/nss-wifi-kernel-abi.log
 
       - name: Build only nss-wifi-drv with verbose diagnostics
         run: |
