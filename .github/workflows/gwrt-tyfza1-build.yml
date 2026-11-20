@@ -249,6 +249,20 @@ jobs:
           sh scripts/tests/test-gwrt-socinfo.sh || echo "socinfo test skipped"
           python3 scripts/tests/test-gwrt-wifiroam.py || echo "wifiroam test skipped"
 
+      - name: Preflight TYFZA1 UBIFS seed
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          make -j6 tools/mtd-utils/compile V=s 2>&1 | tee logs/ubifs-host-build.log
+          mkfs="$PWD/staging_dir/host/bin/mkfs.ubifs"
+          work="$(mktemp -d "$RUNNER_TEMP/tyfza1-seed.XXXXXX")"
+          test "$("$mkfs" -x zstd --version)" = 'mkfs.ubifs (mtd-utils) 2.3.1'
+          python3 package/tyfza1-storage/build_overlay_seed.py "$mkfs" "$work/overlay-seed.ubifs.gz" \
+            2>&1 | tee logs/ubifs-seed.log
+          gzip -t "$work/overlay-seed.ubifs.gz"
+          test -s "$work/overlay-seed.ubifs.gz.json"
+          cp "$work/overlay-seed.ubifs.gz.json" logs/ubifs-seed.json
+
       - name: Build firmware
         id: build_firmware
         shell: bash
