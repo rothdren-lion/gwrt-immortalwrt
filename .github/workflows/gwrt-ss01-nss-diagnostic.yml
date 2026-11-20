@@ -1,15 +1,14 @@
 name: GWRT SS-01 NSS driver diagnostic
+run-name: ss-01-261120-02 (NSS diagnostic)
 
 on:
   push:
     branches:
       - build/ss01-nss-261120
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Diagnostic label (YYMMDD-NN)'
-        required: false
-        default: '261120-01'
+
+env:
+  VERSION: '261120-02'
+  KERNEL_VERSION: '6.18.62'
 
 permissions:
   contents: read
@@ -51,7 +50,7 @@ jobs:
             g++-multilib gettext git libbpf-dev libclang-dev libncurses-dev \
             libssl-dev pkg-config python3-setuptools python3-pyelftools rsync \
             squashfs-tools unzip util-linux zlib1g-dev file wget swig xz-utils \
-            zstd cmake
+            zstd cmake kmod
           LLVM_BIN="$(dirname "$(readlink -f "$(command -v clang)")")"
           for tool in llvm-strip llc opt llvm-dis; do
             [ -x "$LLVM_BIN/$tool" ] && sudo ln -sf "$LLVM_BIN/$tool" "/usr/local/bin/$tool"
@@ -66,14 +65,6 @@ jobs:
           restore-keys: |
             gwrt-dl-
 
-      - name: Cache toolchain
-        uses: actions/cache@v4
-        with:
-          path: staging_dir/toolchain-*
-          key: gwrt-tc-2404-${{ hashFiles('toolchain/**', 'tools/**', 'include/kernel*', 'rules.mk', 'Config.in') }}
-          restore-keys: |
-            gwrt-tc-2404-
-
       - name: Install locked feeds
         run: |
           set -euo pipefail
@@ -87,8 +78,6 @@ jobs:
           test -f target/linux/qualcommax/files/include/linux/soc/qcom/qca_ppe.h
 
       - name: Generate and validate SS-01 config
-        env:
-          VERSION: ${{ inputs.version || '261120-01' }}
         run: |
           set -euo pipefail
           python3 scripts/gwrt-mk-ss01-honk-easytier-config.py "$VERSION"
@@ -114,46 +103,60 @@ jobs:
           set -euo pipefail
           make -j6 download 2>&1 | tee logs/download.log
 
-      - name: Build target kernel with verbose diagnostics
+      - name: Build host tools, ARM64 toolchain and target kernel
         run: |
           set -euo pipefail
-          make -j6 target/linux/compile V=s 2>&1 | tee logs/kernel-build.log
+          make -j6 prepare V=s REVISION="$(git rev-parse --short HEAD)" \
+            GWRT_CS02_KERNEL_SIZE=12288k 2>&1 | tee logs/kernel-build.log
+
+      - name: Verify prepared kernel
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          kernel_dirs=(build_dir/target-*/linux-qualcommax_ipq60xx/linux-"$KERNEL_VERSION")
+          test "${#kernel_dirs[@]}" -eq 1
+          kernel_dir="${kernel_dirs[0]}"
+          test -s "$kernel_dir/.config"
+          test -s "$kernel_dir/Module.symvers"
+          test "$(make -s -C "$kernel_dir" kernelversion)" = "$KERNEL_VERSION"
+          cp "$kernel_dir/.config" logs/kernel.config
+          cp "$kernel_dir/Module.symvers" logs/kernel-module.symvers
+          cp "$kernel_dir/include/config/kernel.release" logs/kernel.release
 
       - name: Build only nss-wifi-drv with verbose diagnostics
         run: |
           set -euo pipefail
-          make -j1 package/qca-nss/nss-wifi-drv/compile V=s 2>&1 | tee logs/nss-wifi-drv-build.log
+          make -j1 package/qca-nss/nss-wifi-drv/compile V=sc \
+            REVISION="$(git rev-parse --short HEAD)" GWRT_CS02_KERNEL_SIZE=12288k \
+            2>&1 | tee logs/nss-wifi-drv-build.log
 
       - name: Audit kernel and module output
         run: |
           set -euo pipefail
-          mkdir -p logs
-          kernel_dir="$(find build_dir/target-* -type f -path '*/linux-*/.config' -print -quit | xargs -r dirname)"
-          test -n "$kernel_dir"
+          shopt -s nullglob
+          modules=(build_dir/target-*/linux-qualcommax_ipq60xx/nss-wifi-drv-*/nss-wifi-drv.ko)
+          test "${#modules[@]}" -eq 1
+          module="${modules[0]}"
+          vermagic="$(modinfo -F vermagic "$module")"
+          test "${vermagic%% *}" = "$(< logs/kernel.release)"
           {
-            echo "Kernel build directory: $kernel_dir"
-            echo "Kernel Makefile version:"
-            make -C "$kernel_dir" kernelversion
-            echo "Kernel config version:"
-            grep -E '^(CONFIG_LOCALVERSION|CONFIG_LINUX_VERSION|CONFIG_MODULES|CONFIG_MODVERSIONS)=' "$kernel_dir/.config" || true
-            echo "NSS module files:"
-            find build_dir -path '*nss-wifi-drv*' -type f -printf '%p %s bytes\\n' | sort
-            echo "Module metadata:"
-            find build_dir -name 'nss-wifi-drv.ko' -exec modinfo -F vermagic {} \\; 2>/dev/null || true
+            file "$module"
+            modinfo "$module"
+            sha256sum "$module"
           } | tee logs/kernel-module-audit.txt
+          cp "$module" logs/nss-wifi-drv.ko
 
       - name: Upload NSS diagnostic evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gwrt-ss01-nss-diagnostic-${{ inputs.version }}
+          name: gwrt-ss01-nss-diagnostic-${{ env.VERSION }}
           path: |
             .config
             diagnostics-config.txt
             logs/*
-            build_dir/target-*/linux-*/linux-*/.config
-            build_dir/target-*/linux-*/linux-*/include/config/kernel.release
-            build_dir/target-*/linux-*/linux-*/nss-wifi-drv.ko
+            build_dir/target-*/linux-qualcommax_ipq60xx/linux-*/.config
+          include-hidden-files: true
           if-no-files-found: warn
-          compression-level: 0
+          compression-level: 6
           retention-days: 30
