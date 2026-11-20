@@ -26,8 +26,8 @@ else
     setenv tyfza1_root ubi_r0
     setenv tyfza1_block /dev/ubiblock0_4
 fi
-setenv bootargs "{base} ubi.mtd=ubi_device ubi.block=0,${{tyfza1_root}} root=${{tyfza1_block}} rootfstype=squashfs ro tyfza1.slot=${{tyfza1_slot}}"
-''' + '''
+setenv bootargs "@BASE_ARGS@ ubi.mtd=ubi_device ubi.block=0,${tyfza1_root} root=${tyfza1_block} rootfstype=squashfs ro tyfza1.slot=${tyfza1_slot}"
+
 
 if test -z "${b_conf}" && test -n "${conf_match}"; then
     run conf_match
@@ -127,7 +127,8 @@ def main():
     (out / 'fdt.lzma').write_bytes(compress(args.dtb.read_bytes(), parameters['fdt-dts']))
     (out / 'fdt-2p5g.lzma').write_bytes(
         compress(args.dtb_2p5g.read_bytes(), parameters['fdt-dts']))
-    (out / 'boot.cmd').write_text(BOOT_SCRIPT.format(base=BASE_ARGS))
+    # Leave every ${...} variable for U-Boot to expand at boot time.
+    (out / 'boot.cmd').write_text(BOOT_SCRIPT.replace('@BASE_ARGS@', BASE_ARGS))
 
     signed = args.keys is not None and (args.keys / 'dev.key').exists()
     mkimage = args.mkimage or shutil.which('mkimage')

@@ -85,7 +85,7 @@ jobs:
             g++-multilib gettext git libbpf-dev libclang-dev libncurses-dev \
             libssl-dev pkg-config python3-setuptools python3-pyelftools rsync \
             squashfs-tools unzip util-linux zlib1g-dev file wget swig xz-utils \
-            zstd cmake dwarves
+            zstd cmake dwarves device-tree-compiler
           LLVM_BIN="$(dirname "$(readlink -f "$(command -v clang)")")"
           for tool in llvm-strip llc opt llvm-dis; do
             [ -x "$LLVM_BIN/$tool" ] && sudo ln -sf "$LLVM_BIN/$tool" "/usr/local/bin/$tool"
@@ -262,6 +262,59 @@ jobs:
           gzip -t "$work/overlay-seed.ubifs.gz"
           test -s "$work/overlay-seed.ubifs.gz.json"
           cp "$work/overlay-seed.ubifs.gz.json" logs/ubifs-seed.json
+
+      - name: Preflight TYFZA1 boot FIT
+        env:
+          FIT_KERNEL_VERSION: '6.18.62'
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          make -j6 tools/mkimage/compile V=s 2>&1 | tee logs/fit-host-build.log
+          mkimage="$PWD/staging_dir/host/bin/mkimage"
+          work="$(mktemp -d "$RUNNER_TEMP/tyfza1-fit.XXXXXX")"
+          printf 'TYFZA1 FIT preflight fixture\n' > "$work/Image"
+          for variant in base 2p5g; do
+            printf '/dts-v1/; / { model = "TYFZA1 fixture %s"; compatible = "realtek,taurus"; };\n' "$variant" |
+              dtc -I dts -O dtb -o "$work/$variant.dtb"
+          done
+          python3 target/linux/rtl9617c/python/make_ubi_fit.py \
+            "$work/Image" "$work/base.dtb" "$work/fit" --dtb-2p5g "$work/2p5g.dtb" \
+            --kver "$FIT_KERNEL_VERSION" --mkimage "$mkimage" 2>&1 | tee logs/fit-packaging.log
+          fit="$work/fit/image.itb"
+          "$mkimage" -l "$fit" | tee logs/fit-contents.txt
+          test "$(stat -c %s "$fit")" -le "$((0x600000))"
+          test "$(fdtget -t s "$fit" /images/kernel description)" = "Native OpenWrt Linux $FIT_KERNEL_VERSION"
+          test "$(fdtget -t s "$fit" /configurations default)" = conf-0
+          test "$(fdtget -t s "$fit" /configurations/conf-0 fdt)" = fdt-2p5g
+          test "$(fdtget -t s "$fit" /configurations/conf-1 fdt)" = fdt-dts
+          for conf in conf-0 conf-1; do
+            test "$(fdtget -t s "$fit" "/configurations/$conf" script)" = script
+          done
+          python3 - "$work" <<'PY'
+          import lzma
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          work = Path(sys.argv[1])
+          fit = work / 'fit/image.itb'
+
+          def data(node):
+              raw = subprocess.check_output(['fdtget', '-t', 'bx', fit, f'/images/{node}', 'data'])
+              return bytes(int(byte, 16) for byte in raw.split())
+
+          script = data('script')
+          assert script == (work / 'fit/boot.cmd').read_bytes(), 'FIT boot script changed'
+          variables = set(re.findall(rb'\$\{([a-z_][a-z0-9_]*)\}', script))
+          assert variables == {b'root_mtd', b'tyfza1_root', b'tyfza1_block', b'tyfza1_slot',
+                               b'b_conf', b'conf_match', b'unzip_src'}, variables
+          assert b'@BASE_ARGS@' not in script and b'console=ttyS0,115200n8' in script
+          assert b'ubi_r0' in script and b'ubi_r1' in script
+          for node, name in [('kernel', 'Image'), ('fdt-2p5g', '2p5g.dtb'), ('fdt-dts', 'base.dtb')]:
+              assert lzma.decompress(data(node)) == (work / name).read_bytes(), f'FIT {node} mismatch'
+          print('TYFZA1 FIT fixture: script, kernel, dual DTB payloads and configuration mappings verified')
+          PY
 
       - name: Build firmware
         id: build_firmware
