@@ -264,6 +264,19 @@ wait
                 self.assertEqual((assets / 'topologyBackhaul.js').read_bytes(),
                                  (shared / 'topologyBackhaul.js').read_bytes())
 
+    def test_mesh_assets_have_no_donation_ui(self):
+        root = ROOT / 'package/gwrt-wifiroam-v5/files/usr/share/gwrt/wifiroam-v5'
+        sources = [p for p in root.rglob('*') if p.is_file()]
+        for path in sources:
+            if not path.is_file():
+                continue
+            try:
+                text = path.read_text().lower()
+            except UnicodeDecodeError:
+                continue
+            for needle in ('wr-donate', 'donate-qr', 'donate.js', '打赏'):
+                self.assertNotIn(needle, text, f'{needle} remains in {path.relative_to(ROOT)}')
+
     def test_user_disabled_mesh_not_started(self):
         values = self.prepare_mesh(enabled='0', role='sap')
         result = self.run_file(FILES / '97_gwrt-wifiroam-defaults')
