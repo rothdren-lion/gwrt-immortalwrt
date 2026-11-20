@@ -116,6 +116,10 @@ def main():
     parser.add_argument('--mkimage', default=None)
     args = parser.parse_args()
 
+    kernel = args.image.read_bytes()
+    if len(kernel) < 64 or kernel.startswith(b'\x7fELF') or kernel[56:60] != b'ARM\x64':
+        sys.exit(f'make_ubi_fit: {args.image} is not a raw ARM64 Linux Image')
+
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
 
@@ -123,7 +127,8 @@ def main():
                            'tyfza1-fit-compression.json').read_text())
     parameters = {item['name']: item['lzma_alone'] for item in contract['images']}
 
-    (out / 'kernel.lzma').write_bytes(compress(args.image.read_bytes(), parameters['kernel']))
+    compressed_kernel = compress(kernel, parameters['kernel'])
+    (out / 'kernel.lzma').write_bytes(compressed_kernel)
     (out / 'fdt.lzma').write_bytes(compress(args.dtb.read_bytes(), parameters['fdt-dts']))
     (out / 'fdt-2p5g.lzma').write_bytes(
         compress(args.dtb_2p5g.read_bytes(), parameters['fdt-dts']))
@@ -150,6 +155,8 @@ def main():
         print('make_ubi_fit: UNSIGNED FIT (no key directory supplied)', file=sys.stderr)
 
     size = (out / 'image.itb').stat().st_size
+    print(f'make_ubi_fit: Image={len(kernel)} bytes, LZMA={len(compressed_kernel)} bytes, '
+          f'FIT={size} bytes, limit={0x600000} bytes', flush=True)
     if size > 0x600000:
         sys.exit(f'make_ubi_fit: FIT is {size} bytes; stock U-Boot reads at most 0x600000')
 

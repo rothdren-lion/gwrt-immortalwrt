@@ -234,6 +234,7 @@ jobs:
           cp .config logs/openwrt.config
           sh gwrt-check-target.sh .config tyfza1
           test "$(grep -c '^CONFIG_TARGET_DEVICE_rtl9617c_generic_DEVICE_.*=y$' .config)" -eq 1
+          grep -Fx 'CONFIG_TARGET_DEVICE_rtl9617c_generic_DEVICE_tianyi_tyfza1=y' .config
           for package in tyfza1-pon-control tyfza1-storage luci-app-tyfza1-pon honk luci-app-honk vmlinux-btf-builtin gwrt-wifiroam-v5 gwrt-mesh-apmode; do
             grep -Fx "CONFIG_PACKAGE_$package=y" .config || {
               echo "Required built-in TYFZA1 package missing: $package" >&2
@@ -241,6 +242,8 @@ jobs:
             }
           done
           grep -Fx 'CONFIG_KERNEL_DEBUG_INFO_BTF=y' .config
+          grep -Fx 'CONFIG_TARGET_ROOTFS_SQUASHFS=y' .config
+          grep -Fx 'CONFIG_TARGET_PER_DEVICE_ROOTFS=y' .config
           grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)|^CONFIG_VERSION_NUMBER|^CONFIG_PACKAGE_(honk|luci-app-honk|vmlinux-btf|luci-app-easytier|bandix-plus|ttyd|gwrt-wifiroam-v5|luci-app-pon-info)' .config || echo "(no matching config lines)"
 
       - name: Test mesh / pon-info helpers
@@ -272,11 +275,29 @@ jobs:
           make -j6 tools/mkimage/compile V=s 2>&1 | tee logs/fit-host-build.log
           mkimage="$PWD/staging_dir/host/bin/mkimage"
           work="$(mktemp -d "$RUNNER_TEMP/tyfza1-fit.XXXXXX")"
-          printf 'TYFZA1 FIT preflight fixture\n' > "$work/Image"
+          python3 - "$work" <<'PY'
+          import sys
+          from pathlib import Path
+
+          work = Path(sys.argv[1])
+          header = bytearray(64)
+          header[56:60] = b'ARM\x64'
+          (work / 'Image').write_bytes(header + b'TYFZA1 FIT preflight fixture\n')
+          header[:4] = b'\x7fELF'
+          (work / 'vmlinux').write_bytes(header)
+          PY
           for variant in base 2p5g; do
             printf '/dts-v1/; / { model = "TYFZA1 fixture %s"; compatible = "realtek,taurus"; };\n' "$variant" |
               dtc -I dts -O dtb -o "$work/$variant.dtb"
           done
+          if python3 target/linux/rtl9617c/python/make_ubi_fit.py \
+            "$work/vmlinux" "$work/base.dtb" "$work/rejected" --dtb-2p5g "$work/2p5g.dtb" \
+            --kver "$FIT_KERNEL_VERSION" --mkimage "$mkimage" > logs/fit-reject-elf.log 2>&1; then
+            printf '%s\n' 'ELF input unexpectedly accepted' >&2
+            exit 1
+          fi
+          grep -F 'is not a raw ARM64 Linux Image' logs/fit-reject-elf.log
+          test ! -e "$work/rejected/image.itb"
           python3 target/linux/rtl9617c/python/make_ubi_fit.py \
             "$work/Image" "$work/base.dtb" "$work/fit" --dtb-2p5g "$work/2p5g.dtb" \
             --kver "$FIT_KERNEL_VERSION" --mkimage "$mkimage" 2>&1 | tee logs/fit-packaging.log
@@ -320,18 +341,17 @@ jobs:
         id: build_firmware
         shell: bash
         run: |
-          set -o pipefail
+          set -euo pipefail
           mkdir -p logs
-          taskset -c 0-5 make -j6 download \
-            REVISION="$(git rev-parse --short HEAD)" 2>&1 | tee logs/download.log
-          taskset -c 0-5 make -j6 \
-            REVISION="$(git rev-parse --short HEAD)" \
-            CONFIG_VERSION_DIST=GWRT \
-            CONFIG_VERSION_NUMBER="$VER" 2>&1 | tee logs/build.log \
-            || taskset -c 0-5 make -j1 V=s \
-            REVISION="$(git rev-parse --short HEAD)" \
-            CONFIG_VERSION_DIST=GWRT \
-            CONFIG_VERSION_NUMBER="$VER" 2>&1 | tee -a logs/build.log
+          revision="$(git rev-parse --short HEAD)"
+          taskset -c 0-5 make -j6 download REVISION="$revision" 2>&1 | tee logs/download.log
+          args=(REVISION="$revision" CONFIG_VERSION_DIST=GWRT CONFIG_VERSION_NUMBER="$VER")
+          if taskset -c 0-5 make -j6 "${args[@]}" 2>&1 | tee logs/build.log; then
+            exit 0
+          else
+            printf '\nTYFZA1 parallel build exited %s; retrying serially with V=s\n' "$?" | tee -a logs/build.log
+          fi
+          taskset -c 0-5 make -j1 V=s "${args[@]}" 2>&1 | tee -a logs/build.log
 
       - name: Verify kernel BTF and image contents
         run: |
@@ -347,11 +367,43 @@ jobs:
           test "${#manifests[@]}" -eq 1
           images=(bin/targets/rtl9617c/generic/*tianyi_tyfza1*sysupgrade.bin)
           roots=(bin/targets/rtl9617c/generic/*tianyi_tyfza1*rootfs.squashfs)
+          fits=(bin/targets/rtl9617c/generic/*tianyi_tyfza1*kernel.itb)
           test "${#images[@]}" -eq 1
           test "${#roots[@]}" -eq 1
+          test "${#fits[@]}" -eq 1
           test -s "${images[0]}"
           test -s "${roots[0]}"
+          test -s "${fits[0]}"
           test "$(stat -c %s "${roots[0]}")" -le 33648640
+          test "$(stat -c %s "${fits[0]}")" -le "$((0x600000))"
+          staging_dir/host/bin/mkimage -l "${fits[0]}" > logs/fit-final-contents.txt
+          kdir="${kernels[0]%/*/*}"
+          device_roots=("$kdir"/root.squashfs+pkg=*)
+          test "${#device_roots[@]}" -eq 1
+          cmp "${device_roots[0]}" "${roots[0]}"
+          python3 - "${images[0]}" "${fits[0]}" "$kdir/Image" "${roots[0]}" <<'PY'
+          import lzma
+          import subprocess
+          import sys
+          import tarfile
+          from pathlib import Path
+
+          upgrade, fit, raw_image, rootfs = map(Path, sys.argv[1:])
+          with tarfile.open(upgrade) as archive:
+              [member] = [entry for entry in archive if entry.isfile() and entry.name.endswith('/kernel')]
+              assert archive.extractfile(member).read() == fit.read_bytes(), 'sysupgrade FIT differs'
+              root = archive.getmember(member.name.removesuffix('/kernel') + '/root')
+              assert 0 < root.size <= 33648640, f'sysupgrade root size exceeds OEM limit or is empty: {root.size}'
+              expected = rootfs.read_bytes()
+              with archive.extractfile(root) as data:
+                  assert data.read(len(expected)) == expected, 'sysupgrade rootfs differs'
+                  assert data.read() == bytes(-len(expected) % 1024), 'invalid sysupgrade rootfs padding'
+          data = subprocess.check_output(['fdtget', '-t', 'bx', fit, '/images/kernel', 'data'])
+          kernel = lzma.decompress(bytes(int(token, 16) for token in data.split()))
+          assert kernel == raw_image.read_bytes(), 'FIT kernel differs from built ARM64 Image'
+          print(f'PASS: sysupgrade FIT embeds the built Image ({len(kernel)} bytes); '
+                f'device rootfs matches ({len(expected)} bytes standalone, {root.size} bytes in tar)')
+          PY
           for package in tyfza1-pon-control tyfza1-storage luci-app-tyfza1-pon honk gwrt-wifiroam-v5 gwrt-mesh-apmode; do
             awk -v pkg="$package" '$1 == pkg { found = 1 } END { exit !found }' "${manifests[0]}" || {
               echo "Missing from TYFZA1 manifest: $package" >&2
@@ -389,14 +441,66 @@ jobs:
           compression-level: 0
           retention-days: 30
 
+      - name: Collect TYFZA1 failure evidence
+        if: failure()
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          if [ -f .config ]; then cp .config logs/openwrt.config; fi
+          if [ ! -f logs/source-revisions.txt ]; then
+            printf 'device=%s\nshared=not-synced\n' "$(git rev-parse HEAD 2>/dev/null || printf unavailable)" > logs/source-revisions.txt
+          fi
+          df -h . > logs/failure-disk.txt || true
+          python3 - <<'PY' | tee logs/tyfza1-image-sizes.tsv
+          from pathlib import Path
+          import hashlib
+
+          work = Path('build_dir')
+          out = Path('bin/targets/rtl9617c/generic')
+          kdir = 'target-*/linux-rtl9617c_generic/'
+          entries = {
+              'ordinary_Image': work.glob(kdir + 'Image'),
+              'initramfs_Image': work.glob(kdir + 'Image-initramfs.*'),
+              'common_rootfs': work.glob(kdir + 'root.squashfs'),
+              'device_rootfs': work.glob(kdir + 'root.squashfs+pkg=*'),
+              'staged_kernel_lzma': work.glob(kdir + 'tianyi_tyfza1-kernel.itb.fit/kernel.lzma'),
+              'staged_FIT': work.glob(kdir + 'tianyi_tyfza1-kernel.itb.fit/image.itb'),
+              'published_FIT': out.glob('*tianyi_tyfza1*kernel.itb'),
+              'published_rootfs': out.glob('*tianyi_tyfza1*rootfs.squashfs'),
+              'sysupgrade': out.glob('*tianyi_tyfza1*sysupgrade.bin'),
+          }
+          limits = {'device_rootfs': 33648640, 'published_rootfs': 33648640,
+                    'staged_FIT': 0x600000, 'published_FIT': 0x600000}
+          print('kind\tstatus\tbytes\tlimit_bytes\tpath\tdetail')
+          for kind, matches in entries.items():
+              paths = sorted(path for path in matches if path.is_file())
+              limit = limits.get(kind)
+              if not paths:
+                  print(f'{kind}\tmissing\t-\t{limit or "-"}\t-\t-')
+              for path in paths:
+                  size = path.stat().st_size
+                  status = 'empty' if not size else 'over-limit' if limit and size > limit else 'present'
+                  detail = '-'
+                  if kind == 'ordinary_Image':
+                      with path.open('rb') as image:
+                          header = image.read(64)
+                          image.seek(0)
+                          digest = hashlib.file_digest(image, 'sha256').hexdigest()
+                      raw = len(header) == 64 and not header.startswith(b'\x7fELF') and header[56:60] == b'ARM\x64'
+                      detail = f'arm64_image={raw} sha256={digest}'
+                  print(f'{kind}\t{status}\t{size}\t{limit or "-"}\t{path}\t{detail}')
+          PY
+
       - name: Upload build logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: gwrt-tyfza1-${{ env.VER }}-logs
+          name: gwrt-tyfza1-${{ env.VER || format('run{0}', github.run_number) }}-logs
           path: |
             logs/
-            .config
+            honk-source.txt
+            feeds-revisions.txt
+            build_dir/target-*/linux-rtl9617c_generic/Image
           if-no-files-found: ignore
           retention-days: 7
 

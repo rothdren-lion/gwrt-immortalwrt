@@ -12,13 +12,16 @@ TYFZA1_MKIMAGE ?= $(STAGING_DIR_HOST)/bin/mkimage
 TYFZA1_SIGNING_KEYS ?=
 
 define Build/tyfza1-ubi-fit
+	@stat -c 'TYFZA1 FIT input: %n (%s bytes)' "$<"
+	$(if $(ROOTFS/squashfs/tianyi_tyfza1),@stat -c 'TYFZA1 squashfs input: %n (%s bytes; OEM limit 33648640 bytes)' "$(ROOTFS/squashfs/tianyi_tyfza1)")
+	rm -f "$@.fit/image.itb" "$@.fit/kernel.lzma"
 	python3 $(TYFZA1_TOOLS)/make_ubi_fit.py \
-		$@ $(KDIR)/image-rtl9617c-tyfza1-ubi.dtb $@.fit \
-		--dtb-2p5g $(KDIR)/image-rtl9617c-tyfza1-ubi-2p5g.dtb \
-		--kver $(LINUX_VERSION) \
-		--mkimage $(TYFZA1_MKIMAGE) \
-		$(if $(TYFZA1_SIGNING_KEYS),--keys $(TYFZA1_SIGNING_KEYS))
-	$(CP) $@.fit/image.itb $@
+		"$<" "$(KDIR)/image-rtl9617c-tyfza1-ubi.dtb" "$@.fit" \
+		--dtb-2p5g "$(KDIR)/image-rtl9617c-tyfza1-ubi-2p5g.dtb" \
+		--kver "$(LINUX_VERSION)" \
+		--mkimage "$(TYFZA1_MKIMAGE)" \
+		$(if $(TYFZA1_SIGNING_KEYS),--keys "$(TYFZA1_SIGNING_KEYS)")
+	$(CP) "$@.fit/image.itb" "$@"
 endef
 
 define Build/tyfza1-dtb
@@ -26,8 +29,8 @@ define Build/tyfza1-dtb
 endef
 
 define Build/tyfza1-rootfs-size
-	@size="$$(stat -c%s $(IMAGE_ROOTFS))"; \
-	[ "$$size" -le 33648640 ] || { \
+	@size="$$(stat -c%s "$(IMAGE_ROOTFS)")" || exit 1; \
+	[ "$$size" -gt 0 ] && [ "$$size" -le 33648640 ] || { \
 		echo "TYFZA1 rootfs is $$size bytes; OEM rootfs volume holds 33648640 bytes" >&2; \
 		exit 1; \
 	}
@@ -46,7 +49,8 @@ define Device/tianyi_tyfza1
 	kmod-gpio-button-hotplug kmod-usb3 kmod-usb-storage kmod-usb-storage-uas \
 	kmod-usb-ledtrig-usbport kmod-tyfza1-usb-led block-mount kmod-fs-vfat kmod-fs-exfat \
 	kmod-fs-ntfs3 kmod-fs-ext4 kmod-nls-utf8 kmod-nls-cp437 kmod-nls-iso8859-1
-  KERNEL := kernel-bin | tyfza1-ubi-fit
+  KERNEL_NAME := Image
+  KERNEL := tyfza1-ubi-fit
   KERNEL_INITRAMFS := kernel-bin
   KERNEL_SUFFIX := -kernel.itb
   KERNEL_INITRAMFS_SUFFIX := -initramfs-Image
@@ -72,3 +76,10 @@ endef
 TARGET_DEVICES += tianyi_tyfza1
 
 $(eval $(call BuildImage))
+
+# 串行打包时也先生成专属 squashfs，同时保留 Image 为首个依赖（$<）。
+ifndef IB
+ifneq ($(ROOTFS/squashfs/tianyi_tyfza1),)
+$(KDIR_KERNEL_IMAGE): | $(ROOTFS/squashfs/tianyi_tyfza1)
+endif
+endif
