@@ -48,10 +48,15 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin master --depth=1
-          git checkout origin/master -- \
-            package/ gwrt-theme-V3/ docs/ scripts/ configs/ .github/ AGENTS.md 'gwrt-*.sh'
-          echo "=== shared layer synced from master ==="
-          git status --short | head -20
+          shared_sha="$(git rev-parse FETCH_HEAD)"
+          git checkout "$shared_sha" -- \
+            package/ gwrt-theme-V3/ docs/ scripts/ configs/ AGENTS.md 'gwrt-*.sh' \
+            ':(exclude)package/tyfza1-pon-control' ':(exclude)package/tyfza1-storage' \
+            ':(exclude)package/luci-app-tyfza1-pon' ':(exclude)configs/tyfza1-feeds.conf' \
+            ':(exclude)gwrt-mk-tyfza1-config.sh'
+          mkdir -p logs
+          printf 'device=%s\nshared=%s\n' "$(git rev-parse HEAD)" "$shared_sha" | tee logs/source-revisions.txt
+          git status --short | sed -n '1,20p'
 
       - name: Free disk space
         run: |
@@ -99,9 +104,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: staging_dir/toolchain-*
-          key: gwrt-tc-2404-${{ hashFiles('toolchain/**', 'tools/**', 'include/kernel*', 'rules.mk', 'Config.in') }}
-          restore-keys: |
-            gwrt-tc-2404-
+          key: gwrt-tc-tyfza1-2404-${{ hashFiles('toolchain/**', 'tools/**', 'include/kernel*', 'target/linux/rtl9617c/Makefile', 'rules.mk', 'Config.in') }}
 
       - name: Fetch locked Honk source and resolve toolchains
         id: honk_source
@@ -144,6 +147,21 @@ jobs:
           toolchain: ${{ steps.honk_source.outputs.ebpf }}
           components: rust-src, llvm-tools
 
+      - name: Resolve PON cross-compiler
+        env:
+          PON_RUST_TOOLCHAIN: ${{ steps.honk_source.outputs.stable }}
+        run: |
+          set -euo pipefail
+          target=aarch64-unknown-linux-musl
+          cargo="$(rustup which --toolchain "$PON_RUST_TOOLCHAIN" cargo)"
+          rustc="$(rustup which --toolchain "$PON_RUST_TOOLCHAIN" rustc)"
+          test "${cargo%/*}/rustc" = "$rustc"
+          test -x "$cargo" -a -x "$rustc"
+          rustup target list --installed --toolchain "$PON_RUST_TOOLCHAIN" | grep -Fx "$target"
+          "$rustc" --version
+          "$cargo" --version
+          printf 'TYFZA1_CARGO=%s\n' "$cargo" >> "$GITHUB_ENV"
+
       - name: Cache Rust dependencies
         uses: actions/cache@v4
         with:
@@ -153,6 +171,20 @@ jobs:
           key: honk-cargo-${{ steps.honk_source.outputs.source_commit }}-aarch64
           restore-keys: |
             honk-cargo-
+
+      - name: Preflight ARM64 OMCI static library
+        run: |
+          set -euo pipefail
+          target=aarch64-unknown-linux-musl
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/tyfza1-omci-preflight"
+          export RUSTC="${TYFZA1_CARGO%/*}/rustc"
+          export RUSTFLAGS='-C target-cpu=cortex-a55'
+          "$TYFZA1_CARGO" build --manifest-path package/tyfza1-pon-control/omci/Cargo.toml \
+            --release --locked --target "$target"
+          archive="$CARGO_TARGET_DIR/$target/release/libtyfza1_omci.a"
+          test -s "$archive"
+          readelf -h "$archive" > "$RUNNER_TEMP/tyfza1-omci-elf.txt"
+          grep -E 'Machine:[[:space:]]*AArch64' "$RUNNER_TEMP/tyfza1-omci-elf.txt" >/dev/null
 
       - name: Install pinned bpf-linker
         run: |
@@ -198,7 +230,17 @@ jobs:
           echo "VER=$VER" >> "$GITHUB_ENV"
           OUT=.config VER="$VER" sh gwrt-mk-tyfza1-config.sh
           make defconfig
+          mkdir -p logs
+          cp .config logs/openwrt.config
           sh gwrt-check-target.sh .config tyfza1
+          test "$(grep -c '^CONFIG_TARGET_DEVICE_rtl9617c_generic_DEVICE_.*=y$' .config)" -eq 1
+          for package in tyfza1-pon-control tyfza1-storage luci-app-tyfza1-pon honk luci-app-honk vmlinux-btf-builtin gwrt-wifiroam-v5 gwrt-mesh-apmode; do
+            grep -Fx "CONFIG_PACKAGE_$package=y" .config || {
+              echo "Required built-in TYFZA1 package missing: $package" >&2
+              exit 1
+            }
+          done
+          grep -Fx 'CONFIG_KERNEL_DEBUG_INFO_BTF=y' .config
           grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)|^CONFIG_VERSION_NUMBER|^CONFIG_PACKAGE_(honk|luci-app-honk|vmlinux-btf|luci-app-easytier|bandix-plus|ttyd|gwrt-wifiroam-v5|luci-app-pon-info)' .config || echo "(no matching config lines)"
 
       - name: Test mesh / pon-info helpers
@@ -224,9 +266,31 @@ jobs:
             CONFIG_VERSION_DIST=GWRT \
             CONFIG_VERSION_NUMBER="$VER" 2>&1 | tee -a logs/build.log
 
-      - name: Verify image checksums
+      - name: Verify kernel BTF and image contents
         run: |
           set -euo pipefail
+          shopt -s nullglob
+          kernels=(build_dir/target-*/linux-rtl9617c_generic/linux-6.18.62/vmlinux)
+          test "${#kernels[@]}" -eq 1
+          cp "${kernels[0]%/*}/.config" logs/kernel.config
+          grep -Fx 'CONFIG_DEBUG_INFO_BTF=y' logs/kernel.config
+          readelf -SW "${kernels[0]}" > logs/kernel-sections.txt
+          grep -E '[[:space:]]\.BTF[[:space:]]' logs/kernel-sections.txt
+          manifests=(bin/targets/rtl9617c/generic/*.manifest)
+          test "${#manifests[@]}" -eq 1
+          images=(bin/targets/rtl9617c/generic/*tianyi_tyfza1*sysupgrade.bin)
+          roots=(bin/targets/rtl9617c/generic/*tianyi_tyfza1*rootfs.squashfs)
+          test "${#images[@]}" -eq 1
+          test "${#roots[@]}" -eq 1
+          test -s "${images[0]}"
+          test -s "${roots[0]}"
+          test "$(stat -c %s "${roots[0]}")" -le 33648640
+          for package in tyfza1-pon-control tyfza1-storage luci-app-tyfza1-pon honk gwrt-wifiroam-v5 gwrt-mesh-apmode; do
+            awk -v pkg="$package" '$1 == pkg { found = 1 } END { exit !found }' "${manifests[0]}" || {
+              echo "Missing from TYFZA1 manifest: $package" >&2
+              exit 1
+            }
+          done
           ls -lh bin/targets/rtl9617c/generic/
           python3 - <<'PY'
           from pathlib import Path
@@ -250,7 +314,9 @@ jobs:
             bin/targets/rtl9617c/generic/sha256sums
             bin/targets/rtl9617c/generic/profiles.json
             bin/targets/rtl9617c/generic/*.buildinfo
+            bin/targets/rtl9617c/generic/*.manifest
             honk-source.txt
+            feeds-revisions.txt
             logs/*
           if-no-files-found: error
           compression-level: 0
