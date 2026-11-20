@@ -85,6 +85,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("version", nargs="?", default="261115-01")
     parser.add_argument("--nss-abi-only", action="store_true", help="generate the non-flashable native NSS ABI diagnostic config")
+    parser.add_argument("--output", type=Path, default=ROOT / ".config")
     args = parser.parse_args()
     version = args.version
     if not re.fullmatch(r"\d{6}-\d{2}", version):
@@ -137,14 +138,15 @@ def main() -> int:
     # Preserve the physical SS-01 12 MiB HLOS layout used by the latest
     # four-profile build. The workflow passes this variable explicitly too.
     source = set_value(source, "CS02_KERNEL_SIZE", '"12288k"')
-    if args.nss_abi_only:
-        for name in (
-            "kmod-qca-nss-dp", "kmod-qca-nss-drv", "kmod-qca-nss-drv-bridge-mgr",
-            "kmod-qca-nss-drv-vlan-mgr", "kmod-qca-nss-ecm", "kmod-qca-ssdk",
-        ):
-            source = set_value(source, "PACKAGE_" + name, None)
-        source = set_value(source, "PACKAGE_kmod-nss-wifi-drv", "y")
-    (ROOT / ".config").write_text(source)
+    source = set_value(source, "GWRT_SS01_NATIVE_NSS", None if args.nss_abi_only else "y")
+    for name in (
+        "kmod-qca-nss-dp", "kmod-qca-nss-drv", "kmod-qca-nss-drv-bridge-mgr",
+        "kmod-qca-nss-drv-vlan-mgr", "kmod-qca-nss-ecm", "kmod-qca-ssdk",
+    ):
+        source = set_value(source, "PACKAGE_" + name, None)
+    for name in ("kmod-nss-wifi-drv", "nss-firmware", "nss-firmware-ipq60xx", "kmod-nft-bridge"):
+        source = set_value(source, "PACKAGE_" + name, "y")
+    args.output.write_text(source)
     print("Generated isolated SS-01 Honk + EasyTier configuration:", version)
     print("Removed proxy packages; retained EasyTier and added Honk full + Doona UI")
     return 0

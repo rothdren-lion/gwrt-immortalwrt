@@ -13,6 +13,7 @@ NSS_KERNEL_API = {
     "qca_ppe": ("qca_ppe_fw_booted", "qca_ppe_fw_ports_set", "qca_ppe_fw_carrier_set"),
 }
 NSS_WIFI_PACKAGE = "kmod-nss-wifi-drv"
+NATIVE_PACKAGES = {NSS_WIFI_PACKAGE, "nss-firmware", "nss-firmware-ipq60xx", "kmod-nft-bridge"}
 QSDK_WIRED_PACKAGES = {
     "kmod-qca-nss-dp",
     "kmod-qca-nss-drv",
@@ -105,17 +106,15 @@ def package_is_forbidden(name: str) -> bool:
     )
 
 
-def read_enabled(path: Path) -> set[str]:
+def check_config(path: Path, *, native: bool = False) -> set[str]:
     text = path.read_text()
-    return {key[8:] for key, value in re.findall(r"^CONFIG_(PACKAGE_[^=]+)=(y|m)$", text, re.M)}
-
-
-def check_config(path: Path) -> set[str]:
-    text = path.read_text()
-    packages = read_enabled(path)
+    values = dict(re.findall(r"^CONFIG_PACKAGE_([^=]+)=(y|m)$", text, re.M))
+    packages = set(values)
     selected = set(text.splitlines())
-    required = set(REQUIRED)
-    missing = required - packages
+    if native and "CONFIG_GWRT_SS01_NATIVE_NSS=y" not in selected:
+        raise SystemExit("FAIL config does not select the native SS-01 device tree")
+    required = REQUIRED | (NATIVE_PACKAGES if NSS_WIFI_PACKAGE in packages or native else set())
+    missing = {name for name in required if values.get(name) != "y"}
     if missing:
         raise SystemExit("FAIL config missing: " + ", ".join(sorted(missing)))
     forbidden = sorted(name for name in packages if package_is_forbidden(name))
@@ -197,20 +196,18 @@ def check_manifests(manifest_dir: Path, *, require_nss_wifi: bool = False) -> No
     manifests = sorted(manifest_dir.glob("*.manifest"))
     if not manifests:
         raise SystemExit("FAIL no package manifest in " + str(manifest_dir))
-    found: set[str] = set()
+    required = REQUIRED | (NATIVE_PACKAGES if require_nss_wifi else set())
     for path in manifests:
-        for line in path.read_text().splitlines():
-            match = re.match(r"^([^\s]+)\s+-\s+", line)
-            if match:
-                found.add(match.group(1))
-    required = REQUIRED | ({NSS_WIFI_PACKAGE} if require_nss_wifi else set())
-    missing = required - found
-    if missing:
-        raise SystemExit("FAIL manifest missing: " + ", ".join(sorted(missing)))
-    forbidden = sorted(name for name in found if package_is_forbidden(name))
-    if forbidden:
-        raise SystemExit("FAIL manifest contains proxy packages: " + ", ".join(forbidden))
-    print("PASS Honk + EasyTier manifest packages:", ", ".join(sorted(required)))
+        found = set(re.findall(r"^(\S+)\s+-\s+", path.read_text(), re.M))
+        missing = required - found
+        if missing:
+            raise SystemExit(f"FAIL {path.name} missing: " + ", ".join(sorted(missing)))
+        forbidden = {name for name in found if package_is_forbidden(name)}
+        if require_nss_wifi:
+            forbidden |= QSDK_WIRED_PACKAGES & found
+        if forbidden:
+            raise SystemExit(f"FAIL {path.name} contains forbidden packages: " + ", ".join(sorted(forbidden)))
+        print("PASS Honk + EasyTier manifest packages:", path.name)
 
 
 def main() -> None:
@@ -218,13 +215,20 @@ def main() -> None:
     parser.add_argument("config", type=Path)
     parser.add_argument("--manifests", type=Path)
     parser.add_argument("--require-nss-wifi", action="store_true")
+    parser.add_argument("--native-image", action="store_true", help="require the native SS-01 image configuration")
     parser.add_argument("--kernel-symvers", type=Path)
     parser.add_argument("--kernel-config", type=Path)
     parser.add_argument("--module-undefined", type=Path)
     args = parser.parse_args()
-    packages = check_config(args.config)
+    packages = check_config(args.config, native=args.native_image)
+    if args.native_image and args.kernel_config is not None:
+        selected = set(args.kernel_config.read_text().splitlines())
+        fragment = ROOT / "configs/ss01-native-nss.kernel-config"
+        missing = set(fragment.read_text().splitlines()) - selected
+        if missing:
+            raise SystemExit("FAIL native kernel .config lacks: " + ", ".join(sorted(missing)))
     require_nss_wifi = (
-        args.require_nss_wifi or args.kernel_symvers is not None or args.kernel_config is not None
+        args.native_image or args.require_nss_wifi or args.kernel_symvers is not None or args.kernel_config is not None
         or args.module_undefined is not None or NSS_WIFI_PACKAGE in packages
     )
     if require_nss_wifi:

@@ -185,7 +185,14 @@ define Device/jdcloud_re-ss-01
 	BLOCKSIZE := 64k
 	KERNEL_SIZE := 12288k
 	DEVICE_DTS_CONFIG := config@cp03-c2
-	DEVICE_PACKAGES := ipq-wifi-jdcloud_re-ss-01 kmod-qca-nss-dp
+	ifeq ($(CONFIG_GWRT_SS01_NATIVE_NSS),y)
+	  DEVICE_DTS := ipq6000-re-ss-01-nss-ppe
+	  DEVICE_PACKAGES := ipq-wifi-jdcloud_re-ss-01 kmod-nss-wifi-drv \
+		-kmod-qca-nss-dp -kmod-qca-nss-drv -kmod-qca-nss-drv-bridge-mgr \
+		-kmod-qca-nss-drv-vlan-mgr -kmod-qca-nss-ecm -kmod-qca-ssdk
+	else
+	  DEVICE_PACKAGES := ipq-wifi-jdcloud_re-ss-01 kmod-qca-nss-dp
+	endif
 	IMAGES += factory.bin
 	IMAGE/factory.bin := append-kernel | pad-to $$$$(KERNEL_SIZE) | append-rootfs | append-metadata
 endef

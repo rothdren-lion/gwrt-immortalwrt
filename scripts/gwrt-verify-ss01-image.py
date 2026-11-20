@@ -51,14 +51,88 @@ def enabled(node):
     return node.get('status', b'okay\0') in (b'okay\0', b'ok\0')
 
 
-def verify_dtb(kernel):
+def verify_native_dtb(nodes):
+    def lookup(compatible):
+        matches = [(path, node) for path, node in nodes.items() if enabled(node)
+                   and compatible in node.get('compatible', b'').split(b'\0')]
+        require(len(matches) == 1, 'expected one enabled ' + compatible.decode())
+        return matches[0]
+
+    def cells(node, name, *values):
+        return node.get(name) == struct.pack(f'>{len(values)}I', *values)
+
+    def phandle(node):
+        value = node.get('phandle', node.get('linux,phandle', b''))
+        require(len(value) == 4, 'missing DT phandle')
+        return struct.unpack('>I', value)[0]
+
+    legacy = {b'qcom,ess-switch-ipq60xx', b'qcom,edma', b'qcom,nss-dp'}
+    require(not any(legacy.intersection(node.get('compatible', b'').split(b'\0'))
+                    for node in nodes.values() if enabled(node)), 'enabled QSDK node in native DTB')
+    _, edma = lookup(b'qualcomm,ipq6018-edma')
+    ppe, _ = lookup(b'qualcomm,ipq6018-ppe')
+    art = [(path, node) for path, node in nodes.items()
+           if node.get('partname') == b'0:ART\0' and '/card@0/block/partitions/' in path]
+    require(len(art) == 1 and enabled(art[0][1]), 'expected one enabled eMMC 0:ART partition')
+    mac = nodes.get(art[0][0] + '/nvmem-layout/macaddr@6', {})
+    require(mac.get('compatible') == b'mac-base\0' and cells(mac, 'reg', 6, 6)
+            and cells(mac, '#nvmem-cell-cells', 1), 'incorrect ART MAC cell')
+    mac_id = phandle(mac)
+    require(cells(edma, 'nvmem-cells', mac_id, 1)
+            and edma.get('nvmem-cell-names') == b'mac-address\0', 'incorrect EDMA ART MAC reference')
+    require(nodes.get('/aliases', {}).get('label-mac-device') == (ppe + '/ports/port@2').encode() + b'\0',
+            'incorrect label MAC device')
+    pcs_path, pcs = lookup(b'qualcomm,ipq6018-uniphy')
+    require(pcs_path.endswith('/ethernet-pcs@7a00000') and 'qcom,psgmii' in pcs,
+            'UNIPHY0 must use PSGMII')
+    _, gcc = lookup(b'qcom,gcc-ipq6018')
+    require(gcc.get('clock-names', b'').split(b'\0')[2:4] ==
+            [b'uniphy0_gcc_rx_clk', b'uniphy0_gcc_tx_clk'] and
+            gcc.get('clocks', b'')[8:24] == struct.pack('>4I', phandle(pcs), 0, phandle(pcs), 1) and
+            pcs.get('clock-output-names') == b'uniphy0_gcc_rx_clk\0uniphy0_gcc_tx_clk\0',
+            'GCC must use native UNIPHY0 RX/TX phandles')
+    lookup(b'qcom,ipq6018-cmn-pll')
+    lookup(b'qcom,nss')
+    _, common = lookup(b'qcom,nss-common')
+    region = nodes.get('/reserved-memory/memory@40000000', {})
+    require(cells(region, 'reg', 0, 0x40000000, 0, 0x01000000) and 'no-map' in region
+            and cells(common, 'memory-region', phandle(region)), 'incorrect NSS firmware reservation')
+    cpu = nodes.get(ppe + '/ports/port@0', {})
+    fixed_link = nodes.get(ppe + '/ports/port@0/fixed-link', {})
+    require(enabled(cpu) and cells(cpu, 'reg', 0) and cells(cpu, 'ethernet', phandle(edma))
+            and cpu.get('phy-mode') == b'internal\0' and cells(fixed_link, 'speed', 1000)
+            and 'full-duplex' in fixed_link, 'incorrect DSA CPU port / EDMA conduit')
+    phy_package, phys = lookup(b'qcom,qca8075-package')
+    require(cells(phys, 'reg', 0) and phys.get('qcom,package-mode') == b'psgmii\0',
+            'incorrect QCA8075 package mode')
+    for port, label in ((2, 'lan1'), (3, 'lan2'), (4, 'lan3'), (5, 'wan')):
+        node = nodes.get(f'{ppe}/ports/port@{port}', {})
+        phy = nodes.get(f'{phy_package}/ethernet-phy@{port - 1}', {})
+        require(enabled(node) and enabled(phy) and cells(node, 'reg', port)
+                and node.get('label') == label.encode() + b'\0' and cells(phy, 'reg', port - 1)
+                and cells(node, 'phy-handle', phandle(phy)) and node.get('phy-mode') == b'psgmii\0'
+                and cells(node, 'pcs-handle', phandle(pcs), port - 1), 'incorrect DSA port: ' + label)
+        require(cells(node, 'nvmem-cells', mac_id, int(port != 5))
+                and node.get('nvmem-cell-names') == b'mac-address\0', 'incorrect ART MAC reference: ' + label)
+    print('PASS embedded DTB: native EDMA, PPE/DSA, UNIPHY0 PSGMII, ART MAC and NSS')
+
+
+def verify_dtb(kernel, *, native=False):
     images = fdt_nodes(kernel)
-    blobs = [node['data'] for name, node in images.items()
+    blobs = [(name, node['data']) for name, node in images.items()
              if name.startswith('/images/') and node.get('type') == b'flat_dt\0']
     require(len(blobs) == 1, 'expected one embedded SS-01 DTB')
-    nodes = fdt_nodes(blobs[0])
+    if native:
+        config = '/configurations/config@cp03-c2'
+        require(images.get('/configurations', {}).get('default') == b'config@cp03-c2\0'
+                and images.get(config, {}).get('fdt') == blobs[0][0].rsplit('/', 1)[-1].encode() + b'\0',
+                'wrong SS-01 FIT configuration or DTB reference')
+    nodes = fdt_nodes(blobs[0][1])
     require(nodes['/'].get('model') == b'JDCloud RE-SS-01\0', 'wrong DTB model')
     require(b'jdcloud,re-ss-01' in nodes['/'].get('compatible', b'').split(b'\0'), 'wrong DTB compatible')
+    if native:
+        verify_native_dtb(nodes)
+        return
     gcc = [node for node in nodes.values()
            if b'qcom,gcc-ipq6018' in node.get('compatible', b'').split(b'\0')]
     require(len(gcc) == 1 and gcc[0].get('clock-names') == b'xo\0sleep_clk\0',
@@ -78,9 +152,24 @@ def verify_dtb(kernel):
     print('PASS embedded DTB: JDCloud RE-SS-01; ESS, EDMA, dp2=lan1 dp3=lan2 dp4=lan3 dp5=wan')
 
 
+def verify_factory_rootfs(factory, rootfs):
+    with rootfs.open('rb') as upgrade:
+        superblock = upgrade.read(48)
+        require(len(superblock) == 48 and superblock[:4] == b'hsqs', 'invalid sysupgrade squashfs')
+        # sysupgrade-tar 按 1 KiB 补齐；只比较 squashfs 实际使用的字节。
+        remaining, = struct.unpack_from('<Q', superblock, 40)
+        require(96 <= remaining <= rootfs.stat().st_size, 'invalid squashfs bytes_used')
+        upgrade.seek(0)
+        while remaining:
+            chunk = upgrade.read(min(remaining, 1024 * 1024))
+            require(chunk and factory.read(len(chunk)) == chunk, 'factory rootfs differs from sysupgrade')
+            remaining -= len(chunk)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('target', type=Path)
+    parser.add_argument('--variant', choices=('daed', 'honk-easytier'), default='daed')
     args = parser.parse_args()
     profiles = json.loads((args.target / 'profiles.json').read_text())['profiles']
     require(set(profiles) == {'jdcloud_re-ss-01'}, 'unexpected device profiles')
@@ -113,8 +202,12 @@ def main():
             require(factory.read(len(kernel)) == kernel, 'factory kernel differs from sysupgrade')
             factory.seek(limit)
             require(factory.read(4) == b'hsqs', 'wrong factory rootfs offset')
+            if args.variant == 'honk-easytier':
+                factory.seek(limit)
+                verify_factory_rootfs(factory, rootfs)
         print(f'PASS layout: KERNEL_SIZE={size.group(1)}k; kernel={len(kernel)} rootfs={rootfs.stat().st_size}')
-        verify_dtb(kernel)
+        native = args.variant == 'honk-easytier'
+        verify_dtb(kernel, native=native)
         candidates = [ROOT / 'staging_dir/host/bin/unsquashfs4',
                       ROOT / 'staging_dir/host/bin/unsquashfs']
         unsquashfs = next((str(path) for path in candidates if path.is_file()),
@@ -139,11 +232,19 @@ def main():
             content = read_file(installed)
             require(content == (theme / source).read_bytes(), 'packaged theme differs: ' + installed)
             print('PASS packaged file:', hashlib.sha256(content).hexdigest(), installed)
-        require(b'qca-nss-dp' in read_file('etc/modules.d/31-qca-nss-dp'), 'missing dataplane autoload')
         listing = subprocess.check_output([str(unsquashfs), '-ll', str(rootfs)], text=True)
         manifests = list(args.target.glob('*.manifest'))
-        require(re.search(r'/qca-nss-dp\.ko(?:\s|$|\.)', listing), 'missing dataplane module')
-        require(re.search(r'/qca-ssdk\.ko(?:\s|$|\.)', listing), 'missing SSDK module')
+        if native:
+            require(re.search(r'/nss-wifi-drv\.ko(?:\s|$|\.)', listing), 'missing native NSS Wi-Fi module')
+            require(not re.search(r'/(?:qca[-_]nss[-_](?:dp|drv|bridge[-_]mgr|vlan)|qca[-_]ssdk|ecm)\.ko(?:\s|$|\.)',
+                                  listing), 'QSDK dataplane module in native rootfs')
+            for path in ('etc/init.d/nss-wifi', 'etc/config/nss-wifi',
+                         'lib/firmware/qca-nss0-retail-11.4.bin', 'lib/firmware/qca-nss0-retail-12.5.bin'):
+                require(read_file(path), 'empty NSS runtime file: ' + path)
+        else:
+            require(b'qca-nss-dp' in read_file('etc/modules.d/31-qca-nss-dp'), 'missing dataplane autoload')
+            require(re.search(r'/qca-nss-dp\.ko(?:\s|$|\.)', listing), 'missing dataplane module')
+            require(re.search(r'/qca-ssdk\.ko(?:\s|$|\.)', listing), 'missing SSDK module')
         # SS-01 must keep the GWRT mesh stack; the NSS-only seed regression shipped
         # only gwrt-agent and silently dropped pairing / AP mode / first-boot defaults.
         mesh_files = {
@@ -183,6 +284,45 @@ def main():
         for section in ('gwrt-mesh-apmode', 'gwrt-mesh-led'):
             require(re.search(r'/etc/init\.d/' + section + r'\s*$', listing, re.M),
                     'missing mesh init: ' + section)
+
+        if args.variant == 'honk-easytier':
+            manifest_text = '\n'.join(p.read_text() for p in manifests)
+            required = (
+                'honk', 'luci-app-honk', 'luci-lib-daeuniverse',
+                'easytier', 'luci-app-easytier',
+                'luci-i18n-easytier-zh-cn', 'vmlinux-btf-builtin', 'sgdisk',
+            )
+            for package in required:
+                require(re.search(r'^' + re.escape(package) + r'\s+-\s+', manifest_text, re.M),
+                        'missing Honk + EasyTier package: ' + package)
+            forbidden = (
+                'dae', 'daed', 'luci-app-dae', 'luci-app-daed',
+                'luci-app-homeproxy', 'luci-app-openclash', 'luci-app-passwall',
+                'luci-app-ssr-plus', 'luci-app-v2raya', 'sing-box', 'xray-core',
+                'v2ray-core', 'trojan', 'hysteria', 'microsocks',
+            )
+            for package in forbidden:
+                require(not re.search(r'^' + re.escape(package) + r'\s+-\s+', manifest_text, re.M),
+                        'proxy package is still present: ' + package)
+            for path in ('etc/init.d/dae', 'etc/init.d/daed', 'etc/init.d/homeproxy',
+                         'etc/init.d/sing-box', 'etc/init.d/xray'):
+                require(not re.search(r'/' + re.escape(path) + r'\s*$', listing, re.M),
+                        'proxy service is still packaged: ' + path)
+            honk = read_file('usr/bin/honk-core')
+            require(honk[:6] == b'\x7fELF\x02\x01' and struct.unpack_from('<H', honk, 18)[0] == 183,
+                    'honk-core must be an aarch64 ELF executable')
+            require(b'index.html' in honk and b'doona' in honk,
+                    'honk-core does not contain the embedded Doona UI')
+            easytier = read_file('usr/bin/easytier-core')
+            require(easytier[:6] == b'\x7fELF\x02\x01' and struct.unpack_from('<H', easytier, 18)[0] == 183,
+                    'easytier-core must be an aarch64 ELF executable')
+            require(b"ui: 'embedded'" in read_file('etc/honk/config.dae'),
+                    'Honk default configuration must select standard Doona')
+            require(re.search(r'/usr/bin/easytier-web\s*$', listing, re.M),
+                    'EasyTier web console is missing')
+            print('PASS SS-01 Honk full + embedded Doona + EasyTier; proxy engines removed')
+            return
+
         manifest_text = '\n'.join(p.read_text() for p in manifests)
         runtime_version = b'daed-4d6a433_wing-dc50308_core-5db27a0-gwrt-runtime1'
         require(read_file('usr/share/daed/gwrt-runtime-version').strip() == runtime_version,

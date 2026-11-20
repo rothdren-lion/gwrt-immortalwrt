@@ -4,6 +4,13 @@
 
 menu "Target Images"
 
+	config GWRT_SS01_NATIVE_NSS
+		bool "SS-01 native NSS/PPE device tree"
+		depends on TARGET_qualcommax_ipq60xx_DEVICE_jdcloud_re-ss-01
+		help
+		  Select the native EDMA/DSA device tree for the dedicated SS-01
+		  build. This requires the native kernel configuration fragment.
+
 	menuconfig TARGET_ROOTFS_INITRAMFS
 		bool "ramdisk"
 		default y if USES_INITRAMFS

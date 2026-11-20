@@ -1,4 +1,5 @@
 name: GWRT SS-01 Honk + EasyTier (dedicated)
+run-name: ${{ format('ss-01-{0}', inputs.version) }}
 
 on:
   workflow_dispatch:
@@ -8,13 +9,13 @@ on:
         required: false
         default: '261115-01'
       release:
-        description: 'Publish images to a GitHub Release'
+        description: 'Reserved: release is blocked until native NSS Wi-Fi is validated'
         required: false
         default: false
         type: boolean
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: gwrt-ss01-honk-easytier
@@ -26,6 +27,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     steps:
+      - name: Reject release requests for the native candidate
+        if: inputs.release
+        run: |
+          printf '%s\n' 'Release blocked: native ath11k NSS integration and board validation are incomplete.' >&2
+          exit 1
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -165,7 +172,10 @@ jobs:
           python3 scripts/gwrt-mk-ss01-honk-easytier-config.py "$VERSION"
           make defconfig
           sh gwrt-check-target.sh .config ss01
-          python3 scripts/gwrt-validate-ss01-honk-easytier.py .config
+          python3 scripts/gwrt-validate-ss01-honk-easytier.py .config --native-image
+          mkdir -p env
+          test ! -e env/kernel-config
+          cp configs/ss01-native-nss.kernel-config env/kernel-config
           sh scripts/gwrt-source-preflight.sh
           grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)|^CONFIG_VERSION_NUMBER|^CONFIG_PACKAGE_(honk|luci-app-honk|easytier|luci-app-easytier|vmlinux-btf-builtin)' .config
 
@@ -205,7 +215,22 @@ jobs:
         run: |
           set -euo pipefail
           target=bin/targets/qualcommax/ipq60xx
-          python3 scripts/gwrt-validate-ss01-honk-easytier.py .config --manifests "$target"
+          shopt -s nullglob
+          kernels=(build_dir/target-*/linux-qualcommax_ipq60xx/linux-6.18.*/Module.symvers)
+          modules=(build_dir/target-*/linux-qualcommax_ipq60xx/nss-wifi-drv-*/nss-wifi-drv.ko)
+          test "${#kernels[@]}" -eq 1 && test "${#modules[@]}" -eq 1 || exit 1
+          kernel_dir="${kernels[0]%/*}"
+          cp "$kernel_dir/.config" logs/kernel.config
+          cp "${kernels[0]}" logs/kernel-module.symvers
+          module="${modules[0]}"
+          LC_ALL=C readelf -h "$module" > logs/nss-wifi-elf-header.txt
+          grep -Eq 'Machine:[[:space:]]+AArch64' logs/nss-wifi-elf-header.txt
+          strings "$module" | awk '/^vermagic=/{ print }' > logs/nss-wifi-vermagic.txt
+          grep -Eq '^vermagic=6\.18\.62( |$)' logs/nss-wifi-vermagic.txt
+          llvm-nm -u "$module" > logs/nss-wifi-module-imports.txt
+          python3 scripts/gwrt-validate-ss01-honk-easytier.py .config --native-image --manifests "$target" \
+            --kernel-config logs/kernel.config --kernel-symvers logs/kernel-module.symvers \
+            --module-undefined logs/nss-wifi-module-imports.txt
           python3 - <<'PY'
           from pathlib import Path
           import subprocess
@@ -216,12 +241,12 @@ jobs:
           PY
           python3 scripts/gwrt-verify-ss01-image.py "$target" --variant honk-easytier | tee logs/ss01-honk-image-audit.log
           cp honk-source.txt logs/honk-source.txt
-          printf 'Dedicated build: SS-01 Honk + EasyTier; standard Doona default, embedded-lite available\n' > logs/build-label.txt
+          printf '%s\n' 'SS-01 Honk + EasyTier: native EDMA/PPE candidate; ath11k NSS offload and board operation are not validated.' > logs/build-label.txt
 
-      - name: Upload dedicated firmware artifact
+      - name: Upload native candidate artifact
         uses: actions/upload-artifact@v4
         with:
-          name: gwrt-ss01-honk-easytier-${{ inputs.version }}
+          name: gwrt-ss01-native-ppe-candidate-${{ inputs.version }}
           path: |
             bin/targets/qualcommax/ipq60xx/*factory*.bin
             bin/targets/qualcommax/ipq60xx/*sysupgrade*.bin
@@ -234,18 +259,15 @@ jobs:
           compression-level: 0
           retention-days: 30
 
-      - name: Publish dedicated release
-        if: success() && inputs.release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p release
-          cp bin/targets/qualcommax/ipq60xx/*factory*.bin release/
-          cp bin/targets/qualcommax/ipq60xx/*sysupgrade*.bin release/
-          cp bin/targets/qualcommax/ipq60xx/*.manifest bin/targets/qualcommax/ipq60xx/sha256sums release/
-          cp honk-source.txt release/
-          sha256sum release/* > release/ss01-honk-easytier-${{ inputs.version }}.sha256sums
-          gh release create "gwrt-ss01-honk-easytier-${{ inputs.version }}" release/* \
-            --title "GWRT SS-01 Honk + EasyTier ${{ inputs.version }}" \
-            --notes "Dedicated SS-01 build: Honk v0.1.0-beta.6 with embedded Doona editions and EasyTier; all other proxy engines removed."
+      - name: Upload failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gwrt-ss01-native-ppe-candidate-${{ inputs.version }}-logs
+          path: |
+            .config
+            honk-source.txt
+            logs/*
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7

@@ -1,0 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+
+#define GWRT_SS01_NATIVE_NSS
+#include "ipq6000-re-ss-01.dts"
