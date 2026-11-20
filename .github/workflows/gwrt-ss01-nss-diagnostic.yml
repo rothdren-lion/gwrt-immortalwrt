@@ -1,0 +1,159 @@
+name: GWRT SS-01 NSS driver diagnostic
+
+on:
+  push:
+    branches:
+      - build/ss01-nss-261120
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Diagnostic label (YYMMDD-NN)'
+        required: false
+        default: '261120-01'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gwrt-ss01-nss-diagnostic
+  cancel-in-progress: false
+
+jobs:
+  diagnostic:
+    name: SS-01 NSS Wi-Fi driver diagnostic
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          sudo apt-get clean
+          sudo swapoff -a || true
+          sudo rm -f /swapfile
+          sudo fallocate -l 6G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          df -h /
+
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y -o Acquire::Retries=5
+          sudo apt-get install -y -o Acquire::Retries=5 \
+            build-essential busybox clang llvm flex bison g++ gawk gcc-multilib \
+            g++-multilib gettext git libbpf-dev libclang-dev libncurses-dev \
+            libssl-dev pkg-config python3-setuptools python3-pyelftools rsync \
+            squashfs-tools unzip util-linux zlib1g-dev file wget swig xz-utils \
+            zstd cmake
+          LLVM_BIN="$(dirname "$(readlink -f "$(command -v clang)")")"
+          for tool in llvm-strip llc opt llvm-dis; do
+            [ -x "$LLVM_BIN/$tool" ] && sudo ln -sf "$LLVM_BIN/$tool" "/usr/local/bin/$tool"
+          done
+          command -v llvm-strip
+
+      - name: Cache downloads
+        uses: actions/cache@v4
+        with:
+          path: dl
+          key: gwrt-dl-${{ hashFiles('rules.mk', 'Config.in', 'include/**') }}
+          restore-keys: |
+            gwrt-dl-
+
+      - name: Cache toolchain
+        uses: actions/cache@v4
+        with:
+          path: staging_dir/toolchain-*
+          key: gwrt-tc-2404-${{ hashFiles('toolchain/**', 'tools/**', 'include/kernel*', 'rules.mk', 'Config.in') }}
+          restore-keys: |
+            gwrt-tc-2404-
+
+      - name: Install locked feeds
+        run: |
+          set -euo pipefail
+          cp configs/ss01-honk-easytier-feeds.conf feeds.conf
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          sh gwrt-theme-V3/scripts/integrate.sh --no-config
+          sh scripts/gwrt-apply-feed-overlays.sh
+          ./scripts/feeds install -a
+          test -f target/linux/qualcommax/files/drivers/net/ethernet/qualcomm/qca_edma.h
+          test -f target/linux/qualcommax/files/include/linux/soc/qcom/qca_ppe.h
+
+      - name: Generate and validate SS-01 config
+        env:
+          VERSION: ${{ inputs.version || '261120-01' }}
+        run: |
+          set -euo pipefail
+          python3 scripts/gwrt-mk-ss01-honk-easytier-config.py "$VERSION"
+          make defconfig
+          sh gwrt-check-target.sh .config ss01
+          python3 scripts/gwrt-validate-ss01-honk-easytier.py .config
+          grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)|^CONFIG_LINUX_VERSION|^CONFIG_PACKAGE_kmod-nss-wifi-drv|^CONFIG_PACKAGE_kmod-qca-nss-dp|^CONFIG_PACKAGE_kmod-qca-ssdk|^CONFIG_KERNEL_DEBUG_INFO_BTF' .config | tee diagnostics-config.txt
+
+      - name: Record exact kernel inputs
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          {
+            echo "Repository commit: $(git rev-parse HEAD)"
+            echo "Kernel source selector:"
+            grep -E '^LINUX_VERSION-6\.18|^LINUX_KERNEL_HASH-6\.18' target/linux/generic/kernel-6.18
+            echo "Kernel patch count: $(find target/linux/qualcommax/patches-6.18 -type f | wc -l)"
+            echo "Kernel package path: package/qca-nss/nss-wifi-drv"
+          } | tee logs/kernel-inputs.txt
+
+      - name: Download sources
+        run: |
+          set -euo pipefail
+          make -j6 download 2>&1 | tee logs/download.log
+
+      - name: Build target kernel with verbose diagnostics
+        run: |
+          set -euo pipefail
+          make -j6 target/linux/compile V=s 2>&1 | tee logs/kernel-build.log
+
+      - name: Build only nss-wifi-drv with verbose diagnostics
+        run: |
+          set -euo pipefail
+          make -j1 package/qca-nss/nss-wifi-drv/compile V=s 2>&1 | tee logs/nss-wifi-drv-build.log
+
+      - name: Audit kernel and module output
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          kernel_dir="$(find build_dir/target-* -type f -path '*/linux-*/.config' -print -quit | xargs -r dirname)"
+          test -n "$kernel_dir"
+          {
+            echo "Kernel build directory: $kernel_dir"
+            echo "Kernel Makefile version:"
+            make -C "$kernel_dir" kernelversion
+            echo "Kernel config version:"
+            grep -E '^(CONFIG_LOCALVERSION|CONFIG_LINUX_VERSION|CONFIG_MODULES|CONFIG_MODVERSIONS)=' "$kernel_dir/.config" || true
+            echo "NSS module files:"
+            find build_dir -path '*nss-wifi-drv*' -type f -printf '%p %s bytes\\n' | sort
+            echo "Module metadata:"
+            find build_dir -name 'nss-wifi-drv.ko' -exec modinfo -F vermagic {} \\; 2>/dev/null || true
+          } | tee logs/kernel-module-audit.txt
+
+      - name: Upload NSS diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gwrt-ss01-nss-diagnostic-${{ inputs.version }}
+          path: |
+            .config
+            diagnostics-config.txt
+            logs/*
+            build_dir/target-*/linux-*/linux-*/.config
+            build_dir/target-*/linux-*/linux-*/include/config/kernel.release
+            build_dir/target-*/linux-*/linux-*/nss-wifi-drv.ko
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 30
