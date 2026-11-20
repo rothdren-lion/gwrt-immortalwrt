@@ -13,6 +13,19 @@ NSS_KERNEL_API = {
     "qca_ppe": ("qca_ppe_fw_booted", "qca_ppe_fw_ports_set", "qca_ppe_fw_carrier_set"),
 }
 NSS_WIFI_PACKAGE = "kmod-nss-wifi-drv"
+QSDK_WIRED_PACKAGES = {
+    "kmod-qca-nss-dp",
+    "kmod-qca-nss-drv",
+    "kmod-qca-nss-drv-bridge-mgr",
+    "kmod-qca-nss-drv-vlan-mgr",
+    "kmod-qca-nss-ecm",
+    "kmod-qca-ssdk",
+}
+NSS_KERNEL_BUILTINS = {
+    "QCOM_EDMA", "QCOM_80211AX_PPE", "NET_DSA", "NET_DSA_TAG_QCA",
+    "PCS_QCA_UNIPHY", "PAGE_POOL", "PHYLINK", "REGMAP_MMIO", "NET_REDIRECT",
+    "NF_CONNTRACK", "NF_TABLES", "NF_FLOW_TABLE",
+}
 
 REQUIRED = {
     "honk",
@@ -129,17 +142,17 @@ def check_config(path: Path) -> set[str]:
 
 
 def check_nss_wifi_abi(
-    packages: set[str], *, root: Path = ROOT, symvers: Path | None = None
+    packages: set[str], *, root: Path = ROOT, symvers: Path | None = None,
+    kernel_config: Path | None = None, module_undefined: Path | None = None,
 ) -> None:
     if NSS_WIFI_PACKAGE not in packages:
         raise SystemExit(f"FAIL config does not select {NSS_WIFI_PACKAGE}")
 
     overlay = root / "target/linux/qualcommax/files"
     errors = []
-    if "kmod-qca-nss-dp" in packages:
-        errors.append("QSDK kmod-qca-nss-dp conflicts with the EDMA conduit required by nss-wifi-drv on SS-01")
-    if "kmod-qca-nss-drv" in packages:
-        errors.append("QSDK kmod-qca-nss-drv and nss-wifi-drv cannot both own the NSS cores on SS-01")
+    conflicts = sorted(QSDK_WIRED_PACKAGES & packages)
+    if conflicts:
+        errors.append("QSDK packages conflict with native EDMA/PPE and NSS Wi-Fi: " + ", ".join(conflicts))
     for driver, symbols in NSS_KERNEL_API.items():
         header = overlay / f"include/linux/soc/qcom/{driver}.h"
         implementation = overlay / "drivers/net/ethernet/qualcomm" / (
@@ -155,13 +168,25 @@ def check_nss_wifi_abi(
             if not re.search(rf"\bEXPORT_SYMBOL(?:_GPL)?\s*\(\s*{symbol}\s*\)", exports):
                 errors.append(f"{implementation.name} does not export {symbol}")
 
+    required_symbols = set().union(*NSS_KERNEL_API.values())
+    if kernel_config is not None:
+        config_lines = set(kernel_config.read_text().splitlines())
+        errors.extend(
+            f"kernel .config lacks CONFIG_{name}=y" for name in sorted(NSS_KERNEL_BUILTINS)
+            if f"CONFIG_{name}=y" not in config_lines
+        )
     if symvers is not None:
         exported = {
             fields[1] for line in symvers.read_text().splitlines()
-            if len(fields := line.split()) >= 4
+            if len(fields := line.split()) >= 4 and fields[2:4] == ["vmlinux", "EXPORT_SYMBOL_GPL"]
         }
-        for symbols in NSS_KERNEL_API.values():
-            errors.extend(f"{symvers.name} lacks {symbol}" for symbol in symbols if symbol not in exported)
+        errors.extend(f"{symvers.name} lacks vmlinux GPL export {symbol}" for symbol in sorted(required_symbols - exported))
+    if module_undefined is not None:
+        imported = {
+            fields[-1] for line in module_undefined.read_text().splitlines()
+            if len(fields := line.split()) >= 2 and fields[-2] == "U"
+        }
+        errors.extend(f"nss-wifi-drv.ko does not import {symbol}" for symbol in sorted(required_symbols - imported))
 
     if errors:
         raise SystemExit("FAIL SS-01 NSS Wi-Fi ABI:\n  " + "\n  ".join(errors))
@@ -194,15 +219,21 @@ def main() -> None:
     parser.add_argument("--manifests", type=Path)
     parser.add_argument("--require-nss-wifi", action="store_true")
     parser.add_argument("--kernel-symvers", type=Path)
+    parser.add_argument("--kernel-config", type=Path)
+    parser.add_argument("--module-undefined", type=Path)
     args = parser.parse_args()
     packages = check_config(args.config)
     require_nss_wifi = (
-        args.require_nss_wifi or args.kernel_symvers is not None or NSS_WIFI_PACKAGE in packages
+        args.require_nss_wifi or args.kernel_symvers is not None or args.kernel_config is not None
+        or args.module_undefined is not None or NSS_WIFI_PACKAGE in packages
     )
     if require_nss_wifi:
         if not re.search(rf"^CONFIG_PACKAGE_{re.escape(NSS_WIFI_PACKAGE)}=y$", args.config.read_text(), re.M):
             raise SystemExit(f"FAIL config does not embed {NSS_WIFI_PACKAGE} (expected =y)")
-        check_nss_wifi_abi(packages, symvers=args.kernel_symvers)
+        check_nss_wifi_abi(
+            packages, symvers=args.kernel_symvers, kernel_config=args.kernel_config,
+            module_undefined=args.module_undefined,
+        )
     if args.manifests:
         check_manifests(args.manifests, require_nss_wifi=require_nss_wifi)
 

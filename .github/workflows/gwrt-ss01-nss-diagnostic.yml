@@ -78,10 +78,15 @@ jobs:
       - name: Generate config and preflight NSS Wi-Fi ABI
         run: |
           set -euo pipefail
-          python3 scripts/gwrt-mk-ss01-honk-easytier-config.py "$VERSION"
+          python3 scripts/gwrt-mk-ss01-honk-easytier-config.py "$VERSION" --nss-abi-only
           make defconfig
           sh gwrt-check-target.sh .config ss01
-          mkdir -p logs
+          mkdir -p logs env
+          test ! -e env/kernel-config
+          printf '%s\n' CONFIG_QCOM_EDMA=y CONFIG_QCOM_80211AX_PPE=y \
+            CONFIG_NET_DSA=y CONFIG_NF_CONNTRACK=y CONFIG_NF_TABLES=y \
+            CONFIG_NF_FLOW_TABLE=y > env/kernel-config
+          cp env/kernel-config logs/kernel-config.override
           python3 scripts/gwrt-validate-ss01-honk-easytier.py .config --require-nss-wifi \
             2>&1 | tee logs/nss-wifi-preflight.log
           grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)|^CONFIG_LINUX_VERSION|^CONFIG_PACKAGE_kmod-nss-wifi-drv|^CONFIG_PACKAGE_kmod-qca-nss-dp|^CONFIG_PACKAGE_kmod-qca-ssdk|^CONFIG_KERNEL_DEBUG_INFO_BTF' .config | tee diagnostics-config.txt
@@ -123,7 +128,7 @@ jobs:
           cp "$kernel_dir/Module.symvers" logs/kernel-module.symvers
           cp "$kernel_dir/include/config/kernel.release" logs/kernel.release
           python3 scripts/gwrt-validate-ss01-honk-easytier.py .config \
-            --kernel-symvers logs/kernel-module.symvers \
+            --kernel-config logs/kernel.config --kernel-symvers logs/kernel-module.symvers \
             2>&1 | tee logs/nss-wifi-kernel-abi.log
 
       - name: Build only nss-wifi-drv with verbose diagnostics
@@ -142,6 +147,13 @@ jobs:
           module="${modules[0]}"
           vermagic="$(modinfo -F vermagic "$module")"
           test "${vermagic%% *}" = "$(< logs/kernel.release)"
+          LC_ALL=C readelf -h "$module" | tee logs/nss-wifi-elf-header.txt
+          grep -Eq 'Machine:[[:space:]]+AArch64' logs/nss-wifi-elf-header.txt
+          llvm-nm -u "$module" > logs/nss-wifi-module-imports.txt
+          python3 scripts/gwrt-validate-ss01-honk-easytier.py .config \
+            --kernel-config logs/kernel.config --kernel-symvers logs/kernel-module.symvers \
+            --module-undefined logs/nss-wifi-module-imports.txt \
+            2>&1 | tee logs/nss-wifi-module-abi.log
           {
             file "$module"
             modinfo "$module"

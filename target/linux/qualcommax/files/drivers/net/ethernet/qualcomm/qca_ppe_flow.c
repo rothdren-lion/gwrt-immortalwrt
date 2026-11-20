@@ -17,8 +17,10 @@
 #include <linux/bitfield.h>
 #include <linux/clk.h>
 #include <linux/debugfs.h>
+#include <linux/ktime.h>
 #include <linux/regmap.h>
 #include <linux/seq_file.h>
+#include <net/tcp.h>
 
 #include "qca_ppe.h"
 
@@ -56,6 +58,24 @@ static u32 ppe_flow_next_cmd_id(struct qca_ppe_priv *priv)
 	return priv->flow_cmd_id;
 }
 
+static void ppe_flow_completion_mismatch(struct qca_ppe_priv *priv, u32 reg,
+					 u32 command, u32 expected, u32 result,
+					 u32 returned)
+{
+	u64 sequence = priv->flow_completion_sequence++;
+	struct ppe_flow_completion_mismatch *event;
+
+	lockdep_assert_held(&priv->flow_lock);
+	event = &priv->flow_completion_mismatches[sequence % PPE_FLOW_FAILURE_HISTORY];
+	event->sequence = sequence;
+	event->boottime_ns = ktime_get_boottime_ns();
+	event->command_id = command;
+	event->result_reg = reg;
+	event->result = result;
+	event->expected_index = expected;
+	event->returned_index = returned;
+}
+
 /* Add, delete or look up one flow entry by key. @host carries the source
  * address half of the key and is staged alongside, so that an add creates both
  * halves and binds them in one command. On success @index and @host_index name
@@ -71,6 +91,27 @@ int ppe_flow_op(struct qca_ppe_priv *priv, u32 op_type,
 	lockdep_assert_held(&priv->flow_lock);
 	if (priv->flow_op_busy || priv->host_retire_pending)
 		return -EBUSY;
+	if (nentry < 0 || nentry > PPE_FLOW_ENTRY_WORDS_V6 ||
+	    nhost < 0 || nhost > PPE_HOST_ENTRY_WORDS_V6 ||
+	    (nentry && !entry) || (nhost && !host))
+		return -EINVAL;
+	priv->flow_op_type = op_type;
+	priv->flow_op_nentry = nentry;
+	priv->flow_op_nhost = nhost;
+	priv->flow_op_request_issued = false;
+	memset(priv->flow_op_entry, 0, sizeof(priv->flow_op_entry));
+	memset(priv->flow_op_host, 0, sizeof(priv->flow_op_host));
+	if (nentry)
+		memcpy(priv->flow_op_entry, entry, nentry * sizeof(*entry));
+	if (nhost)
+		memcpy(priv->flow_op_host, host, nhost * sizeof(*host));
+	/* A staging error must not expose the previous command's result. */
+	priv->flow_op_result_valid = false;
+	priv->flow_op_rslt_reg = 0;
+	priv->flow_op_cmd_id = 0;
+	priv->flow_op_index_mode = false;
+	priv->flow_op_result_rejected = false;
+	priv->flow_op_expected_index = U32_MAX;
 
 	for (i = 0; i < nhost; i++) {
 		ret = regmap_write(priv->regmap, PPE_FLOW_HOST_TBL_OP_DATA(i),
@@ -99,6 +140,7 @@ int ppe_flow_op(struct qca_ppe_priv *priv, u32 op_type,
 	if (ret)
 		return ret;
 
+	priv->flow_op_request_issued = true;
 	priv->flow_op_busy = true;
 	priv->flow_op_result_valid = false;
 	priv->flow_op_cmd_id = cmd_id;
@@ -111,12 +153,19 @@ int ppe_flow_op(struct qca_ppe_priv *priv, u32 op_type,
  */
 int ppe_flow_op_finish(struct qca_ppe_priv *priv, u32 *index, u32 *host_index)
 {
-	u32 rslt, val, idx;
+	u32 rslt, val, idx, host = 0;
 	int ret;
 
 	lockdep_assert_held(&priv->flow_lock);
 	if (!priv->flow_op_busy)
 		return -EINVAL;
+	/* The mismatched word was already popped. Preserve it for diagnostics,
+	 * but poll for the issued command's completion on the next attempt.
+	 */
+	if (priv->flow_op_result_rejected) {
+		priv->flow_op_result_valid = false;
+		priv->flow_op_result_rejected = false;
+	}
 	if (!priv->flow_op_result_valid) {
 		ret = ppe_flow_op_wait(priv, priv->flow_op_rslt_reg,
 				       priv->flow_op_cmd_id, &rslt);
@@ -130,18 +179,32 @@ int ppe_flow_op_finish(struct qca_ppe_priv *priv, u32 *index, u32 *host_index)
 		priv->flow_op_busy = false;
 		return -ENOENT;
 	}
-	idx = FIELD_GET(PPE_FLOW_RSLT_ENTRY_IDX, rslt);
+	if (priv->flow_op_rslt_reg == PPE_HOST_TBL_OP_RSLT)
+		idx = FIELD_GET(PPE_HOST_RSLT_ENTRY_IDX, rslt);
+	else
+		idx = FIELD_GET(PPE_FLOW_RSLT_ENTRY_IDX, rslt);
+	if (priv->flow_op_index_mode && idx != priv->flow_op_expected_index) {
+		ppe_flow_completion_mismatch(priv, priv->flow_op_rslt_reg,
+					     priv->flow_op_cmd_id,
+					     priv->flow_op_expected_index, rslt, idx);
+		priv->flow_op_result_rejected = true;
+		return -EIO;
+	}
 	if ((index || host_index) && idx >= priv->data->num_flow_entries)
 		return -EIO;
-	if (index)
-		*index = idx;
 	if (host_index) {
 		ret = regmap_read(priv->regmap, PPE_IN_FLOW_TBL(idx), &val);
 		if (ret)
 			return ret;
-		*host_index = ppe_entry_get(&val, PPE_FLOW_E_HOST_IDX_OFF,
-					    PPE_FLOW_E_HOST_IDX_LEN);
+		host = ppe_entry_get(&val, PPE_FLOW_E_HOST_IDX_OFF,
+				     PPE_FLOW_E_HOST_IDX_LEN);
+		if (host >= priv->data->num_host_entries)
+			return -EIO;
 	}
+	if (index)
+		*index = idx;
+	if (host_index)
+		*host_index = host;
 	priv->flow_op_busy = false;
 	return 0;
 }
@@ -160,6 +223,8 @@ int ppe_flow_entry_read(struct qca_ppe_priv *priv, u32 index, u32 *words,
 	lockdep_assert_held(&priv->flow_lock);
 	if (priv->flow_op_busy)
 		return -EBUSY;
+	if (index >= priv->data->num_flow_entries)
+		return -EINVAL;
 	if (nwords <= 0 || nwords > PPE_FLOW_ENTRY_WORDS_V6)
 		return -EINVAL;
 
@@ -179,6 +244,13 @@ int ppe_flow_entry_read(struct qca_ppe_priv *priv, u32 index, u32 *words,
 
 	if (rslt & PPE_FLOW_RSLT_FAIL)
 		return -ENOENT;
+	/* A delayed result from another index cannot authorize retirement. */
+	if (FIELD_GET(PPE_FLOW_RSLT_ENTRY_IDX, rslt) != index) {
+		ppe_flow_completion_mismatch(priv, PPE_FLOW_TBL_RD_OP_RSLT,
+					     cmd_id, index, rslt,
+					     FIELD_GET(PPE_FLOW_RSLT_ENTRY_IDX, rslt));
+		return -EIO;
+	}
 
 	for (i = 0; i < nwords; i++) {
 		ret = regmap_read(priv->regmap, PPE_FLOW_TBL_RD_RSLT_DATA(i),
@@ -202,6 +274,8 @@ int ppe_flow_entry_delete(struct qca_ppe_priv *priv, u32 index)
 	lockdep_assert_held(&priv->flow_lock);
 	if (priv->flow_op_busy)
 		return -EBUSY;
+	if (index >= priv->data->num_flow_entries)
+		return -EINVAL;
 	cmd_id = ppe_flow_next_cmd_id(priv);
 	ret = regmap_write(priv->regmap, PPE_FLOW_TBL_OP,
 		     FIELD_PREP(PPE_FLOW_OP_CMD_ID, cmd_id) |
@@ -215,6 +289,9 @@ int ppe_flow_entry_delete(struct qca_ppe_priv *priv, u32 index)
 	priv->flow_op_result_valid = false;
 	priv->flow_op_cmd_id = cmd_id;
 	priv->flow_op_rslt_reg = PPE_FLOW_TBL_OP_RSLT;
+	priv->flow_op_index_mode = true;
+	priv->flow_op_expected_index = index;
+	priv->flow_op_result_rejected = false;
 	return ppe_flow_op_finish(priv, NULL, NULL);
 }
 
@@ -229,6 +306,8 @@ int ppe_host_del(struct qca_ppe_priv *priv, u32 index)
 	lockdep_assert_held(&priv->flow_lock);
 	if (priv->flow_op_busy)
 		return -EBUSY;
+	if (index >= priv->data->num_host_entries)
+		return -EINVAL;
 	cmd_id = ppe_flow_next_cmd_id(priv);
 	ret = regmap_write(priv->regmap, PPE_HOST_TBL_OP,
 		     FIELD_PREP(PPE_HOST_OP_CMD_ID, cmd_id) |
@@ -242,6 +321,9 @@ int ppe_host_del(struct qca_ppe_priv *priv, u32 index)
 	priv->flow_op_result_valid = false;
 	priv->flow_op_cmd_id = cmd_id;
 	priv->flow_op_rslt_reg = PPE_HOST_TBL_OP_RSLT;
+	priv->flow_op_index_mode = true;
+	priv->flow_op_expected_index = index;
+	priv->flow_op_result_rejected = false;
 	priv->host_retire_index = index;
 	return ppe_flow_op_finish(priv, NULL, NULL);
 }
@@ -355,6 +437,7 @@ static const char * const ppe_flow_reject_name[] = {
 	[PPE_REJECT_ACTION]		= "unsupported_action",
 	[PPE_REJECT_L2]			= "no_egress_l2_header",
 	[PPE_REJECT_EGRESS_PORT]	= "egress_not_switch_port",
+	[PPE_REJECT_CPU_PATH]		= "cpu_path_unavailable",
 	[PPE_REJECT_HAIRPIN]		= "egress_is_ingress",
 	[PPE_REJECT_NAT_BOTH]		= "snat_and_dnat",
 	[PPE_REJECT_NAT_IPV6]		= "ipv6_nat",
@@ -365,10 +448,15 @@ static const char * const ppe_flow_reject_name[] = {
 static int ppe_offload_show(struct seq_file *s, void *data)
 {
 	struct qca_ppe_priv *priv = s->private;
+	static const char * const hw_errors[] = {
+		"hardware_enoent", "hardware_enospc", "hardware_enomem",
+		"hardware_eio", "hardware_timeout", "hardware_other",
+	};
 	int i;
 
 	guard(mutex)(&priv->flow_lock);
 
+	seq_puts(s, "diagnostic_revision:r4\n");
 	seq_printf(s, "%-24s %u\n", "offloaded", priv->flow_offloaded);
 	seq_printf(s, "%-24s %u\n", "reinstalled", priv->flow_reinstalled);
 	seq_printf(s, "%-24s %u\n", "destroy_miss", priv->flow_destroy_miss);
@@ -380,6 +468,22 @@ static int ppe_offload_show(struct seq_file *s, void *data)
 	seq_printf(s, "retire_last cookie=%lx result=%d mutation_pending=%u host_pending=%u\n",
 		   priv->flow_retire_cookie, priv->flow_retire_result, priv->flow_op_busy,
 		   priv->host_retire_pending);
+	seq_printf(s, "completion_mismatches %llu\n", priv->flow_completion_sequence);
+	seq_printf(s, "mutation_state command_id=%u result_reg=%08x index_mode=%u expected_index=%u result_valid=%u result=%08x result_rejected=%u\n",
+		   priv->flow_op_cmd_id, priv->flow_op_rslt_reg,
+		   priv->flow_op_index_mode, priv->flow_op_expected_index,
+		   priv->flow_op_result_valid,
+		   priv->flow_op_result_valid ? priv->flow_op_result : 0,
+		   priv->flow_op_result_rejected);
+	seq_printf(s, "%-24s %u\n", "xmit_drop",
+		   atomic_read(&priv->flow_xmit_drop));
+	seq_printf(s, "%-24s %u\n", "xmit_stale",
+		   atomic_read(&priv->flow_xmit_stale));
+	seq_printf(s, "%-24s %u\n", "shaper_miss",
+		   atomic_read(&priv->flow_shaper_miss));
+	seq_printf(s, "%-24s %u\n", "shaper_busy",
+		   atomic_read(&priv->shaper_busy));
+	seq_printf(s, "%-24s %d\n", "ul_port", READ_ONCE(priv->ul_port));
 	seq_printf(s, "%-24s %u\n", "sparse_promoted",
 		   priv->flow_sparse_promoted);
 	seq_printf(s, "%-24s %u\n", "sparse_demoted",
@@ -392,6 +496,20 @@ static int ppe_offload_show(struct seq_file *s, void *data)
 	for (i = 0; i < PPE_REJECT_MAX; i++)
 		seq_printf(s, "%-24s %u\n", ppe_flow_reject_name[i],
 			   priv->flow_reject[i]);
+	for (i = 0; i < ARRAY_SIZE(hw_errors); i++)
+		seq_printf(s, "%s %u\n", hw_errors[i], priv->flow_hw_errors[i]);
+
+	guard(mutex)(&priv->vlan_lock);
+	for (i = 0; i < PPE_PPPOE_SESSIONS; i++) {
+		const struct ppe_uplink *up = &priv->uplink[i];
+		char name[24];
+
+		if (!up->ref)
+			continue;
+		snprintf(name, sizeof(name), "uplink_port%u_vid%u", up->port,
+			 up->vid);
+		seq_printf(s, "%-24s %u\n", name, up->ref);
+	}
 
 	return 0;
 }
@@ -421,6 +539,65 @@ static int ppe_offload_rejects_show(struct seq_file *s, void *data)
 	return 0;
 }
 DEFINE_SHOW_ATTRIBUTE(ppe_offload_rejects);
+
+static int ppe_offload_failures_show(struct seq_file *s, void *data)
+{
+	struct qca_ppe_priv *priv = s->private;
+	u64 first, sequence;
+
+	guard(mutex)(&priv->flow_lock);
+	first = priv->flow_failure_sequence > PPE_FLOW_FAILURE_HISTORY ?
+		priv->flow_failure_sequence - PPE_FLOW_FAILURE_HISTORY : 0;
+	seq_puts(s, "diagnostic_revision:r4\n");
+	seq_puts(s, "sequence boottime_ns errno cookie generation iif oif l3 l4 command_id result_reg result_valid result pending expected_index index_mode result_rejected op_type request_issued entry_words host_words entry0 entry1 entry2 entry3 entry4 entry5 entry6 entry7 entry8 host0 host1 host2 host3 host4\n");
+	for (sequence = first; sequence < priv->flow_failure_sequence; sequence++) {
+		const struct ppe_flow_failure *event =
+			&priv->flow_failures[sequence % PPE_FLOW_FAILURE_HISTORY];
+		const struct ppe_flow_reject_info *rule = &event->rule;
+		int i;
+
+		seq_printf(s, "%llu %llu %d %lx %llu %d %d %04x %u %u %08x %u %08x %u %u %u %u %u %u %u %u",
+			   event->sequence, event->boottime_ns, event->error,
+			   rule->cookie, rule->generation, rule->ingress_ifindex,
+			   rule->egress_ifindex, rule->n_proto, rule->ip_proto,
+			   event->command_id, event->result_reg,
+			   event->result_valid, event->result, event->pending,
+			   event->expected_index, event->index_mode,
+			   event->result_rejected, event->op_type,
+			   event->request_issued, event->entry_words,
+			   event->host_words);
+		for (i = 0; i < PPE_FLOW_ENTRY_WORDS_V6; i++)
+			seq_printf(s, " %08x", event->entry[i]);
+		for (i = 0; i < PPE_HOST_ENTRY_WORDS_V6; i++)
+			seq_printf(s, " %08x", event->host[i]);
+		seq_putc(s, '\n');
+	}
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(ppe_offload_failures);
+
+static int ppe_completion_mismatches_show(struct seq_file *s, void *data)
+{
+	struct qca_ppe_priv *priv = s->private;
+	u64 first, sequence;
+
+	guard(mutex)(&priv->flow_lock);
+	first = priv->flow_completion_sequence > PPE_FLOW_FAILURE_HISTORY ?
+		priv->flow_completion_sequence - PPE_FLOW_FAILURE_HISTORY : 0;
+	seq_puts(s, "diagnostic_revision:r3\n");
+	seq_puts(s, "sequence boottime_ns command_id result_reg expected_index returned_index result\n");
+	for (sequence = first; sequence < priv->flow_completion_sequence; sequence++) {
+		const struct ppe_flow_completion_mismatch *event =
+			&priv->flow_completion_mismatches[sequence % PPE_FLOW_FAILURE_HISTORY];
+
+		seq_printf(s, "%llu %llu %u %08x %u %u %08x\n",
+			   event->sequence, event->boottime_ns, event->command_id,
+			   event->result_reg, event->expected_index,
+			   event->returned_index, event->result);
+	}
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(ppe_completion_mismatches);
 
 static int ppe_dsa_services_show(struct seq_file *s, void *data)
 {
@@ -546,6 +723,10 @@ void ppe_flow_debugfs_init(struct qca_ppe_priv *priv)
 			    &ppe_offload_fops);
 	debugfs_create_file("offload_rejects", 0400, priv->debugfs, priv,
 			    &ppe_offload_rejects_fops);
+	debugfs_create_file("offload_failures", 0400, priv->debugfs, priv,
+			    &ppe_offload_failures_fops);
+	debugfs_create_file("completion_mismatches", 0400, priv->debugfs, priv,
+			    &ppe_completion_mismatches_fops);
 	debugfs_create_file("dsa_services", 0400, priv->debugfs, priv,
 			    &ppe_dsa_services_fops);
 	debugfs_create_file("pipeline_state", 0400, priv->debugfs, priv,
@@ -570,11 +751,56 @@ static void ppe_flow_age_timer_set(struct qca_ppe_priv *priv, u32 *ctrl)
 		 FIELD_PREP(PPE_FLOW_AGE_TIMER_UNIT, PPE_FLOW_AGE_UNIT_SEC);
 }
 
+/* A packet of an offloaded flow that the software fast path would leave to
+ * the stack goes to the CPU, and the entry keeps forwarding the rest: IPv4
+ * options, IPv6 extension headers, a TTL or hop limit about to expire, a
+ * fragment, a truncated or malformed L2, IP or L4 header, and a FIN, RST or
+ * SYN, which the flowtable takes as a teardown or the reuse of a closing
+ * flow. Every exception is written, so none keeps what an earlier owner of
+ * the table set. A pattern left at its reset value matches every TCP packet,
+ * so the patterns are written before their exceptions are enabled.
+ */
+void ppe_flow_excep_init(struct qca_ppe_priv *priv)
+{
+	static const u8 rdt[] = {
+		0, 1, 2, 3,				/* L2 protocol, PPPoE */
+		5, 6, 7, 8, 9, 10, 12, 14, 20,		/* IPv4 */
+		22, 23, 24, 25, 26, 30, 32, 38,		/* IPv6 */
+		42, 45, 55, 61,				/* TCP, UDP, UDP-Lite */
+	};
+	DECLARE_BITMAP(on, PPE_L3_EXCEPTIONS) = {};
+	unsigned long trap = PPE_FLOW_TCP_TRAP;
+	u32 ctrl[4] = {};
+	int bit, n = 0;
+
+	for_each_set_bit(bit, &trap, BITS_PER_LONG) {
+		ctrl[n / 2] |= (FIELD_PREP(PPE_L4_EXCEP_FLAGS, BIT(bit)) |
+				FIELD_PREP(PPE_L4_EXCEP_MASK, BIT(bit)))
+			       << (n % 2 * PPE_L4_EXCEP_SLOT_SHIFT);
+		__set_bit(PPE_EXCEP_TCP_FLAGS(n), on);
+		n++;
+	}
+	for (n = 0; n < ARRAY_SIZE(ctrl); n++)
+		regmap_write(priv->regmap, PPE_L4_EXCEP_TCP_FLAGS(n * 2),
+			     ctrl[n]);
+
+	for (n = 0; n < ARRAY_SIZE(rdt); n++)
+		__set_bit(rdt[n], on);
+
+	for (n = 0; n < PPE_L3_EXCEPTIONS; n++) {
+		bool en = test_bit(n, on);
+
+		regmap_write(priv->regmap, PPE_L3_EXCEP_CMD(n),
+			     en ? FIELD_PREP(PPE_L3_EXCEP_ACTION,
+					     PPE_L3_EXCEP_RDT_TO_CPU) : 0);
+		regmap_write(priv->regmap, PPE_L3_EXCEP_L3_FLOW_EN(n), en);
+	}
+}
+
 void ppe_flow_init(struct qca_ppe_priv *priv)
 {
-	u32 ctrl;
 	int type, dir;
-
+	u32 ctrl;
 
 	/* A miss has to forward: with the lookup enabled and no entry matching,
 	 * any other action would black-hole traffic the driver never saw.
@@ -585,9 +811,8 @@ void ppe_flow_init(struct qca_ppe_priv *priv)
 	 *
 	 * The neighbouring TCP_SPECIAL bypass stays off: on this generation it
 	 * takes every TCP packet out of the lookup, not just the flagged ones.
-	 * A connection's FIN and RST are therefore forwarded in hardware and its
-	 * entry goes on the flowtable's idle timeout, as it does on every driver
-	 * whose hardware never shows it the teardown.
+	 * FIN, SYN and RST reach the CPU through the TCP flag exceptions
+	 * instead.
 	 */
 	for (type = 0; type < PPE_FLOW_PKT_TYPES; type++) {
 		u32 val = 0;
@@ -601,12 +826,18 @@ void ppe_flow_init(struct qca_ppe_priv *priv)
 		regmap_write(priv->regmap, PPE_FLOW_CTRL1(type), val);
 	}
 
+	ppe_flow_excep_init(priv);
+
 	/* The flow encoder stores the packet destination in the flow entry and the
 	 * packet source in the host entry. Keep the default source-key orientation
 	 * for PPPoE as well; both directions have been verified with live PPE flow
 	 * counters on CR1000A.
 	 */
-	ctrl = PPE_FLOW_EN | FIELD_PREP(PPE_FLOW_HASH_MODE1, 1);
+	/* Keep the SDK's CRC10/XOR hash pair; XOR/XOR caused repeated IPv6 ADD
+	 * rejects under concurrent flows on the IPQ60xx lab DUT.
+	 */
+	ctrl = PPE_FLOW_EN | FIELD_PREP(PPE_FLOW_HASH_MODE0, 0) |
+	       FIELD_PREP(PPE_FLOW_HASH_MODE1, 1);
 	ppe_flow_age_timer_set(priv, &ctrl);
 	regmap_write(priv->regmap, PPE_FLOW_CTRL0, ctrl);
 }

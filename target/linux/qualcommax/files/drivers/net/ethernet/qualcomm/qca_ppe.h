@@ -13,12 +13,13 @@
 #include <linux/spinlock.h>
 #include <linux/workqueue.h>
 #include <linux/types.h>
+#include <linux/wait.h>
 #include <linux/io.h>
 #include <net/dsa.h>
 
 #define QCA_PPE_MAX_PORTS		8
 #define QCA_PPE_CPU_PORT		0
-#define QCA_PPE_MAX_BRIDGES		8
+#define QCA_PPE_MAX_BRIDGES		(PPE_VSI_MAX - 1)
 #define QCA_PPE_DSA_SERVICE_MAX	8
 #define QCA_PPE_DSA_RX_VID_BASE	0xe00
 #define QCA_PPE_DSA_TX_VID_BASE	0xf00
@@ -62,6 +63,44 @@
 #define PPE_FLOW_PROTO_TCP	1
 #define PPE_FLOW_PROTO_UDP	2
 
+/* Flow table op engine */
+#define PPE_TBL_OP_ADD		0
+#define PPE_TBL_OP_DEL		1
+#define PPE_TBL_OP_GET		2
+#define PPE_TBL_OP_FLUSH	3
+#define PPE_FLOW_HASH_BLOCKS	3
+
+#define PPE_FLOW_ENTRY_WORDS_V4	5
+#define PPE_FLOW_ENTRY_WORDS_V6	9
+#define PPE_HOST_ENTRY_WORDS_V4	3
+#define PPE_HOST_ENTRY_WORDS_V6	5
+
+/* The two-bit age field is loaded at its maximum and counts down. */
+#define PPE_FLOW_AGE_MAX	3
+
+/* Flow control is configured per packet type and per direction. */
+#define PPE_FLOW_PKT_TYPES	3
+#define PPE_FLOW_MISS_FORWARD	0
+
+/* Age unit 0 counts seconds, which the hardware derives from the clock rate
+ * programmed into PPE_FLOW_CLK_FREQ_MHZ.
+ */
+#define PPE_FLOW_AGE_UNIT_SEC	0
+#define PPE_FLOW_AGE_SECS	60
+
+/* Forward types of a flow entry, as the hardware numbers them. */
+#define PPE_FLOW_FWD_FORWARD	0
+#define PPE_FLOW_FWD_SNAT	1
+#define PPE_FLOW_FWD_DNAT	2
+#define PPE_FLOW_FWD_ROUTE	3
+#define PPE_FLOW_FWD_BRIDGE	4
+#define PPE_FLOW_FWD_DROP	5
+#define PPE_FLOW_FWD_TO_CPU	6
+
+/* Protocol encoding of a flow entry's two-bit protocol field. */
+#define PPE_FLOW_PROTO_OTHER	0
+#define PPE_FLOW_PROTO_TCP	1
+#define PPE_FLOW_PROTO_UDP	2
 
 /* --- Global --- */
 #define PPE_SWITCH_ID			0x0
@@ -70,6 +109,16 @@
 
 #define PPE_CLK_GATING_CTRL		0x8
 #define   PPE_QM_CLK_GATE_EN		BIT(4)
+
+/* GMAC LPI: an enable bit per port from port 1, a wake and an idle timer per
+ * port in microseconds, and the PPE clock cycles that make a microsecond.
+ * qca-ssdk uses the same layout for IPQ807x and IPQ60xx.
+ */
+#define PPE_LPI_ENABLE			0x400
+#define PPE_LPI_PORT_TIMER(port)	(0x400 + (port) * 0x4)
+#define   PPE_LPI_WAKEUP_TIMER		GENMASK(15, 0)
+#define   PPE_LPI_SLEEP_TIMER		GENMASK(31, 16)
+#define PPE_LPI_1US_CNT			0x430
 
 #define PPE_PORT_MUX_CTRL		0x10
 
@@ -238,6 +287,22 @@
 #define PPE_PORT_PARSING(port)		(PPE_IPR_BASE + (port) * 0x4)
 #define   PPE_PORT_PARSING_CORE		BIT(0)
 
+/* Eight TCP flag patterns, two to a register; a packet whose flags match a
+ * pattern under its mask raises exception PPE_EXCEP_TCP_FLAGS(n).
+ */
+#define PPE_L4_EXCEP_TCP_FLAGS(n)	(PPE_IPR_BASE + 0x28 + (n) / 2 * 0x4)
+#define   PPE_L4_EXCEP_FLAGS		GENMASK(5, 0)
+#define   PPE_L4_EXCEP_MASK		GENMASK(13, 8)
+#define   PPE_L4_EXCEP_SLOT_SHIFT	16
+
+/* Eight TCP flag patterns, two to a register; a packet whose flags match a
+ * pattern under its mask raises exception PPE_EXCEP_TCP_FLAGS(n).
+ */
+#define PPE_L4_EXCEP_TCP_FLAGS(n)	(PPE_IPR_BASE + 0x28 + (n) / 2 * 0x4)
+#define   PPE_L4_EXCEP_FLAGS		GENMASK(5, 0)
+#define   PPE_L4_EXCEP_MASK		GENMASK(13, 8)
+#define   PPE_L4_EXCEP_SLOT_SHIFT	16
+
 /* One register for both trunk groups, and in the parser rather than beside the
  * trunk member tables in L2.
  */
@@ -248,6 +313,16 @@
 #define   PPE_TRUNK_HASH_DIP		BIT(4)
 #define   PPE_TRUNK_HASH_L4_SPORT	BIT(5)
 #define   PPE_TRUNK_HASH_L4_DPORT	BIT(6)
+
+/* The ACL's user-defined fields: four 16-bit windows per packet class, each
+ * at an even offset from the L2, L3 or L4 header.
+ */
+#define PPE_ACL_UDF_CTRL(cls, w)	(PPE_IPR_BASE + 0x38 + \
+					 ((cls) * PPE_ACL_UDF_WINDOWS + (w)) * 4)
+#define   PPE_ACL_UDF_CLASSES		3	/* non-IP, IPv4, IPv6 */
+#define   PPE_ACL_UDF_WINDOWS		4
+#define   PPE_ACL_UDF_BASE		GENMASK(1, 0)	/* L2, L3, L4 */
+#define   PPE_ACL_UDF_OFFSET		GENMASK(13, 8)	/* 2-byte units */
 
 #define PPE_IPR_PKT_CNT(port)		(PPE_IPR_BASE + 0x80 + (port) * 0x4)
 #define PPE_IPR_BYTE_LO(port)		(PPE_IPR_BASE + 0xa0 + (port) * 0x4)
@@ -286,6 +361,7 @@
 #define   PPE_XLT_SVID_CMD		GENMASK(2, 1)
 #define   PPE_XLT_CVID_CMD		GENMASK(16, 15)
 #define   PPE_XLT_VID_DELETE		2
+#define   PPE_XLT_CVID			GENMASK(28, 17)
 
 #define PPE_XLT_ACTION_W1(idx)		(PPE_IVLAN_BASE + 0x4000 + (idx) * 0x10 + 0x4)
 #define   PPE_XLT_VSI_CMD		BIT(11)
@@ -410,6 +486,7 @@
 #define   PPE_ACL_MAC_HI		GENMASK(15, 0)	/* w1: bytes 1-0 */
 #define   PPE_ACL_CVID			GENMASK(11, 0)	/* w0; range min */
 #define   PPE_ACL_CPCP			GENMASK(18, 16)	/* w0 */
+#define   PPE_ACL_CDEI			BIT(19)		/* w0 */
 #define   PPE_ACL_CTAG_FMT		GENMASK(6, 4)	/* w1 */
 #define   PPE_ACL_STAG_FMT		GENMASK(9, 7)	/* w1 */
 /* The tag-format fields hold one frame format, not a bitmap of the formats a
@@ -420,13 +497,24 @@
 #define     PPE_ACL_TAG_TAGGED		4
 #define   PPE_ACL_L2_PROT		GENMASK(31, 16)	/* w0 */
 #define   PPE_ACL_PPPOE_SID		GENMASK(15, 0)	/* w1 */
+/* A UDF rule's three 16-bit slots run from bit 0 of w0; each has a valid
+ * bit, and two bits name the packet class.
+ */
+#define   PPE_ACL_UDF_VALID(slot)	BIT(16 + (slot))	/* w1 */
+#define   PPE_ACL_UDF_IS_IPV6		BIT(19)		/* w1 */
+#define   PPE_ACL_UDF_IS_IP		BIT(20)		/* w1 */
 #define   PPE_ACL_IP_PORT		GENMASK(15, 0)	/* w0: L4 or ICMP */
 #define   PPE_ACL_IP_LO			GENMASK(31, 16)	/* w0 */
 #define   PPE_ACL_IP_HI			GENMASK(15, 0)	/* w1 */
+#define   PPE_ACL_L3_PKT_TYPE		GENMASK(19, 17)	/* w1 */
+#define     PPE_ACL_PKT_TYPE_ARP	5
 #define   PPE_ACL_L3_LEN		GENMASK(15, 0)	/* w0; range min */
 #define   PPE_ACL_L3_PROT		GENMASK(23, 16)	/* w0 */
 #define   PPE_ACL_L3_DSCP		GENMASK(31, 24)	/* w0 */
+#define   PPE_ACL_FIRST_FRAG		BIT(0)		/* w1 */
 #define   PPE_ACL_TCP_FLAGS		GENMASK(6, 1)	/* w1 */
+#define   PPE_ACL_L3_TTL		GENMASK(9, 8)	/* w1: 0, 1, 255, other */
+#define     PPE_ACL_TTL_255		2
 #define   PPE_ACL_L3_FRAG		BIT(16)		/* w1 */
 #define   PPE_ACL_IS_IPV6		BIT(17)		/* w1 */
 #define   PPE_ACL_RANGE_EN		BIT(21)		/* w1 */
@@ -440,6 +528,8 @@
 #define     PPE_ACL_TYPE_IPV6_DIP0	6	/* +1, +2 for the rest */
 #define     PPE_ACL_TYPE_IPV6_SIP0	9
 #define     PPE_ACL_TYPE_IPMISC		12
+#define     PPE_ACL_TYPE_UDF0		13	/* windows 0-2 */
+#define     PPE_ACL_TYPE_UDF1		14	/* windows 1-3 */
 #define   PPE_ACL_SRC_TYPE		GENMASK(28, 27)	/* w1 */
 #define     PPE_ACL_SRC_PORT_BMP	0
 #define   PPE_ACL_SRC_LO		GENMASK(31, 29)	/* w1: ports 0-2 */
@@ -477,8 +567,11 @@
 #define   PPE_ACL_MIRROR_EN		BIT(17)		/* word 0 */
 #define   PPE_ACL_DSCP_TC_CHANGE_EN	BIT(14)		/* word 2 */
 #define   PPE_ACL_DSCP_TC		GENMASK(22, 15)	/* word 2 */
+#define   PPE_ACL_DSCP_TC_MASK		GENMASK(25, 18)	/* word 4: CPPE */
 #define   PPE_ACL_PRI_CHANGE_EN		BIT(3)		/* word 3 */
 #define   PPE_ACL_PRI			GENMASK(7, 4)	/* word 3 */
+#define   PPE_ACL_INT_DP_CHANGE_EN	BIT(8)		/* word 3 */
+#define   PPE_ACL_INT_DP		GENMASK(10, 9)	/* word 3 */
 #define   PPE_ACL_POLICER_EN		BIT(11)		/* word 3 */
 #define   PPE_ACL_POLICER_INDEX		GENMASK(20, 12)	/* word 3 */
 #define   PPE_ACL_QID_EN		BIT(21)		/* word 3 */
@@ -554,7 +647,12 @@
 
 #define PPE_PORT_BRIDGE_CTRL(port)	(PPE_L2_BASE + 0x300 + (port) * 0x4)
 #define   PPE_BRIDGE_NEW_LRN_EN		BIT(0)
+#define   PPE_BRIDGE_NEW_ADDR_CMD	GENMASK(2, 1)
 #define   PPE_BRIDGE_STA_MOVE_EN	BIT(3)
+#define   PPE_BRIDGE_STA_MOVE_CMD	GENMASK(5, 4)
+#define     PPE_BRIDGE_CMD_RDT_CPU	3
+#define   PPE_BRIDGE_LRN_EN		(PPE_BRIDGE_NEW_LRN_EN | \
+					 PPE_BRIDGE_STA_MOVE_EN)
 #define   PPE_BRIDGE_PORT_ISOL		GENMASK(15, 8)
 #define   PPE_PORT_BRIDGE_CTRL_TXMAC_EN	BIT(16)
 
@@ -579,9 +677,19 @@
 #define PPE_RFDB_TBL(idx)		(PPE_L2_BASE + 0x1000 + (idx) * 0x8)
 
 #define PPE_APP_CTRL(idx)		(PPE_L2_BASE + 0x1400 + (idx) * 0x10)
+/* First word: RFDB profiles 0-29, one bit each. */
+#define   PPE_APP_CTRL_VALID		BIT(0)
+#define   PPE_APP_CTRL_RFDB_INCL	BIT(1)
+#define   PPE_APP_CTRL_RFDB_BMP		GENMASK(31, 2)
+/* Second word. */
+#define   PPE_APP_CTRL_PROTO_INCL	BIT(2)
+#define   PPE_APP_CTRL_PROTO_BMP	GENMASK(28, 3)
+#define     PPE_APP_PROTO_IGMP		BIT(2)
+#define     PPE_APP_PROTO_MLD		BIT(6)
 /* Fields in the third 32-bit word of APP_CTRL. */
 #define   PPE_APP_CTRL_PORT_BITMAP_EN	BIT(2)
 #define   PPE_APP_CTRL_PORT_BITMAP	GENMASK(10, 3)
+#define   PPE_APP_CTRL_VLAN_FLTR_BYP	BIT(11)
 #define   PPE_APP_CTRL_STP_BYPASS	BIT(12)
 #define   PPE_APP_CTRL_CMD		GENMASK(16, 15)
 #define   PPE_APP_CTRL_REDIRECT_CPU	3
@@ -606,9 +714,8 @@
 #define   PPE_QOS_INFO_DSCP		GENMASK(13, 8)
 #define   PPE_QOS_INFO_DP		GENMASK(15, 14)
 
-/* The highest priority a packet may be given. The port's top four unicast
- * queues share an L0 node and a DRR node with its multicast queues, and the
- * scheduler cannot be told to rotate credit for two queues on one node.
+/* The highest priority a classifier may give a packet. The priorities above
+ * select the sparse list (PPE_QOS_SPARSE_PRI), which only the driver assigns.
  */
 #define PPE_QOS_MAX_PRI			11
 /* The internal priority of a flow the driver has found sparse: the list a
@@ -656,6 +763,10 @@
 #define PPE_PPPOE_SESSION_EXT(i)	(PPE_L3_BASE + 0xc60 + (i) * 0x4)
 #define   PPE_PPPOE_EXT_L3_IF_VALID	BIT(0)
 #define   PPE_PPPOE_EXT_UC_VALID	BIT(2)
+#define   PPE_PPPOE_EXT_SMAC_VALID	BIT(3)
+#define   PPE_PPPOE_EXT_SMAC_LO		GENMASK(31, 16)
+/* The top four bytes of the server address, the low two are in EXT. */
+#define PPE_PPPOE_SESSION_EXT1(i)	(PPE_L3_BASE + 0xca0 + (i) * 0x4)
 
 #define PPE_MY_MAC_TBL(i)		(PPE_L3_BASE + (i) * 0x8)
 #define   PPE_MY_MAC_ENTRIES		8
@@ -668,6 +779,23 @@
 #define PPE_L3_VSI_TBL(vsi)		(PPE_L3_BASE + 0x40 + (vsi) * 0x4)
 #define   PPE_L3_VSI_IF_VALID		BIT(0)
 #define   PPE_L3_VSI_IF_INDEX		GENMASK(8, 1)
+
+/* Per exception: what happens to the frame, and whether the exception is
+ * raised at all for a packet that hit a routed flow entry.
+ */
+#define PPE_L3_EXCEPTIONS		72
+#define PPE_EXCEP_TCP_FLAGS(n)		(46 + (n))
+#define PPE_EXCEP_IPV4_OPTION		6
+#define PPE_EXCEP_IPV6_EXT_HDR		25
+#define PPE_EXCEP_IPV6_MORE_EXT_HDR	32
+#define PPE_EXCEP_TCP_HDR_SHORT		42
+#define PPE_EXCEP_UDP_HDR_SHORT		55
+/* The TCP flags trapped from offloaded flows, one pattern each. */
+#define PPE_FLOW_TCP_TRAP		(TCPHDR_FIN | TCPHDR_SYN | TCPHDR_RST)
+#define PPE_L3_EXCEP_CMD(e)		(PPE_L3_BASE + 0x544 + (e) * 0x4)
+#define   PPE_L3_EXCEP_ACTION		GENMASK(1, 0)
+#define     PPE_L3_EXCEP_RDT_TO_CPU	3
+#define PPE_L3_EXCEP_L3_FLOW_EN(e)	(PPE_L3_BASE + 0x9c4 + (e) * 0x4)
 
 #define PPE_FLOW_CTRL0			(PPE_L3_BASE + 0x368)
 #define   PPE_FLOW_EN			BIT(0)
@@ -786,6 +914,9 @@
 #define   PPE_FLOW_E_FWD_TYPE_LEN	3
 #define   PPE_FLOW_E_NEXTHOP_OFF	32
 #define   PPE_FLOW_E_NEXTHOP_LEN	12
+/* Native bridge forwarding overlays the next-hop with an 8-bit port. */
+#define   PPE_FLOW_E_BRIDGE_PORT_OFF	32
+#define   PPE_FLOW_E_BRIDGE_PORT_LEN	8
 #define   PPE_FLOW_E_PORT_VALID_OFF	44
 #define   PPE_FLOW_E_PORT_VALID_LEN	1
 #define   PPE_FLOW_E_PORT_OFF		45
@@ -900,6 +1031,7 @@
 #define   PPE_ACL_METER_EN		BIT(0)		/* word 0 */
 #define   PPE_ACL_METER_MODE		BIT(3)		/* word 0 */
 #define   PPE_ACL_METER_TOKEN_UNIT	GENMASK(6, 4)	/* word 0 */
+#define   PPE_ACL_METER_UNIT		BIT(7)		/* word 0: packets */
 #define   PPE_ACL_METER_CBS		GENMASK(23, 8)	/* word 0 */
 #define   PPE_ACL_METER_CIR_LO		GENMASK(31, 24)	/* word 0 */
 #define   PPE_ACL_METER_CIR_HI		GENMASK(9, 0)	/* word 1 */
@@ -908,6 +1040,11 @@
  * the second - the port meter's table one block over, per meter index.
  */
 #define PPE_ACL_METER_CRDT(i)		(PPE_POLICER_BASE + 0x8000 + (i) * 0x10)
+
+/* Green, yellow and red counters per meter, laid out like PPE_ACL_CNT. */
+#define PPE_ACL_METER_CNT(i, c)		(PPE_POLICER_BASE + 0x10000 + \
+					 ((i) * 3 + (c)) * 0x10)
+#define   PPE_METER_CNT_RED		2
 
 #define PPE_PORT_METER_W0(p)		(PPE_POLICER_BASE + 0xc000 + (p) * 0x10)
 #define   PPE_METER_EN			BIT(0)
@@ -1090,6 +1227,7 @@
 #define PPE_QM_AC_UNI_W2(i)		(PPE_QM_BASE + 0x48000 + (i) * 0x10 + 0x8)
 #define PPE_QM_AC_UNI_W3(i)		(PPE_QM_BASE + 0x48000 + (i) * 0x10 + 0xc)
 #define   PPE_AC_EN			BIT(0)
+#define   PPE_AC_WRED_EN		BIT(1)
 /* The vendor calls this FORCE_AC_EN and the in-kernel ppe driver calls it
  * FC_EN; measured, it is what makes the limit bind. A queue held to twelve
  * buffers under a 20 Mbit/s ceiling passes 5 Mbit/s with this set and the
@@ -1097,10 +1235,22 @@
  * The vendor leaves it clear, and so does this driver until a port is shaped.
  */
 #define   PPE_AC_FORCE_AC_EN		BIT(2)
+#define   PPE_AC_COLOR_AWARE		BIT(3)
 #define   PPE_AC_GRP_ID			GENMASK(5, 4)
+#define PPE_AC_GROUPS			4
 #define   PPE_AC_SHARED_DYNAMIC		BIT(17)
 #define   PPE_AC_SHARED_WEIGHT		GENMASK(20, 18)
 #define   PPE_AC_SHARED_CEILING		GENMASK(31, 21)
+/* W1: how far below the limit a green frame starts to be dropped early. */
+#define   PPE_AC_GAP_GRN_MIN		GENMASK(10, 0)
+/* The yellow and red limits and early-drop starts, as gaps below the green
+ * limit; the yellow start straddles W1 and W2.
+ */
+#define   PPE_AC_GAP_YEL_MAX		GENMASK(21, 11)
+#define   PPE_AC_GAP_YEL_MIN_LO		GENMASK(31, 22)
+#define   PPE_AC_GAP_YEL_MIN_HI		BIT(0)		/* W2 */
+#define   PPE_AC_GAP_RED_MAX		GENMASK(11, 1)	/* W2 */
+#define   PPE_AC_GAP_RED_MIN		GENMASK(22, 12)	/* W2 */
 #define   PPE_AC_GRN_RESUME_OFF		GENMASK(23, 13)
 
 #define PPE_QM_AC_MUL_W0(i)		(PPE_QM_BASE + 0x4a000 + (i) * 0x10)
@@ -1166,6 +1316,10 @@
 #define PPE_MAX_SP_PRI			8
 #define PPE_L0_QUEUES			300
 #define PPE_L0_UCAST_QUEUES		256
+/* The CPU port's unicast queues the L0 scheduler serves (l0_port0[]). */
+#define PPE_CPU_UCAST_QUEUES		12
+/* First unicast queue of a user port. */
+#define PPE_PORT_UCAST_BASE		144
 
 #define PPE_BM_BUF_SIZE			256
 #define PPE_BM_PORTS			15
@@ -1196,7 +1350,10 @@
 #define PPE_XLT_TBL_NUM			64
 #define QCA_PPE_ROUTED_XLT_SLOTS	8
 #define PPE_XLT_MISS_RDT_TO_CPU		3
+#define PPE_XLT_MISS_DROP		1
+#define PPE_XLT_CVID_ADDORREPLACE	1
 #define PPE_XLT_CVID_DEL		2
+#define PPE_XLT_CKEY_PRIO_TAGGED	2
 #define PPE_XLT_CKEY_TAGGED		4
 
 #define PPE_EG_UNTAGGED			0
@@ -1228,6 +1385,7 @@ enum ppe_type {
 
 struct ppe_data {
 	enum ppe_type type;
+	bool bridge_flow;
 	u8 num_ports;
 	u8 num_gmacs;
 	u8 mru_mtu_ctrl_stride;
@@ -1257,6 +1415,7 @@ enum ppe_flow_reject {
 	PPE_REJECT_ACTION,
 	PPE_REJECT_L2,
 	PPE_REJECT_EGRESS_PORT,
+	PPE_REJECT_CPU_PATH,
 	PPE_REJECT_HAIRPIN,
 	PPE_REJECT_NAT_BOTH,
 	PPE_REJECT_NAT_IPV6,
@@ -1284,10 +1443,68 @@ struct ppe_flow_reject_info {
 	u64 actions;
 };
 
+#define PPE_FLOW_FAILURE_HISTORY	32
+
+/* Bounded control-plane failures. Never retain rule or netdevice pointers. */
+struct ppe_flow_failure {
+	struct ppe_flow_reject_info rule;
+	u64 sequence;
+	u64 boottime_ns;
+	int error;
+	u32 command_id;
+	u32 result_reg;
+	u32 result;
+	bool result_valid;
+	bool pending;
+	u32 expected_index;
+	bool index_mode;
+	bool result_rejected;
+	u8 op_type;
+	u8 entry_words;
+	u8 host_words;
+	bool request_issued;
+	u32 entry[PPE_FLOW_ENTRY_WORDS_V6];
+	u32 host[PPE_HOST_ENTRY_WORDS_V6];
+};
+
+/* A consumed completion for a different slot cannot retire our leases. */
+struct ppe_flow_completion_mismatch {
+	u64 sequence;
+	u64 boottime_ns;
+	u32 command_id;
+	u32 result_reg;
+	u32 result;
+	u32 expected_index;
+	u32 returned_index;
+};
+
 /* One slot of a reference-counted hardware side table. */
 struct ppe_res {
 	u32 words[PPE_NEXTHOP_WORDS];
 	int refcount;
+};
+
+/* An uplink routes on a VSI of its own, separate from the L2 bridge, so its
+ * download direction reaches the flow lookup: one per port and VLAN, shared by
+ * every flow and PPPoE session over it. A session names the uplink's VSI as
+ * its L3 interface; the hardware tells sessions apart by id and port alone.
+ */
+#define PPE_PPPOE_SESSIONS		16
+
+struct ppe_uplink {
+	u16 ref;
+	u16 vid;
+	u8 port;
+	s8 vsi;
+	s8 mymac;
+	int xlt;
+};
+
+struct ppe_pppoe_session {
+	u16 ref;
+	u16 sid;
+	u8 smac[ETH_ALEN];
+	u8 uplink;
 };
 
 struct qca_ppe_bridge_vsi {
@@ -1306,8 +1523,22 @@ struct qca_ppe_vlan_entry {
 	int xlt_pvid_idx;
 };
 
-/* Defined beside the MIB table that dimensions it. */
-struct qca_ppe_mib_stats;
+/* What a counter has reached, and the raw register value that total was last
+ * brought up to date from.
+ */
+struct qca_ppe_mib_stats {
+	u64 total;
+	u64 last;
+};
+
+/* A packet-and-byte counter table entry: 32-bit packets, then 40-bit bytes. */
+#define PPE_CNT_WORDS			3
+
+/* The queue-side ethtool counters of a user port at most: eight for each of
+ * its sixteen unicast queues, five for each multicast queue, two buffer
+ * manager drops and three meter colours.
+ */
+#define PPE_QSTATS_MAX			(16 * 8 + PPE_MUL_QUEUES_PORT * 5 + 2 + 3)
 
 /* A traffic class's rate and the scheduler node that will carry it, worked out
  * before any of it is programmed.
@@ -1316,21 +1547,104 @@ struct ppe_class_shaper {
 	u32 cfg;
 	u32 credit;
 	u32 slot;
+	u64 min_bps;
 	u64 rate_bps;
 };
 
-/* What a port's offloaded tbf was given, so that a stats read can be a delta and
+/* An offloaded red: the port's unicast queues it holds, and the counters its
+ * last stats reads saw.
+ */
+struct ppe_red {
+	u32 handle;
+	u8 first;
+	u8 count;
+	u64 base_bytes;
+	u32 base_pkts;
+	u32 base_drops;
+	u32 base_backlog;
+	u32 base_early;
+	u32 base_pdrop;
+	u32 base_dp_drops[3];
+	bool gred;
+};
+
+/* One red per band of an offloaded ets or prio, and one for the whole port. */
+#define PPE_RED_SCOPES			4
+
+/* A port's offloaded qdisc state, kept so that a stats read can be a delta and
  * its queues can be resized without the rate being asked for again.
  */
 struct ppe_port_shaper {
 	u32 tbf_handle;
 	u32 bands_handle;
+	struct ppe_red band_tbf;
+	u32 drr_handle;
 	u32 limit;
 	u64 rate_bps;
 	u64 queue_rate[PPE_QOS_MAX_PRI + 1];
+	struct ppe_red red[PPE_RED_SCOPES];
 	u64 base_bytes;
 	u32 base_pkts;
 	u32 base_drops;
+	u32 base_backlog;
+	u64 base_host_bytes;
+	u64 base_host_pkts;
+	/* Offloaded mqprio qdiscs on the port: two while a replacement is
+	 * installed and the qdisc it replaces not yet gone.
+	 */
+	u8 mqprio_users;
+};
+
+#define PPE_SB_EGRESS_TCS	16
+
+/* The queues the AQM watches: every hashed queue of a shaped user port and the
+ * CPU port's download band.
+ */
+#define PPE_AQM_QUEUES		128
+/* a port's own shaper and one per band, and the CPU port's band */
+#define PPE_AQM_GROUPS		(3 * PPE_NUM_PORTS + 1)
+
+/* One queue under the AQM and the bottleneck group it drains through. */
+struct ppe_aqm_queue {
+	u16 queue;
+	u8 group;
+	u8 frame_bufs;
+	u64 squeezes;
+	bool squeezed;
+};
+
+/* A bottleneck: the queues that share one shaper, its rate, and CoDel's
+ * state for the delay a frame entering any of them sees, in nanoseconds.
+ */
+struct ppe_aqm_group {
+	u64 rate_bps;
+	u64 first_above;
+	u64 drop_next;
+	u32 count;
+	u32 lastcount;
+	u64 drops;
+	bool dropping;
+};
+
+struct ppe_aqm {
+	struct task_struct *task;
+	wait_queue_head_t wait;
+	/* Guards the queue list and every write of a unicast queue's
+	 * admission control, which the AQM shares with the qdisc offloads.
+	 */
+	struct mutex lock;
+	u16 nqueues;
+	u8 ngroups;
+	struct ppe_aqm_queue q[PPE_AQM_QUEUES];
+	struct ppe_aqm_group g[PPE_AQM_GROUPS];
+	u64 ticks;
+	u64 squeezes;
+	u64 busy_ns;
+};
+
+struct ppe_sb_occ {
+	u32 cur;
+	u32 max;
 };
 
 /* RTL9303 transports an external DSA user port over the PPE conduit as a
@@ -1359,6 +1673,15 @@ struct qca_ppe_priv {
 	 * reused. The result queue is consumed once, even if host readback fails. */
 	bool flow_op_busy, flow_op_result_valid;
 	u32 flow_op_cmd_id, flow_op_result, flow_op_rslt_reg;
+	bool flow_op_index_mode, flow_op_result_rejected;
+	u32 flow_op_expected_index;
+	u8 flow_op_type, flow_op_nentry, flow_op_nhost;
+	bool flow_op_request_issued;
+	u32 flow_op_entry[PPE_FLOW_ENTRY_WORDS_V6];
+	u32 flow_op_host[PPE_HOST_ENTRY_WORDS_V6];
+	u64 flow_completion_sequence;
+	struct ppe_flow_completion_mismatch
+		flow_completion_mismatches[PPE_FLOW_FAILURE_HISTORY];
 	unsigned long *host_retired;
 	u32 host_retire_pending, host_retire_index;
 	bool flow_stopping;
@@ -1370,16 +1693,52 @@ struct qca_ppe_priv {
 	struct ppe_res *nexthop;
 	struct ppe_res *my_mac;
 	u16 *host_ref;
-	u16 l3_if_ref[PPE_VSI_MAX];
-	/* A tagged PPPoE WAN port routes on its own VSI, separate from the L2
-	 * bridge, so its download direction reaches the flow lookup. Allocated
-	 * with the first offloaded flow on the port and shared by the rest.
+	/* One immutable RCU snapshot for each CPU-egress hardware index. */
+	struct ppe_flow_binding __rcu **flow_slot;
+	atomic_t flow_xmit_drop;
+	atomic_t flow_xmit_stale;
+	atomic_t flow_shaper_miss;
+	/* The shaper devices this driver created for a direction, download
+	 * first, NULL for none, and how often one found the conduit's queue
+	 * full and left the frame in its qdisc.
 	 */
-	s8 wan_vsi[QCA_PPE_MAX_PORTS];
-	s8 wan_mymac[QCA_PPE_MAX_PORTS];
-	u16 wan_ref[QCA_PPE_MAX_PORTS];
-	int wan_xlt[QCA_PPE_MAX_PORTS];
-	u16 wan_vid[QCA_PPE_MAX_PORTS];
+	struct net_device *shaper_dev[2];
+	/* What marks a frame ppe_flow_xmit() built for a switch port to the
+	 * shaper device it passes, by port: a dst only this driver holds.
+	 */
+	struct metadata_dst *shaper_md[PPE_NUM_PORTS];
+	atomic_t shaper_busy;
+	bool ct_dscp;
+	/* The software shapers offloaded flows are handed to: the ifb carrying
+	 * the download qdisc and the uplink device carrying the upload one, by
+	 * ifindex and by the name they were set by. Zero is none. Written under
+	 * flow_lock, read locklessly on the receive path.
+	 */
+	int dl_shaper;
+	int ul_shaper;
+	char dl_shaper_name[IFNAMSIZ];
+	char ul_shaper_name[IFNAMSIZ];
+	/* The WAN's L3 device, named apart from the shapers so that its path
+	 * is known when only the download is shaped; zero for none, when the
+	 * upload shaper's device stands in for it.
+	 */
+	int uplink_dev;
+	char uplink_name[IFNAMSIZ];
+	/* Where the uplink device meets the switch: the port, and the VLAN and
+	 * PPPoE session on it, zero for none. ul_port is -1 while the path is
+	 * not known. Written under flow_lock.
+	 */
+	int ul_port;
+	u16 ul_vid;
+	u16 ul_sid;
+	/* The PPPoE peer's address and the uplink's own, as u64, for upload
+	 * frames the shaper device builds itself; read locklessly.
+	 */
+	u64 ul_h_dest;
+	u64 ul_h_source;
+	u16 l3_if_ref[PPE_VSI_MAX];
+	struct ppe_uplink uplink[PPE_PPPOE_SESSIONS];
+	struct ppe_pppoe_session pppoe[PPE_PPPOE_SESSIONS];
 	struct ppe_dsa_service dsa_service[QCA_PPE_DSA_SERVICE_MAX];
 	u16 dsa_core_ingress_refs[QCA_PPE_MAX_PORTS];
 	u16 dsa_core_egress_refs[QCA_PPE_MAX_PORTS];
@@ -1387,6 +1746,11 @@ struct qca_ppe_priv {
 	u32 dsa_core_egress_base;
 	u32 flow_reject[PPE_REJECT_MAX];
 	struct ppe_flow_reject_info flow_reject_info[PPE_REJECT_MAX];
+	u64 flow_failure_sequence;
+	struct ppe_flow_failure flow_failures[PPE_FLOW_FAILURE_HISTORY];
+	u32 flow_hw_errors[6];
+	/* Which devices the NSS firmware forwards to, while it runs. */
+	bool (__rcu *fw_carries)(int ifindex);
 	u32 flow_offloaded;
 	u32 flow_reinstalled;
 	u32 flow_destroy_miss;
@@ -1402,13 +1766,15 @@ struct qca_ppe_priv {
 	u32 flow_profile_inplace;
 	u32 flow_profile_failed;
 	u32 flow_profile_rollback_failed;
-	u64 wifi_slot_generation;
 	/* Guards the VSI, translation-index and bridge-VLAN state, and the
 	 * read-modify-write an MDB update makes of an FDB entry. The switchdev
 	 * ops reach it under rtnl, the FDB and MDB work from a workqueue that
 	 * holds none. Taken after flow_lock wherever both are needed.
 	 */
 	struct mutex vlan_lock;
+	/* Serializes the MRU/MTU entries, which the NSS firmware rewrites. */
+	struct mutex mtu_lock;
+	u32 port_frame_size[QCA_PPE_MAX_PORTS];
 	/* Free entries of every ACL hardware list. Guarded by its own lock
 	 * because the small-packet module parameters reach the table from a
 	 * writer that holds no rtnl.
@@ -1417,15 +1783,45 @@ struct qca_ppe_priv {
 	DECLARE_BITMAP(acl_meter_used, PPE_ACL_METER_ENTRIES);
 	struct list_head acl_rules;
 	struct mutex acl_lock;
-	s8 mirror_port;
-	u16 mirror_ref;
+	u32 acl_udf_ctrl[PPE_ACL_UDF_CLASSES][PPE_ACL_UDF_WINDOWS];
+	u32 acl_udf_refs[PPE_ACL_UDF_CLASSES][PPE_ACL_UDF_WINDOWS];
+	/* Indexed by direction: egress 0, ingress 1. */
+	u8 mirror_port[2];
+	u16 mirror_ref[2];
 	u8 mirror_dir_ref[QCA_PPE_MAX_PORTS][2];
 	struct ppe_port_shaper shaper[QCA_PPE_MAX_PORTS];
+	/* Negotiated link pause, suppressed while a shaper is active. */
+	bool port_tx_pause[PPE_NUM_PORTS];
+	/* Each egress admission group's kind, depth in buffers and ports; a
+	 * group with no port is free.
+	 */
+	struct ppe_ac_grp {
+		u8 kind;
+		u8 ports;
+		u32 bufs;
+	} ac_grp[PPE_AC_GROUPS];
+	struct ppe_sb_occ sb_occ_ing[PPE_NUM_PORTS];
+	struct ppe_sb_occ sb_occ_eg[PPE_NUM_PORTS][PPE_SB_EGRESS_TCS];
+	/* A red's static limit and early drop gap per unicast queue, in
+	 * buffers; a limit of zero is a queue with no red.
+	 */
+	u16 red_max[PPE_L0_UCAST_QUEUES];
+	u16 red_gap[PPE_L0_UCAST_QUEUES];
+	/* GRED: yellow max/min and red max/min gaps; zero for a colour-blind red. */
+	u16 gred_gap[PPE_L0_UCAST_QUEUES][4];
+	DECLARE_BITMAP(gred_queues, PPE_L0_UCAST_QUEUES);
+	/* Each unicast queue's admission control word 0 as configured, which a
+	 * queue the AQM squeezed returns to.
+	 */
+	u32 ac_w0[PPE_L0_UCAST_QUEUES];
+	struct ppe_aqm aqm;
 	struct dentry *debugfs;
+	struct devlink_region *regions[3];
 	DECLARE_BITMAP(vsi_bitmap, PPE_VSI_MAX);
 	DECLARE_BITMAP(vsi_retired, PPE_VSI_MAX);
 	u16 vsi_flow_refs[PPE_VSI_MAX];
 	DECLARE_BITMAP(xlt_bitmap, PPE_XLT_TBL_NUM);
+	/* The VSI each port is bound to, 0 outside a bridge. */
 	u32 port_vsi[QCA_PPE_MAX_PORTS];
 	/* The member mask each VSI was last programmed with, so a bridge flag
 	 * that narrows a flood class can reprogram every VSI it reaches.
@@ -1439,12 +1835,15 @@ struct qca_ppe_priv {
 	 */
 	u8 trunk_members[PPE_TRUNK_GROUPS];
 	u8 trunk_tx[PPE_TRUNK_GROUPS];
+	/* The groups an active-backup bond owns, one bit each. */
+	u8 trunk_backup;
 	u32 trunk_hash;
 	struct qca_ppe_bridge_vsi bridges[QCA_PPE_MAX_BRIDGES];
 	struct qca_ppe_vlan_entry vlans[PPE_VSI_MAX];
 	struct net_device *port_br_dev[QCA_PPE_MAX_PORTS];
 	u32 vlan_filtering;
 	struct notifier_block netdev_nb;
+	struct notifier_block flow_switchdev_nb;
 	u16 port_pvid[QCA_PPE_MAX_PORTS];
 	struct clk *ppe_clk;
 	struct clk *port_rx_clk[QCA_PPE_MAX_PORTS];
@@ -1454,7 +1853,8 @@ struct qca_ppe_priv {
 	bool mib_xgmac[QCA_PPE_MAX_PORTS];
 	bool mib_rebase[QCA_PPE_MAX_PORTS];
 	struct qca_ppe_mib_stats *port_mib;
-	/* Guards port_mib, port_xgmac, mib_xgmac and mib_rebase; get_stats64
+	struct qca_ppe_mib_stats *port_qstats;
+	/* Guards port_mib, port_qstats, port_xgmac, mib_xgmac and mib_rebase; get_stats64
 	 * takes it in atomic context, so it is never a mutex.
 	 */
 	spinlock_t mib_lock;
@@ -1471,6 +1871,14 @@ extern const struct bm_tdm_data hppe_bm_tdm_data;
 /* Set or read a field of a multi-word hardware table entry. Such a field
  * straddles 32-bit boundaries, so neither can be expressed with FIELD_PREP.
  */
+static inline void ppe_entry_clear(u32 *words, u32 offset, u32 len)
+{
+	u32 i;
+
+	for (i = offset; i < offset + len; i++)
+		words[i / 32] &= ~BIT(i % 32);
+}
+
 static inline void ppe_entry_set(u32 *words, u32 offset, u32 len, u64 val)
 {
 	u32 word = offset / 32;
@@ -1515,10 +1923,18 @@ struct flow_cls_offload;
 #define PPE_DEVLINK_SB		0
 
 void ppe_scheduler_init(struct qca_ppe_priv *priv);
-void ppe_scheduler_ready(struct qca_ppe_priv *priv);
-void ppe_scheduler_unready(void);
+int ppe_scheduler_ready(struct qca_ppe_priv *priv);
+void ppe_scheduler_unready(struct qca_ppe_priv *priv);
 void ppe_scheduler_exit(struct qca_ppe_priv *priv);
 void ppe_port_queues_enable(struct qca_ppe_priv *priv, int port, bool en);
+bool ppe_port_shaped(struct qca_ppe_priv *priv, int port);
+void ppe_port_queue_mtu_changed(struct qca_ppe_priv *priv, int port);
+void ppe_pause_update(struct qca_ppe_priv *priv);
+u32 ppe_port_queue_drops(struct qca_ppe_priv *priv, int port);
+struct seq_file;
+int ppe_aqm_show(struct seq_file *s, void *unused);
+int ppe_port_qstats(struct qca_ppe_priv *priv, int port, u8 **names,
+		    struct qca_ppe_mib_stats *st);
 int qca_ppe_setup_tc(struct dsa_switch *ds, int port, enum tc_setup_type type,
 		     void *type_data);
 int qca_ppe_devlink_sb_setup(struct dsa_switch *ds);
@@ -1529,6 +1945,33 @@ int qca_ppe_devlink_sb_pool_set(struct dsa_switch *ds, unsigned int sb_index,
 				u16 pool_index, u32 size,
 				enum devlink_sb_threshold_type threshold_type,
 				struct netlink_ext_ack *extack);
+int qca_ppe_devlink_sb_port_pool_get(struct dsa_switch *ds, int port,
+				     unsigned int sb_index, u16 pool_index,
+				     u32 *p_threshold);
+int qca_ppe_devlink_sb_port_pool_set(struct dsa_switch *ds, int port,
+				     unsigned int sb_index, u16 pool_index,
+				     u32 threshold,
+				     struct netlink_ext_ack *extack);
+int qca_ppe_devlink_sb_tc_pool_bind_get(struct dsa_switch *ds, int port,
+					unsigned int sb_index, u16 tc_index,
+					enum devlink_sb_pool_type pool_type,
+					u16 *p_pool_index, u32 *p_threshold);
+int qca_ppe_devlink_sb_tc_pool_bind_set(struct dsa_switch *ds, int port,
+					unsigned int sb_index, u16 tc_index,
+					enum devlink_sb_pool_type pool_type,
+					u16 pool_index, u32 threshold,
+					struct netlink_ext_ack *extack);
+int qca_ppe_devlink_sb_occ_snapshot(struct dsa_switch *ds,
+				    unsigned int sb_index);
+int qca_ppe_devlink_sb_occ_max_clear(struct dsa_switch *ds,
+				     unsigned int sb_index);
+int qca_ppe_devlink_sb_occ_port_pool_get(struct dsa_switch *ds, int port,
+					 unsigned int sb_index, u16 pool_index,
+					 u32 *p_cur, u32 *p_max);
+int qca_ppe_devlink_sb_occ_tc_port_bind_get(struct dsa_switch *ds, int port,
+					    unsigned int sb_index, u16 tc_index,
+					    enum devlink_sb_pool_type pool_type,
+					    u32 *p_cur, u32 *p_max);
 int qca_ppe_port_get_dscp_prio(struct dsa_switch *ds, int port, u8 dscp);
 int qca_ppe_port_add_dscp_prio(struct dsa_switch *ds, int port, u8 dscp,
 			       u8 prio);
@@ -1553,10 +1996,13 @@ int qca_ppe_port_mirror_add(struct dsa_switch *ds, int port,
 void qca_ppe_port_mirror_del(struct dsa_switch *ds, int port,
 			     struct dsa_mall_mirror_tc_entry *mirror);
 int qca_ppe_port_policer_add(struct dsa_switch *ds, int port,
-			     struct dsa_mall_policer_tc_entry *policer);
+			     const struct flow_action_police *policer,
+			     struct netlink_ext_ack *extack);
 void qca_ppe_port_policer_del(struct dsa_switch *ds, int port);
 int ppe_token_bucket(unsigned long clk, u32 slot, u64 rate_bps, u32 burst,
 		     u32 cir_max, u32 cbs_max, u32 *cir, u32 *cbs);
+int ppe_police_rate(const struct flow_action_police *p, u64 *rate_bps,
+		    u32 *burst);
 
 int ppe_vsi_alloc(struct qca_ppe_priv *priv);
 void ppe_vsi_free(struct qca_ppe_priv *priv, u32 vsi);
@@ -1573,8 +2019,6 @@ int ppe_dsa_core_port_set_base(struct qca_ppe_priv *priv, int port, bool core);
 int qca_ppe_port_vlan_filtering(struct dsa_switch *ds, int port,
 				bool vlan_filtering,
 				struct netlink_ext_ack *extack);
-struct qca_ppe_vlan_entry *
-ppe_vlan_find(struct qca_ppe_priv *priv, struct net_device *br_dev, u16 vid);
 int qca_ppe_port_vlan_add(struct dsa_switch *ds, int port,
 			  const struct switchdev_obj_port_vlan *vlan,
 			  struct netlink_ext_ack *extack);
@@ -1582,6 +2026,9 @@ int qca_ppe_port_vlan_del(struct dsa_switch *ds, int port,
 			  const struct switchdev_obj_port_vlan *vlan);
 
 void ppe_flow_init(struct qca_ppe_priv *priv);
+void ppe_flow_excep_init(struct qca_ppe_priv *priv);
+void ppe_qm_pri_map_init(struct qca_ppe_priv *priv);
+void ppe_flow_qos_init(struct qca_ppe_priv *priv);
 int ppe_flow_op(struct qca_ppe_priv *priv, u32 op_type,
 		const u32 *entry, int nentry, const u32 *host, int nhost,
 		u32 *index, u32 *host_index);
@@ -1596,7 +2043,6 @@ int ppe_flow_entry_delete(struct qca_ppe_priv *priv, u32 index);
 void ppe_flow_debugfs_init(struct qca_ppe_priv *priv);
 void ppe_flow_offload_debugfs_init(struct qca_ppe_priv *priv);
 
-
 unsigned long ppe_clk_rate(struct qca_ppe_priv *priv);
 void ppe_debugfs_init(struct qca_ppe_priv *priv);
 void ppe_debugfs_exit(struct qca_ppe_priv *priv);
@@ -1607,20 +2053,35 @@ int qca_ppe_cls_flower_add(struct dsa_switch *ds, int port,
 			   struct flow_cls_offload *cls, bool ingress);
 int qca_ppe_cls_flower_del(struct dsa_switch *ds, int port,
 			   struct flow_cls_offload *cls, bool ingress);
+int qca_ppe_cls_flower_stats(struct dsa_switch *ds, int port,
+			     struct flow_cls_offload *cls, bool ingress);
 int qca_ppe_set_rxnfc(struct dsa_switch *ds, int port,
 		      struct ethtool_rxnfc *nfc);
 int qca_ppe_get_rxnfc(struct dsa_switch *ds, int port,
 		      struct ethtool_rxnfc *nfc, u32 *rule_locs);
 int ppe_mirror_analyzer_get(struct qca_ppe_priv *priv, int to_port);
 void ppe_mirror_analyzer_put(struct qca_ppe_priv *priv);
-int qca_ppe_setup_tc(struct dsa_switch *ds, int port, enum tc_setup_type type,
-		     void *type_data);
 struct flow_block_offload;
 
 int ppe_setup_ft_block(struct qca_ppe_priv *priv,
 		       struct flow_block_offload *f);
 int ppe_flow_offload_init(struct qca_ppe_priv *priv);
+bool ppe_flow_xmit(struct dsa_switch *ds, struct sk_buff *skb, u32 flow);
+void ppe_flow_shaper_get(struct qca_ppe_priv *priv, bool upload, char *name);
+void ppe_flow_ct_dscp_set(struct qca_ppe_priv *priv, bool on);
+void ppe_flow_uplink_get(struct qca_ppe_priv *priv, char *name);
+int ppe_flow_uplink_set(struct qca_ppe_priv *priv, const char *name);
+int ppe_flow_shaper_set(struct qca_ppe_priv *priv, bool upload,
+			const char *name);
+
+#define PPE_XDEV_IFINDEX	GENMASK_ULL(31, 0)
+/* The PPE built the frame's link headers, PPPoE and VLAN included. */
+#define PPE_XDEV_PUSH		BIT_ULL(32)
+#define PPE_XDEV_DL		BIT_ULL(33)
+#define PPE_XDEV_UL		BIT_ULL(34)
 void ppe_flow_purge_vsi(struct qca_ppe_priv *priv, u32 vsi);
+void ppe_flow_fw_purge(struct qca_ppe_priv *priv);
+void ppe_flow_purge_bridge_port(struct qca_ppe_priv *priv, int port);
 void ppe_flow_offload_exit(struct qca_ppe_priv *priv);
 
 #endif
