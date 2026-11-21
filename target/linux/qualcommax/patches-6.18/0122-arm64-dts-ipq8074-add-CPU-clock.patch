@@ -13,11 +13,12 @@ Signed-off-by: Robert Marko <robimarko@gmail.com>
 
 --- a/arch/arm64/boot/dts/qcom/ipq8074.dtsi
 +++ b/arch/arm64/boot/dts/qcom/ipq8074.dtsi
-@@ -5,6 +5,7 @@
+@@ -5,7 +5,8 @@
  
  #include <dt-bindings/interrupt-controller/arm-gic.h>
  #include <dt-bindings/clock/qcom,gcc-ipq8074.h>
 +#include <dt-bindings/clock/qcom,apss-ipq.h>
+ #include <dt-bindings/clock/qcom,ipq8074-cmn-pll.h>
  
  / {
  	#address-cells = <2>;
