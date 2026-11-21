@@ -258,6 +258,7 @@ jobs:
         run: |
           set -euo pipefail
           sh scripts/tests/test-gwrt-socinfo.sh || echo "socinfo test skipped"
+          sh scripts/tests/test-gwrt-preset-apk.sh
           python3 scripts/tests/test-gwrt-wifiroam.py || echo "wifiroam test skipped"
 
       - name: Preflight TYFZA1 UBIFS seed
@@ -436,7 +437,7 @@ jobs:
           print(f'PASS: sysupgrade FIT embeds the built Image ({len(kernel)} bytes); '
                 f'device rootfs matches ({len(expected)} bytes standalone, {root.size} bytes in tar)')
           PY
-          for package in kmod-rtl-ax-ap tyfza1-wifi-firmware tyfza1-pon-control tyfza1-storage luci-app-tyfza1-pon honk gwrt-wifiroam-v5 gwrt-mesh-apmode; do
+          for package in kmod-rtl-ax-ap tyfza1-wifi-firmware tyfza1-pon-control tyfza1-storage luci-app-tyfza1-pon honk gwrt-device-defaults gwrt-wifiroam-v5 gwrt-mesh-apmode; do
             awk -v pkg="$package" '$1 == pkg { found = 1 } END { exit !found }' "${manifests[0]}" || {
               echo "Missing from TYFZA1 manifest: $package" >&2
               exit 1
