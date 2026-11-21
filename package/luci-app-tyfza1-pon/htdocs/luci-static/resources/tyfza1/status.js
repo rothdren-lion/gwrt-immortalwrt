@@ -68,18 +68,34 @@ function ponState(data) {
 
 function ponCard(data) {
 	var state = ponState(data), optical = data.optical || {}, serdes = data.serdes || {};
+	var mac = data.mac || {}, mpcp = data.mpcp || {}, fec = data.fec || {}, traffic = data.traffic || {};
 	var los = flag(serdes.rx_los) || flag(optical.rx_los) ? '接收失光' :
 		serdes.rx_los != null || optical.rx_los != null ? '未失光' : '未提供';
+	var tx = optical.tx_fault == null ? '未提供' : flag(optical.tx_fault) ? '发射故障' : '无发射故障';
+	var sync = serdes.gearbox_ready == null ? '—' : flag(serdes.gearbox_ready) ? '已同步' : '未同步';
+	var reg = mac.enabled == null ? '—' : flag(mac.enabled) ? '已启用' : '未启用';
+	var fecLabel = fec.upstream == null ? '—' : flag(fec.upstream) ? '已开启' : '未开启';
+	var rxPkts = data.wan_rx_packets, txPkts = data.wan_tx_packets;
+	var facts = [
+		['运行协议', modes[serdes.mode] || value(serdes.mode)],
+		['接收光信号', los],
+		['发射状态', tx],
+		['SerDes 同步', sync],
+		['光链路注册', reg],
+		['上行 FEC', fecLabel]
+	];
+	if (optical.module_absent != null)
+		facts.push(['光模块', flag(optical.module_absent) ? '未插入' : '已插入']);
+	if (rxPkts != null || txPkts != null)
+		facts.push(['PON 收 / 发包', value(rxPkts) + ' / ' + value(txPkts)]);
+	if (traffic.rx != null)
+		facts.push(['通道收 / 发', value(traffic.rx) + ' / ' + value(traffic.tx)]);
 	return E('section', { class: 'tyf-link-panel', 'data-tone': state.tone }, [
 		E('div', { class: 'tyf-link-state' }, [
 			E('p', { class: 'tyf-eyebrow' }, 'PON / 实时光链路'),
 			E('h3', {}, [E('span', { class: 'tyf-state-dot', 'aria-hidden': 'true' }), state.text]),
 			E('p', { class: 'tyf-note' }, state.help || '线路注册与认证不等同于互联网连通，请在接口管理中确认 WAN 状态。')]),
-		E('div', { class: 'tyf-link-facts' }, rows([
-			['运行协议', modes[serdes.mode] || value(serdes.mode)],
-			['接收光信号', los],
-			['发射告警', optical.tx_fault == null ? '未提供' : flag(optical.tx_fault) ? '发射故障' : '无发射故障']
-		]))
+		E('div', { class: 'tyf-link-facts' }, rows(facts))
 	]);
 }
 
