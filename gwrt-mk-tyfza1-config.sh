@@ -93,6 +93,7 @@ unset_pkg() {
 echo "[tyfza1] 无线栈（内核内 mac80211 + rtl_ax_ap，关闭 backports 版）:"
 for p in \
 	kmod-rtl-ax-ap \
+	tyfza1-wifi-firmware \
 	kmod-tyfza1-usb-led \
 	wpad-mbedtls \
 	wifi-scripts \

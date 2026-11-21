@@ -52,8 +52,16 @@ jobs:
           git checkout "$shared_sha" -- \
             package/ gwrt-theme-V3/ docs/ scripts/ configs/ AGENTS.md 'gwrt-*.sh' \
             ':(exclude)package/tyfza1-pon-control' ':(exclude)package/tyfza1-storage' \
-            ':(exclude)package/luci-app-tyfza1-pon' ':(exclude)configs/tyfza1-feeds.conf' \
-            ':(exclude)gwrt-mk-tyfza1-config.sh'
+            ':(exclude)package/tyfza1-wifi-firmware' ':(exclude)package/luci-app-tyfza1-pon' \
+            ':(exclude)configs/tyfza1-feeds.conf' ':(exclude)gwrt-mk-tyfza1-config.sh'
+          # 机型专属包不在 master 上；漏掉 exclude 会被上面的 checkout 删除，
+          # 必须在同步后立刻断言，避免后面以"找不到包"的形式隐性失败。
+          for pkg in tyfza1-wifi-firmware tyfza1-pon-control tyfza1-storage luci-app-tyfza1-pon; do
+            test -f "package/$pkg/Makefile" || {
+              echo "Shared-layer sync removed device package: $pkg" >&2
+              exit 1
+            }
+          done
           mkdir -p logs
           printf 'device=%s\nshared=%s\n' "$(git rev-parse HEAD)" "$shared_sha" | tee logs/source-revisions.txt
           git status --short | sed -n '1,20p'
@@ -428,7 +436,7 @@ jobs:
           print(f'PASS: sysupgrade FIT embeds the built Image ({len(kernel)} bytes); '
                 f'device rootfs matches ({len(expected)} bytes standalone, {root.size} bytes in tar)')
           PY
-          for package in tyfza1-pon-control tyfza1-storage luci-app-tyfza1-pon honk gwrt-wifiroam-v5 gwrt-mesh-apmode; do
+          for package in kmod-rtl-ax-ap tyfza1-wifi-firmware tyfza1-pon-control tyfza1-storage luci-app-tyfza1-pon honk gwrt-wifiroam-v5 gwrt-mesh-apmode; do
             awk -v pkg="$package" '$1 == pkg { found = 1 } END { exit !found }' "${manifests[0]}" || {
               echo "Missing from TYFZA1 manifest: $package" >&2
               exit 1
