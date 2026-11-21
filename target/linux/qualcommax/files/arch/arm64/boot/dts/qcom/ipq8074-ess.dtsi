@@ -17,6 +17,83 @@
 };
 
 &soc {
+	/*
+	 * The GCC node takes these three PCS outputs as clock parents (see the
+	 * ipq6018/ipq8074 CMN PLL clock patch), so the labels must exist for
+	 * every board that includes this file. The ports themselves stay
+	 * disabled: IPQ8074 boards in this tree still drive the switch through
+	 * the legacy ess-switch node below, and an enabled UNIPHY without a
+	 * native PPE/EDMA dataplane would only fight it for the MACs.
+	 */
+	uniphy0: ethernet-pcs@7a00000 {
+		compatible = "qualcomm,ipq8074-uniphy";
+		reg = <0x07a00000 0x10000>;
+		#pcs-cells = <1>;
+		clocks = <&gcc GCC_UNIPHY0_AHB_CLK>,
+			 <&gcc GCC_UNIPHY0_SYS_CLK>,
+			 <&gcc GCC_UNIPHY0_PORT1_RX_CLK>,
+			 <&gcc GCC_UNIPHY0_PORT1_TX_CLK>,
+			 <&gcc GCC_UNIPHY0_PORT2_RX_CLK>,
+			 <&gcc GCC_UNIPHY0_PORT2_TX_CLK>,
+			 <&gcc GCC_UNIPHY0_PORT3_RX_CLK>,
+			 <&gcc GCC_UNIPHY0_PORT3_TX_CLK>,
+			 <&gcc GCC_UNIPHY0_PORT4_RX_CLK>,
+			 <&gcc GCC_UNIPHY0_PORT4_TX_CLK>,
+			 <&gcc GCC_UNIPHY0_PORT5_RX_CLK>,
+			 <&gcc GCC_UNIPHY0_PORT5_TX_CLK>;
+		clock-names = "ahb", "sys",
+			      "port1_rx", "port1_tx",
+			      "port2_rx", "port2_tx",
+			      "port3_rx", "port3_tx",
+			      "port4_rx", "port4_tx",
+			      "port5_rx", "port5_tx";
+		clock-output-names = "uniphy0_gcc_rx_clk",
+				     "uniphy0_gcc_tx_clk";
+		#clock-cells = <1>;
+		resets = <&gcc GCC_UNIPHY0_SOFT_RESET>,
+			 <&gcc GCC_UNIPHY0_XPCS_RESET>;
+		reset-names = "soft", "xpcs";
+		status = "disabled";
+	};
+
+	uniphy1: ethernet-pcs@7a10000 {
+		compatible = "qualcomm,ipq8074-uniphy";
+		reg = <0x07a10000 0x10000>;
+		#pcs-cells = <1>;
+		clocks = <&gcc GCC_UNIPHY1_AHB_CLK>,
+			 <&gcc GCC_UNIPHY1_SYS_CLK>,
+			 <&gcc GCC_UNIPHY1_PORT5_RX_CLK>,
+			 <&gcc GCC_UNIPHY1_PORT5_TX_CLK>;
+		clock-names = "ahb", "sys",
+			      "port5_rx", "port5_tx";
+		clock-output-names = "uniphy1_gcc_rx_clk",
+				     "uniphy1_gcc_tx_clk";
+		#clock-cells = <1>;
+		resets = <&gcc GCC_UNIPHY1_SOFT_RESET>,
+			 <&gcc GCC_UNIPHY1_XPCS_RESET>;
+		reset-names = "soft", "xpcs";
+		status = "disabled";
+	};
+
+	uniphy2: ethernet-pcs@7a20000 {
+		compatible = "qualcomm,ipq8074-uniphy";
+		reg = <0x07a20000 0x10000>;
+		#pcs-cells = <1>;
+		clocks = <&gcc GCC_UNIPHY2_AHB_CLK>,
+			 <&gcc GCC_UNIPHY2_SYS_CLK>,
+			 <&gcc GCC_UNIPHY2_PORT6_RX_CLK>,
+			 <&gcc GCC_UNIPHY2_PORT6_TX_CLK>;
+		clock-names = "ahb", "sys",
+			      "port6_rx", "port6_tx";
+		clock-output-names = "uniphy2_gcc_rx_clk",
+				     "uniphy2_gcc_tx_clk";
+		#clock-cells = <1>;
+		resets = <&gcc GCC_UNIPHY2_SOFT_RESET>,
+			 <&gcc GCC_UNIPHY2_XPCS_RESET>;
+		reset-names = "soft", "xpcs";
+		status = "disabled";
+	};
+
 	ess_instance: ess-instance {
 		#address-cells = <1>;
 		#size-cells = <1>;
