@@ -278,7 +278,7 @@ jobs:
       - name: Verify TYFZA1 rootfs limit constants
         run: |
           set -euo pipefail
-          limit=65012224
+          limit=65011712
           leb=126976
           [ "$((limit % leb))" -eq 0 ]
           python3 - "$limit" "$leb" <<'PY'
