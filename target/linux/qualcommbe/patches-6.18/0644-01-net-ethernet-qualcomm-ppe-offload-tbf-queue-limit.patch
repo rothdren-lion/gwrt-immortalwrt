@@ -520,7 +520,7 @@ Signed-off-by: ViKing <viking.yfy@qq.com>
  	ret = edma_debugfs_setup(ppe_dev);
 --- a/drivers/net/ethernet/qualcomm/ppe/ppe_port.c
 +++ b/drivers/net/ethernet/qualcomm/ppe/ppe_port.c
-@@ -1496,6 +1496,7 @@ int ppe_port_mac_init(struct ppe_device
+@@ -1502,6 +1502,7 @@ int ppe_port_mac_init(struct ppe_device
  		ppe_ports->port[i].np = port_node;
  		ppe_ports->port[i].interface = phy_mode;
  		ppe_ports->port[i].mac_type = PPE_MAC_TYPE_GMAC;

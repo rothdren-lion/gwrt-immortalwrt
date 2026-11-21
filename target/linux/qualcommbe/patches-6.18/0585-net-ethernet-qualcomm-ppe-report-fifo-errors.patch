@@ -1,4 +1,5 @@
 From: ViKing <viking.yfy@qq.com>
+Date: Wed, 28 Oct 2026 11:15:00 +0800
 Subject: [PATCH] net: ethernet: qualcomm: ppe: harden error statistics
 
 Report an XGMAC RX/TX FIFO counter change at most once per port every ten
@@ -14,15 +15,18 @@ Signed-off-by: ViKing <viking.yfy@qq.com>
 ---
 --- a/drivers/net/ethernet/qualcomm/ppe/ppe_port.c
 +++ b/drivers/net/ethernet/qualcomm/ppe/ppe_port.c
-@@ -6,6 +6,7 @@
+@@ -6,8 +6,9 @@
  /* PPE Port MAC initialization and PPE port MAC functions. */
  
  #include <linux/clk.h>
+-#include <linux/of.h>
+ #include <linux/if_vlan.h>
 +#include <linux/jiffies.h>
- #include <linux/of.h>
++#include <linux/of.h>
  #include <linux/of_net.h>
  #include <linux/pcs/pcs-qcom-ipq9574.h>
-@@ -494,6 +495,8 @@ void ppe_port_get_ethtool_stats(struct p
+ #include <linux/phylink.h>
+@@ -495,6 +496,8 @@ void ppe_port_get_ethtool_stats(struct p
  void ppe_port_get_stats64(struct ppe_port *ppe_port,
  			  struct rtnl_link_stats64 *s)
  {
@@ -31,7 +35,7 @@ Signed-off-by: ViKing <viking.yfy@qq.com>
  	s->multicast = ppe_port_xgmib_get(ppe_port, xgmib_rx_multicast_g);
  
  	s->rx_packets = s->multicast;
-@@ -515,8 +518,9 @@ void ppe_port_get_stats64(struct ppe_por
+@@ -516,8 +519,9 @@ void ppe_port_get_stats64(struct ppe_por
  
  	s->tx_fifo_errors = ppe_port_xgmib_get(ppe_port,
  					       xgmib_tx_underflow_err);
@@ -43,7 +47,7 @@ Signed-off-by: ViKing <viking.yfy@qq.com>
  
  	if (ppe_port->gmib_stats) {
  		u64 *gsrc = ppe_port->gmib_stats;
-@@ -546,6 +550,21 @@ void ppe_port_get_stats64(struct ppe_por
+@@ -547,6 +551,21 @@ void ppe_port_get_stats64(struct ppe_por
  
  		spin_unlock(&ppe_port->gmib_stats_lock);
  	}
