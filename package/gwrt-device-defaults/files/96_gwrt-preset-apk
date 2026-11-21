@@ -41,6 +41,18 @@ failed=0
 			socket_seen=1 ;;
 		esac
 		echo "--- $(basename "$f")"
+		# A bundled package already present at the exact same version needs no
+		# action. Re-adding it can even fail: arch-qualified builds such as
+		# ucode-mod-socket are published as aarch64_cortex-a53 while the image
+		# runs aarch64_generic, and apk refuses them as uninstallable.
+		base=$(basename "$f" .apk)
+		pkg=$(printf '%s' "$base" | sed 's/-[0-9][0-9.]*.*$//')
+		ver=${base#"$pkg"-}
+		if [ -n "$pkg" ] && [ "$pkg" != "$base" ] && \
+			apk info -v 2>/dev/null | grep -qx "$pkg-$ver"; then
+			echo "    already installed at $ver"
+			continue
+		fi
 		apk add --allow-untrusted --force-non-repository --network=no "$f" 2>&1 || set -- "$@" "$f"
 	done
 	for f in "$@"; do
