@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # GWRT expanded rootfs slot: 331 UBI LEBs of 126976 bytes. Keep in sync with
 # target/linux/rtl9617c/image/Makefile and the TYFZA1 workflow; CI checks all three.
-TYFZA1_ROOTFS_LIMIT=42029056
+TYFZA1_ROOTFS_LIMIT=65012224
 
 tyfza1_find_volume() {
 	local path

@@ -12,7 +12,7 @@ TYFZA1_MKIMAGE ?= $(STAGING_DIR_HOST)/bin/mkimage
 TYFZA1_SIGNING_KEYS ?=
 # GWRT expanded rootfs slot: 331 UBI LEBs of 126976 bytes. Keep in sync with
 # tyfza1-storage.sh and the TYFZA1 workflow; CI checks all three constants.
-TYFZA1_ROOTFS_LIMIT := 42029056
+TYFZA1_ROOTFS_LIMIT := 65012224
 
 define Build/tyfza1-ubi-fit
 	@stat -c 'TYFZA1 FIT input: %n (%s bytes)' "$<"

@@ -278,7 +278,7 @@ jobs:
       - name: Verify TYFZA1 rootfs limit constants
         run: |
           set -euo pipefail
-          limit=42029056
+          limit=65012224
           leb=126976
           [ "$((limit % leb))" -eq 0 ]
           python3 - "$limit" "$leb" <<'PY'
@@ -296,7 +296,9 @@ jobs:
               text = Path(name).read_text()
               assert str(limit) in text, f'{name} does not declare {limit}'
               legacy = '33648' '640'
+              legacy2 = '42029' '056'
               assert legacy not in text, f'{name} still has the OEM {legacy} limit'
+              assert legacy2 not in text, f'{name} still has the {legacy2} limit'
           print(f'TYFZA1 rootfs limit aligned: {limit} bytes = {limit // leb} LEBs')
           PY
           echo "ROOTFS_LIMIT=$limit" >> "$GITHUB_ENV"
