@@ -35,7 +35,7 @@ case "$OUT" in
 esac
 BAK="$TOP/.config.bak-$(date +%Y%m%d-%H%M%S)"
 DEVICE=${DEVICE:-tianyi_tyfza1}
-WITH_SMB=${WITH_SMB:-0}
+WITH_SMB=${WITH_SMB:-1}
 
 echo "==> 目标: rtl9617c / $DEVICE"
 echo "==> 输出: $OUT"
@@ -136,7 +136,6 @@ for p in \
 	luci-proto-ipv6 \
 	luci-app-firewall \
 	luci-app-opkg \
-	luci-app-attendedsysupgrade \
 	usbutils \
 	blockd \
 	block-mount ; do
@@ -233,11 +232,12 @@ for p in \
 done
 
 if [ "${WITH_SMB}" = "1" ]; then
-	echo "[tyfza1] Samba4:"
+	echo "[tyfza1] Samba4 + USB 自动共享:"
 	for p in \
-		samba4-server luci-app-samba4 \
+		samba4-server luci-app-samba4 autosamba wsdd2 \
 		kmod-fs-ext4 kmod-fs-exfat kmod-fs-vfat kmod-fs-ntfs3 \
-		e2fsprogs automount block-mount ; do
+		e2fsprogs automount block-mount \
+		taskd luci-lib-taskd luci-app-harbor-file ; do
 		add_pkg "$p"
 	done
 fi
