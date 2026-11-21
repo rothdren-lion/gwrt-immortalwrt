@@ -392,7 +392,11 @@ aria2_mount_trigger() {
 }
 
 start_service() {
-	[ ! -x /usr/libexec/gwrt-emmc-storage ] || /usr/libexec/gwrt-emmc-storage prepare || return 1
+	# The storage helper only prepares the download directory/metadata. A
+	# failure there must not keep aria2 itself from starting.
+	[ ! -x /usr/libexec/gwrt-emmc-storage ] ||
+		/usr/libexec/gwrt-emmc-storage prepare ||
+		logger -t aria2 "storage prepare failed; starting with current directory"
 	config_load "$NAME"
 	config_foreach aria2_validate "aria2" aria2_start
 }

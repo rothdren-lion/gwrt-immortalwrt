@@ -159,6 +159,44 @@ setup_aria2() {
 	set_value aria2.main.user "$user" || return 1
 	[ -n "$(get aria2.main.enabled)" ] || set_value aria2.main.enabled 0
 }
+# samba4 only materializes /etc/samba/smb.conf when its init script runs, so a
+# device that never started Samba has no config and smbpasswd/pdbedit refuse to
+# work. Rebuild the same baseline config samba4 would generate before we touch
+# the account database.
+ensure_smb_conf() {
+	local hostname workgroup desc
+	[ -e /etc/samba/smb.conf ] && return 0
+	[ -f /etc/samba/smb.conf.template ] || return 1
+	mkdir -p /var/etc || return 1
+	hostname=$(get system.@system[0].hostname)
+	workgroup=$(get samba4.@samba4[0].workgroup)
+	desc=$(get samba4.@samba4[0].description)
+	sed -e "s#|NAME|#${hostname:-GWRT}#g" \
+		-e "s#|WORKGROUP|#${workgroup:-WORKGROUP}#g" \
+		-e "s#|DESCRIPTION|#${desc:-GWRT Samba}#g" \
+		-e "s#|INTERFACES|##g" \
+		-e "s#|CHARSET|#UTF-8#g" \
+		/etc/samba/smb.conf.template > /var/etc/smb.conf || return 1
+	ln -nsf /var/etc/smb.conf /etc/samba/smb.conf
+	[ -e /etc/samba/smb.conf ]
+}
+ensure_smb_account() {
+	if ! id -u gwrt >/dev/null 2>&1; then
+		adduser -D -H -s /bin/false gwrt 2>/dev/null ||
+			useradd -M -N -d /nonexistent -s /sbin/nologin gwrt 2>/dev/null ||
+			{ log "cannot create gwrt system user"; return 0; }
+	fi
+	# /etc/samba/smb.conf points into /var/etc, which is cleared on every boot,
+	# so recreate it and treat the passdb itself as the source of truth.
+	ensure_smb_conf >/dev/null 2>&1
+	if pdbedit -L 2>/dev/null | grep -q '^gwrt:' ||
+		printf 'gwrt\ngwrt\n' | smbpasswd -s -a gwrt >/dev/null 2>&1; then
+		set_value gwrt.storage.smb_account_ready 1
+	else
+		# Never let an unusable Samba install block other services.
+		log "samba account not ready yet; retry after samba4 starts"
+	fi
+}
 setup_samba() {
 	local section=samba4.smb_share
 	[ -f /etc/config/samba4 ] || return 0
@@ -166,18 +204,11 @@ setup_samba() {
 	if [ -n "$(get "$section")" ]; then
 		[ "$(get "$section.gwrt_auto")" = 1 ] || return 0
 		[ -z "$(get "$section.gwrt_path")" ] || [ "$(get "$section.path")" = "$(get "$section.gwrt_path")" ] || return 0
-		set_value "$section.path" "$store_mount" && set_value "$section.gwrt_path" "$store_mount"
-		return $?
+		set_value "$section.path" "$store_mount" && set_value "$section.gwrt_path" "$store_mount" || return 1
+		ensure_smb_account
+		return 0
 	fi
-	if ! id -u gwrt >/dev/null 2>&1; then
-		adduser -D -H -s /bin/false gwrt 2>/dev/null || useradd -M -N -d /nonexistent -s /sbin/nologin gwrt 2>/dev/null || return 1
-	fi
-	if [ "$(get gwrt.storage.smb_account_ready)" != 1 ]; then
-		if ! pdbedit -L 2>/dev/null | grep -q '^gwrt:'; then
-			printf 'gwrt\ngwrt\n' | smbpasswd -s -a gwrt >/dev/null 2>&1 || return 1
-		fi
-		set_value gwrt.storage.smb_account_ready 1 || return 1
-	fi
+	ensure_smb_account
 	set_value "$section" sambashare &&
 	set_value "$section.gwrt_auto" 1 &&
 	set_value "$section.name" gwrt &&
@@ -225,9 +256,11 @@ prepare() {
 	commit_changes || return 1
 	mount_storage || return 0
 	local rc=0
-	setup_aria2 || rc=1
-	setup_samba || rc=1
-	setup_nfs || rc=1
+	# Optional shares must never take unrelated services (aria2, samba, nfs)
+	# down with them: log the failure and keep going.
+	setup_aria2 || { log "aria2 download directory setup failed"; rc=1; }
+	setup_samba || log "samba share setup incomplete"
+	setup_nfs || log "nfs share setup incomplete"
 	commit_changes || rc=1
 	return "$rc"
 }
