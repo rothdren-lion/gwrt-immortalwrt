@@ -1,5 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-only
+# GWRT expanded rootfs slot: 331 UBI LEBs of 126976 bytes. Keep in sync with
+# target/linux/rtl9617c/image/Makefile and the TYFZA1 workflow; CI checks all three.
+TYFZA1_ROOTFS_LIMIT=42029056
 
 tyfza1_find_volume() {
 	local path
@@ -14,7 +17,7 @@ tyfza1_find_volume() {
 }
 
 # Only the selected OpenWrt root and rootfs_data participate in allocation.
-# Keep every OEM volume, including the other boot slot, at its original size.
+# The inactive slot keeps its current size until it is booted and upgraded.
 tyfza1_plan_storage() {
 	local ubidev="$1" rootvol="$2" size="$3"
 	local path="/sys/class/ubi/$rootvol" data free root_ebs data_ebs=0
@@ -23,8 +26,8 @@ tyfza1_plan_storage() {
 		ubi_r0:${ubidev}_4|ubi_r1:${ubidev}_7) ;;
 		*) echo "Unexpected TYFZA1 root volume: $rootvol" >&2; return 1 ;;
 	esac
-	[ "$size" -gt 0 ] && [ "$size" -le 33648640 ] || {
-		echo "Root image must fit the 33648640-byte OEM slot limit" >&2
+	[ "$size" -gt 0 ] && [ "$size" -le "$TYFZA1_ROOTFS_LIMIT" ] || {
+		echo "Root image must fit the $TYFZA1_ROOTFS_LIMIT-byte GWRT slot limit" >&2
 		return 1
 	}
 	free=$(cat "/sys/class/ubi/$ubidev/avail_eraseblocks")

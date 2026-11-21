@@ -266,6 +266,32 @@ jobs:
           test -s "$work/overlay-seed.ubifs.gz.json"
           cp "$work/overlay-seed.ubifs.gz.json" logs/ubifs-seed.json
 
+      - name: Verify TYFZA1 rootfs limit constants
+        run: |
+          set -euo pipefail
+          limit=42029056
+          leb=126976
+          [ "$((limit % leb))" -eq 0 ]
+          python3 - "$limit" "$leb" <<'PY'
+          import sys
+          from pathlib import Path
+
+          limit, leb = map(int, sys.argv[1:3])
+          assert limit % leb == 0
+          sources = [
+              'target/linux/rtl9617c/image/Makefile',
+              'target/linux/rtl9617c/base-files/lib/upgrade/tyfza1-storage.sh',
+              '.github/workflows/gwrt-tyfza1-build.yml',
+          ]
+          for name in sources:
+              text = Path(name).read_text()
+              assert str(limit) in text, f'{name} does not declare {limit}'
+              legacy = '33648' '640'
+              assert legacy not in text, f'{name} still has the OEM {legacy} limit'
+          print(f'TYFZA1 rootfs limit aligned: {limit} bytes = {limit // leb} LEBs')
+          PY
+          echo "ROOTFS_LIMIT=$limit" >> "$GITHUB_ENV"
+
       - name: Preflight TYFZA1 boot FIT
         env:
           FIT_KERNEL_VERSION: '6.18.62'
@@ -371,26 +397,27 @@ jobs:
           test -s "${images[0]}"
           test -s "${roots[0]}"
           test -s "${fits[0]}"
-          test "$(stat -c %s "${roots[0]}")" -le 33648640
+          test "$(stat -c %s "${roots[0]}")" -le "$ROOTFS_LIMIT"
           test "$(stat -c %s "${fits[0]}")" -le "$((0x600000))"
           staging_dir/host/bin/mkimage -l "${fits[0]}" > logs/fit-final-contents.txt
           kdir="${kernels[0]%/*/*}"
           device_roots=("$kdir"/root.squashfs+pkg=*)
           test "${#device_roots[@]}" -eq 1
           cmp "${device_roots[0]}" "${roots[0]}"
-          python3 - "${images[0]}" "${fits[0]}" "$kdir/Image" "${roots[0]}" <<'PY'
+          python3 - "${images[0]}" "${fits[0]}" "$kdir/Image" "${roots[0]}" "$ROOTFS_LIMIT" <<'PY'
           import lzma
           import subprocess
           import sys
           import tarfile
           from pathlib import Path
 
-          upgrade, fit, raw_image, rootfs = map(Path, sys.argv[1:])
+          upgrade, fit, raw_image, rootfs = map(Path, sys.argv[1:5])
+          limit = int(sys.argv[5])
           with tarfile.open(upgrade) as archive:
               [member] = [entry for entry in archive if entry.isfile() and entry.name.endswith('/kernel')]
               assert archive.extractfile(member).read() == fit.read_bytes(), 'sysupgrade FIT differs'
               root = archive.getmember(member.name.removesuffix('/kernel') + '/root')
-              assert 0 < root.size <= 33648640, f'sysupgrade root size exceeds OEM limit or is empty: {root.size}'
+              assert 0 < root.size <= limit, f'sysupgrade root size exceeds GWRT limit {limit} or is empty: {root.size}'
               expected = rootfs.read_bytes()
               with archive.extractfile(root) as data:
                   assert data.read(len(expected)) == expected, 'sysupgrade rootfs differs'
@@ -455,6 +482,7 @@ jobs:
           python3 - <<'PY' | tee logs/tyfza1-image-sizes.tsv
           from pathlib import Path
           import hashlib
+          import os
 
           work = Path('build_dir')
           out = Path('bin/targets/rtl9617c/generic')
@@ -470,7 +498,8 @@ jobs:
               'published_rootfs': out.glob('*tianyi_tyfza1*rootfs.squashfs'),
               'sysupgrade': out.glob('*tianyi_tyfza1*sysupgrade.bin'),
           }
-          limits = {'device_rootfs': 33648640, 'published_rootfs': 33648640,
+          root_limit = int(os.environ['ROOTFS_LIMIT'])
+          limits = {'device_rootfs': root_limit, 'published_rootfs': root_limit,
                     'staged_FIT': 0x600000, 'published_FIT': 0x600000}
           print('kind\tstatus\tbytes\tlimit_bytes\tpath\tdetail')
           for kind, matches in entries.items():
@@ -500,7 +529,7 @@ jobs:
           roots=(build_dir/target-*/linux-rtl9617c_generic/root.squashfs+pkg=*)
           [ "${#roots[@]}" -eq 1 ] || exit 0
           baseline="${roots[0]}"
-          limit=33648640
+          limit=$ROOTFS_LIMIT
           [ "$(stat -c %s "$baseline")" -gt "$limit" ] || exit 0
           tree="${baseline%/*}/target-dir-${baseline##*+pkg=}"
           tool="$PWD/staging_dir/host/bin/mksquashfs4"

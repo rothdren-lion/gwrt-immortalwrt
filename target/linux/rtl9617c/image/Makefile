@@ -10,10 +10,13 @@ TYFZA1_MKIMAGE ?= $(STAGING_DIR_HOST)/bin/mkimage
 # Set TYFZA1_SIGNING_KEYS to a directory holding dev.key/dev.crt to sign the FIT.
 # Signing needs a crypto-enabled mkimage; the staging one has TOOLS_LIBCRYPTO off.
 TYFZA1_SIGNING_KEYS ?=
+# GWRT expanded rootfs slot: 331 UBI LEBs of 126976 bytes. Keep in sync with
+# tyfza1-storage.sh and the TYFZA1 workflow; CI checks all three constants.
+TYFZA1_ROOTFS_LIMIT := 42029056
 
 define Build/tyfza1-ubi-fit
 	@stat -c 'TYFZA1 FIT input: %n (%s bytes)' "$<"
-	$(if $(ROOTFS/squashfs/tianyi_tyfza1),@stat -c 'TYFZA1 squashfs input: %n (%s bytes; OEM limit 33648640 bytes)' "$(ROOTFS/squashfs/tianyi_tyfza1)")
+	$(if $(ROOTFS/squashfs/tianyi_tyfza1),@stat -c 'TYFZA1 squashfs input: %n (%s bytes; GWRT limit $(TYFZA1_ROOTFS_LIMIT) bytes)' "$(ROOTFS/squashfs/tianyi_tyfza1)")
 	rm -f "$@.fit/image.itb" "$@.fit/kernel.lzma"
 	python3 $(TYFZA1_TOOLS)/make_ubi_fit.py \
 		"$<" "$(KDIR)/image-rtl9617c-tyfza1-ubi.dtb" "$@.fit" \
@@ -30,8 +33,8 @@ endef
 
 define Build/tyfza1-rootfs-size
 	@size="$$(stat -c%s "$(IMAGE_ROOTFS)")" || exit 1; \
-	[ "$$size" -gt 0 ] && [ "$$size" -le 33648640 ] || { \
-		echo "TYFZA1 rootfs is $$size bytes; OEM rootfs volume holds 33648640 bytes" >&2; \
+	[ "$$size" -gt 0 ] && [ "$$size" -le $(TYFZA1_ROOTFS_LIMIT) ] || { \
+		echo "TYFZA1 rootfs is $$size bytes; GWRT rootfs volume limit is $(TYFZA1_ROOTFS_LIMIT) bytes" >&2; \
 		exit 1; \
 	}
 endef
