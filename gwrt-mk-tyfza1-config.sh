@@ -107,6 +107,7 @@ done
 
 echo "[tyfza1] PON 用户态:"
 for p in \
+	tyfza1-pon-firmware \
 	tyfza1-pon-control \
 	tyfza1-storage \
 	luci-app-tyfza1-pon \
