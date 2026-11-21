@@ -232,9 +232,13 @@ for p in \
 done
 
 if [ "${WITH_SMB}" = "1" ]; then
-	echo "[tyfza1] Samba4 + USB 自动共享:"
+	# ksmbd replaces samba4: kernel-mode SMB fileserver, ~0.6MB instead of ~8MB.
+	# Needed because TYFZA1 rootfs volume limit is 42029056 bytes and samba4
+	# overflowed it (run 28: 45932806 bytes). wsdd2 is auto-selected by the
+	# ksmbd-server package (Windows network discovery).
+	echo "[tyfza1] ksmbd (kernel SMB) + USB 自动共享:"
 	for p in \
-		samba4-server luci-app-samba4 autosamba wsdd2 \
+		ksmbd-server luci-app-ksmbd \
 		kmod-fs-ext4 kmod-fs-exfat kmod-fs-vfat kmod-fs-ntfs3 \
 		e2fsprogs automount block-mount \
 		taskd luci-lib-taskd luci-app-harbor-file ; do

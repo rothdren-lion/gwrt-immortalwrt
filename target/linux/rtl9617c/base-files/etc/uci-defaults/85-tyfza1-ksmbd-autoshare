@@ -1,0 +1,33 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Pre-seed ksmbd (kernel SMB server) with a /mnt/sda share so an inserted
+# USB stick is discoverable and shared automatically. ksmbd replaced samba4
+# because samba4 overflowed the 42029056-byte TYFZA1 rootfs volume (run 28).
+# User changes are preserved: only write when the config or section is missing.
+[ -f /etc/config/ksmbd ] || touch /etc/config/ksmbd
+
+# Global samba section
+uci -q get ksmbd.@samba[0] >/dev/null 2>&1 || {
+	uci add ksmbd samba >/dev/null
+	uci set ksmbd.@samba[-1].workgroup='WORKGROUP'
+	uci set ksmbd.@samba[-1].description='TYFZA1 USB Share'
+	uci set ksmbd.@samba[-1].interface='lan'
+}
+
+# /mnt/sda share (automount mounts the USB stick there on plug-in)
+has_share="$(uci -q show ksmbd | grep -c "path='/mnt/sda'" 2>/dev/null)"
+[ "${has_share:-0}" -gt 0 ] 2>/dev/null || {
+	uci add ksmbd share >/dev/null
+	uci set ksmbd.@share[-1].name='sda'
+	uci set ksmbd.@share[-1].path='/mnt/sda'
+	uci set ksmbd.@share[-1].read_only='no'
+	uci set ksmbd.@share[-1].guest_ok='yes'
+	uci set ksmbd.@share[-1].create_mask='0666'
+	uci set ksmbd.@share[-1].dir_mask='0777'
+	uci set ksmbd.@share[-1].force_root='1'
+}
+uci commit ksmbd
+
+# Make sure the server comes up on boot (autostart unless user disabled it).
+[ -x /etc/init.d/ksmbd ] && /etc/init.d/ksmbd enable
+exit 0
