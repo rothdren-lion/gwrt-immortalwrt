@@ -7,10 +7,46 @@ USE_PROCD=1
 PENDING=/etc/nss-wifi.pending
 LOCK=/var/run/nss-wifi-start.lock
 
+boot_id() {
+	cat /proc/sys/kernel/random/boot_id 2>/dev/null
+}
+
+# Keep the bring-up attempt counter in the marker so a failure survives the
+# reboot it caused without becoming a permanent downgrade to the host path.
+pending_fail() {
+	printf '%s\n%s\n%s\n' "$1" "$2" "$3" > "$PENDING"
+	sync
+}
+
 wifi_load_host() {
 	modprobe ath11k 2>/dev/null
 	modprobe ath11k_ahb 2>/dev/null
 	modprobe ath11k_pci 2>/dev/null
+}
+
+# The radios read the ring owners at probe, so a WLAN that is already up
+# cannot be moved to the NSS without first letting go of the host path.
+# At S19 nothing has opened a netdev yet, so the release normally succeeds.
+wifi_release_host() {
+	local m
+	for m in ath11k_ahb ath11k_pci ath11k; do
+		[ -d "/sys/module/$m" ] || continue
+		modprobe -r "$m" 2>/dev/null || return 1
+	done
+	return 0
+}
+
+# The platform device is named after the device tree node's unit address
+# (nss@40000000 -> 40000000.nss). The CSR base in its first reg range
+# (0x39000000) is not part of the name, and the attribute group sits
+# directly in the device directory, so resolve the device instead of
+# assuming either.
+nss_core_dir() {
+	local d
+	for d in /sys/bus/platform/devices/*.nss; do
+		[ -r "$d/state" ] && { printf '%s\n' "$d"; return 0; }
+	done
+	return 1
 }
 
 nss_state_has() {
@@ -24,9 +60,9 @@ nss_state_has() {
 }
 
 nss_start() {
-	local dir fw i param token
+	local dir fw i param token tries pend_boot pend_tries pend_msg
 
-	dir=/sys/bus/platform/devices/39000000.nss
+	dir=$(nss_core_dir)
 	# Check before touching pending or boot: repeated service actions must
 	# leave an already healthy data plane and its boot guard intact.
 	if nss_state_has ready=1; then
@@ -43,28 +79,67 @@ nss_start() {
 		return 0
 	}
 	[ -e "$PENDING" ] && {
-		logger -t nss-wifi "offload skipped: $(cat "$PENDING"); remove $PENDING to retry after reboot"
-		wifi_load_host
-		return 0
+		# The marker records the boot it was written in and how many boots
+		# have already been spent on it: a new boot is allowed one fresh
+		# attempt, the same boot is not, and a hard cap keeps a bring-up
+		# that cannot work from burning every boot forever.
+		pend_boot=$(head -n 1 "$PENDING" 2>/dev/null)
+		pend_tries=$(sed -n '2p' "$PENDING" 2>/dev/null)
+		pend_msg=$(sed -n '3p' "$PENDING" 2>/dev/null)
+		case "$pend_tries" in ''|*[!0-9]*) pend_tries=0 ;; esac
+		case "$pend_boot" in
+			*"$(boot_id)"*)
+				logger -t nss-wifi \
+					"offload skipped: ${pend_msg:-pending}; already tried in this boot"
+				wifi_load_host
+				return 0
+				;;
+		esac
+		if [ "$pend_tries" -ge 3 ]; then
+			logger -t nss-wifi -p daemon.err \
+				"offload disabled after $pend_tries boots: ${pend_msg:-unknown}; fix it, then rm $PENDING"
+			wifi_load_host
+			return 0
+		fi
+		tries=$((pend_tries + 1))
 	}
 	grep -qsE 'qcom,ipq(8074|6018)-wifi' /proc/device-tree/soc*/wifi@*/compatible || {
+		logger -t nss-wifi "no offload-capable radio on this board; using the host path"
 		wifi_load_host
 		return 0
 	}
 	if ls -d /sys/class/ieee80211/phy* >/dev/null 2>&1; then
-		logger -t nss-wifi "WLAN already probed; reboot to select offload"
-		return 1
+		# The kernel autoloads ath11k_ahb on the radio's modalias well
+		# before S19, so the host path is often already holding the
+		# radios when this runs. Release it and take over, instead of
+		# giving up on the first boot and waiting for a manual reboot.
+		if ! wifi_release_host || ls -d /sys/class/ieee80211/phy* >/dev/null 2>&1; then
+			logger -t nss-wifi -p daemon.err \
+				"WLAN already probed and could not be released; reboot to select offload"
+			return 1
+		fi
+		logger -t nss-wifi "released the host WLAN path to hand the radios to the NSS"
 	fi
-	token="$(cat /proc/sys/kernel/random/boot_id):$$"
-	echo "$token" > "$PENDING"
+	tries=${tries:-1}
+	token="$(boot_id):$$"
+	printf '%s\n%s\n\n' "$token" "$tries" > "$PENDING"
 	sync
 	modprobe nss-wifi-drv 2>/dev/null
-	[ -e "$dir/state" ] || {
-		logger -t nss-wifi "no NSS core; using the host path"
+	# The attributes only exist once the driver has bound the core, so the
+	# device has to be looked up again after the module is loaded.
+	dir=$(nss_core_dir)
+	if [ -z "$dir" ]; then
+		if [ -d /sys/module/nss_wifi_drv ]; then
+			logger -t nss-wifi -p daemon.err \
+				"nss_wifi_drv loaded but bound no NSS core; check dmesg for the probe error"
+		else
+			logger -t nss-wifi -p daemon.err \
+				"nss_wifi_drv did not load; check dmesg (module missing or unresolved symbol)"
+		fi
 		rm -f "$PENDING"
 		wifi_load_host
 		return 0
-	}
+	fi
 	fw=$(uci -q get nss-wifi.general.firmware) &&
 		printf %s "$fw" > /sys/module/nss_wifi_drv/parameters/firmware
 	for param in $(uci -q get nss-wifi.general.param); do
@@ -101,17 +176,17 @@ nss_start() {
 		i=$((i + 1))
 	done
 	if ! nss_state_has rings_ready=1; then
-		echo "WLAN ring descriptions incomplete" > "$PENDING"
+		pending_fail "$token" "$tries" "WLAN ring descriptions incomplete"
 		logger -t nss-wifi "WLAN ring descriptions incomplete; NSS remains stopped"
 		return 1
 	fi
 	if ! echo 1 > "$dir/boot"; then
-		echo "NSS core boot failed" > "$PENDING"
+		pending_fail "$token" "$tries" "NSS core boot failed"
 		logger -t nss-wifi "NSS core boot failed"
 		return 1
 	fi
 	if ! echo 1 > "$dir/wifi_start" || ! nss_state_has ready=1; then
-		echo "WiFiLi initialization incomplete" > "$PENDING"
+		pending_fail "$token" "$tries" "WiFiLi initialization incomplete"
 		logger -t nss-wifi "WiFiLi initialization incomplete; reboot to recover"
 		return 1
 	fi
@@ -122,7 +197,7 @@ nss_start() {
 	 # shellcheck disable=SC3023
 	 exec 1000>&-
 	 sleep 120
-	 [ "$(cat "$PENDING" 2>/dev/null)" = "$token" ] &&
+	 [ "$(head -n 1 "$PENDING" 2>/dev/null)" = "$token" ] &&
 	 nss_state_has ready=1 || exit 0
 	 rm -f "$PENDING"
 	 sync
@@ -158,3 +233,29 @@ reload_service() {
 stop_service() {
 	logger -t nss-wifi "WLAN ring ownership is chosen at probe; reboot to change it"
 }
+
+# /etc/init.d/nss-wifi check -- one screen that says whether the radios are
+# actually on the NSS, and if not, which step stopped them.
+nss_report() {
+	local dir
+	dir=$(nss_core_dir)
+	printf 'core device : %s\n' "${dir:-none}"
+	if [ -n "$dir" ]; then
+		printf 'core state  : '
+		cat "$dir/state" 2>/dev/null || echo unreadable
+	fi
+	printf 'offload uci : %s\n' "$(uci -q get nss-wifi.general.offload)"
+	[ -d /sys/module/nss_wifi_drv ] && echo 'module      : loaded' || echo 'module      : absent'
+	if [ -d /sys/module/ath11k ]; then
+		printf 'ath11k      : nss_offload=%s frame_mode=%s\n' \
+			"$(cat /sys/module/ath11k/parameters/nss_offload 2>/dev/null)" \
+			"$(cat /sys/module/ath11k/parameters/frame_mode 2>/dev/null)"
+	fi
+	if [ -e "$PENDING" ]; then
+		printf 'last failure: %s (attempt %s)\n' \
+			"$(sed -n '3p' "$PENDING")" "$(sed -n '2p' "$PENDING")"
+	fi
+	dmesg 2>/dev/null | grep -iE 'nss[-_](wifi|drv|core)' | tail -5
+}
+
+extra_command "check" "Show the NSS Wi-Fi data plane state" nss_report
