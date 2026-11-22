@@ -142,6 +142,15 @@ def verify_dtb(kernel, *, native=False):
         matches = [node for node in nodes.values()
                    if compatible in node.get('compatible', b'').split(b'\0') and enabled(node)]
         require(len(matches) == 1, 'missing enabled ' + compatible.decode())
+    # qca-nss-drv binds "qcom,nss" and nothing else, so a DTB without the core
+    # node loads the whole downstream stack and boots no NSS at all.
+    for compatible in (b'qcom,nss', b'qcom,nss-common'):
+        matches = [node for node in nodes.values()
+                   if compatible in node.get('compatible', b'').split(b'\0') and enabled(node)]
+        require(len(matches) == 1, 'missing enabled ' + compatible.decode())
+    region = nodes.get('/reserved-memory/memory@40000000', {})
+    require(cells(region, 'reg', 0, 0x40000000, 0, 0x01000000) and 'no-map' in region,
+            'NSS firmware reservation must be memory@40000000 with no-map')
     for port, label in ((2, 'lan1'), (3, 'lan2'), (4, 'lan3'), (5, 'wan')):
         matches = [node for name, node in nodes.items()
                    if name.rsplit('/', 1)[-1] == 'dp' + str(port)]

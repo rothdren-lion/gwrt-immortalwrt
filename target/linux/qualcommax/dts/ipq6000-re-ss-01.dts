@@ -3,9 +3,14 @@
 /dts-v1/;
 
 #include "ipq6018.dtsi"
+/* Both builds boot the NSS cores: the native one hands the radios to them
+ * itself, the downstream one boots them through qca-nss-drv. The cores are
+ * only described in ipq6018-nss.dtsi, and qca-nss-drv binds nothing but
+ * "qcom,nss", so leaving it out ships the driver with no device to drive.
+ */
+#include "ipq6018-nss.dtsi"
 #ifdef GWRT_SS01_NATIVE_NSS
 #include "ipq6018-ess.dtsi"
-#include "ipq6018-nss.dtsi"
 #else
 #include "ipq6018-ess-nss.dtsi"
 #endif
