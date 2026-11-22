@@ -138,14 +138,30 @@ def main() -> int:
     # Preserve the physical SS-01 12 MiB HLOS layout used by the latest
     # four-profile build. The workflow passes this variable explicitly too.
     source = set_value(source, "CS02_KERNEL_SIZE", '"12288k"')
-    source = set_value(source, "GWRT_SS01_NATIVE_NSS", None if args.nss_abi_only else "y")
+    # Default build: downstream QSDK NSS stack on the plain ess-nss device tree
+    # (qca-nss-drv boots NSS, qca-nss-dp provides NICs, ECM offloads flows, SSDK
+    # drives the switch). kmod-nss-wifi-drv must stay out: it boots the NSS
+    # firmware itself and conflicts with qca-nss-drv.
+    # --nss-abi-only keeps the native nss-wifi-drv ABI diagnostic configuration
+    # used by gwrt-ss01-nss-diagnostic.yml (non-flashable).
+    source = set_value(source, "GWRT_SS01_NATIVE_NSS", None)
     for name in (
         "kmod-qca-nss-dp", "kmod-qca-nss-drv", "kmod-qca-nss-drv-bridge-mgr",
         "kmod-qca-nss-drv-vlan-mgr", "kmod-qca-nss-ecm", "kmod-qca-ssdk",
+        "nss-firmware", "nss-firmware-ipq60xx",
     ):
-        source = set_value(source, "PACKAGE_" + name, None)
-    for name in ("kmod-nss-wifi-drv", "nss-firmware", "nss-firmware-ipq60xx", "kmod-nft-bridge"):
         source = set_value(source, "PACKAGE_" + name, "y")
+    for name in ("kmod-nss-wifi-drv", "kmod-nft-bridge"):
+        source = set_value(source, "PACKAGE_" + name, None)
+    if args.nss_abi_only:
+        for name in (
+            "kmod-qca-nss-dp", "kmod-qca-nss-drv", "kmod-qca-nss-drv-bridge-mgr",
+            "kmod-qca-nss-drv-vlan-mgr", "kmod-qca-nss-ecm", "kmod-qca-ssdk",
+            "nss-firmware", "nss-firmware-ipq60xx",
+        ):
+            source = set_value(source, "PACKAGE_" + name, None)
+        for name in ("kmod-nss-wifi-drv", "nss-firmware", "nss-firmware-ipq60xx", "kmod-nft-bridge"):
+            source = set_value(source, "PACKAGE_" + name, "y")
     args.output.write_text(source)
     print("Generated isolated SS-01 Honk + EasyTier configuration:", version)
     print("Removed proxy packages; retained EasyTier and added Honk full + Doona UI")

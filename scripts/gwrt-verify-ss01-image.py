@@ -170,6 +170,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('target', type=Path)
     parser.add_argument('--variant', choices=('daed', 'honk-easytier'), default='daed')
+    parser.add_argument('--nss-native', action='store_true',
+                        help='assert the native EDMA/PPE DTB and nss-wifi-drv rootfs instead of the downstream QSDK stack')
     args = parser.parse_args()
     profiles = json.loads((args.target / 'profiles.json').read_text())['profiles']
     require(set(profiles) == {'jdcloud_re-ss-01'}, 'unexpected device profiles')
@@ -206,7 +208,7 @@ def main():
                 factory.seek(limit)
                 verify_factory_rootfs(factory, rootfs)
         print(f'PASS layout: KERNEL_SIZE={size.group(1)}k; kernel={len(kernel)} rootfs={rootfs.stat().st_size}')
-        native = args.variant == 'honk-easytier'
+        native = args.nss_native
         verify_dtb(kernel, native=native)
         candidates = [ROOT / 'staging_dir/host/bin/unsquashfs4',
                       ROOT / 'staging_dir/host/bin/unsquashfs']

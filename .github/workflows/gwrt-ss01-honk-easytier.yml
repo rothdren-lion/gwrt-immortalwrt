@@ -9,7 +9,7 @@ on:
         required: false
         default: '261115-01'
       release:
-        description: 'Reserved: release is blocked until native NSS Wi-Fi is validated'
+        description: 'Reserved: release is blocked until the NSS build passes on-device validation'
         required: false
         default: false
         type: boolean
@@ -27,10 +27,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     steps:
-      - name: Reject release requests for the native candidate
+      - name: Reject release requests for the NSS candidate
         if: inputs.release
         run: |
-          printf '%s\n' 'Release blocked: native ath11k NSS integration and board validation are incomplete.' >&2
+          printf '%s\n' 'Release blocked: downstream QSDK NSS on-device validation is incomplete.' >&2
           exit 1
 
       - name: Checkout
@@ -172,10 +172,8 @@ jobs:
           python3 scripts/gwrt-mk-ss01-honk-easytier-config.py "$VERSION"
           make defconfig
           sh gwrt-check-target.sh .config ss01
-          python3 scripts/gwrt-validate-ss01-honk-easytier.py .config --native-image
-          mkdir -p env
-          test ! -e env/kernel-config
-          cp configs/ss01-native-nss.kernel-config env/kernel-config
+          python3 scripts/gwrt-validate-ss01-honk-easytier.py .config
+          rm -f env/kernel-config
           sh scripts/gwrt-source-preflight.sh
           grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)|^CONFIG_VERSION_NUMBER|^CONFIG_PACKAGE_(honk|luci-app-honk|easytier|luci-app-easytier|vmlinux-btf-builtin)' .config
 
@@ -217,20 +215,18 @@ jobs:
           target=bin/targets/qualcommax/ipq60xx
           shopt -s nullglob
           kernels=(build_dir/target-*/linux-qualcommax_ipq60xx/linux-6.18.*/Module.symvers)
-          modules=(build_dir/target-*/linux-qualcommax_ipq60xx/nss-wifi-drv-*/nss-wifi-drv.ko)
-          test "${#kernels[@]}" -eq 1 && test "${#modules[@]}" -eq 1 || exit 1
+          test "${#kernels[@]}" -eq 1 || exit 1
           kernel_dir="${kernels[0]%/*}"
           cp "$kernel_dir/.config" logs/kernel.config
-          cp "${kernels[0]}" logs/kernel-module.symvers
-          module="${modules[0]}"
-          LC_ALL=C readelf -h "$module" > logs/nss-wifi-elf-header.txt
-          grep -Eq 'Machine:[[:space:]]+AArch64' logs/nss-wifi-elf-header.txt
-          strings "$module" | awk '/^vermagic=/{ print }' > logs/nss-wifi-vermagic.txt
-          grep -Eq '^vermagic=6\.18\.62( |$)' logs/nss-wifi-vermagic.txt
-          llvm-nm -u "$module" > logs/nss-wifi-module-imports.txt
-          python3 scripts/gwrt-validate-ss01-honk-easytier.py .config --native-image --manifests "$target" \
-            --kernel-config logs/kernel.config --kernel-symvers logs/kernel-module.symvers \
-            --module-undefined logs/nss-wifi-module-imports.txt
+          for entry in qca-nss-dp:qca-nss-dp.ko qca-nss-drv:qca-nss-drv.ko qca-ssdk:qca-ssdk.ko qca-nss-ecm:ecm.ko; do
+            pkg="${entry%%:*}"; ko="${entry##*:}"
+            mod="$(find build_dir/target-*/linux-qualcommax_ipq60xx -path "*${pkg}-*" -name "$ko" -print -quit 2>/dev/null)"
+            test -n "$mod" || { echo "FAIL missing built module $ko" >&2; exit 1; }
+            LC_ALL=C readelf -h "$mod" | grep -Eq 'Machine:[[:space:]]+AArch64'
+            strings "$mod" | awk '/^vermagic=/{ print }' | grep -Eq '^vermagic=6\.18\.62( |$)'
+            echo "PASS $ko built for AArch64 6.18.62" | tee -a logs/nss-modules-check.txt
+          done
+          python3 scripts/gwrt-validate-ss01-honk-easytier.py .config --manifests "$target"
           python3 - <<'PY'
           from pathlib import Path
           import subprocess
@@ -241,12 +237,12 @@ jobs:
           PY
           python3 scripts/gwrt-verify-ss01-image.py "$target" --variant honk-easytier | tee logs/ss01-honk-image-audit.log
           cp honk-source.txt logs/honk-source.txt
-          printf '%s\n' 'SS-01 Honk + EasyTier: native EDMA/PPE candidate; ath11k NSS offload and board operation are not validated.' > logs/build-label.txt
+          printf '%s\n' 'SS-01 Honk + EasyTier: downstream QSDK NSS (dp/drv/ecm/ssdk); NSS NIC and offload behavior pending on-device validation.' > logs/build-label.txt
 
-      - name: Upload native candidate artifact
+      - name: Upload NSS candidate artifact
         uses: actions/upload-artifact@v4
         with:
-          name: gwrt-ss01-native-ppe-candidate-${{ inputs.version }}
+          name: gwrt-ss01-honk-nss-${{ inputs.version }}
           path: |
             bin/targets/qualcommax/ipq60xx/*factory*.bin
             bin/targets/qualcommax/ipq60xx/*sysupgrade*.bin
@@ -263,7 +259,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: gwrt-ss01-native-ppe-candidate-${{ inputs.version }}-logs
+          name: gwrt-ss01-honk-nss-${{ inputs.version }}-logs
           path: |
             .config
             honk-source.txt
