@@ -1,4 +1,5 @@
 'use strict';
+'require baseclass';
 
 var reasons = {
 	wired_verified: '已确认主 AP 的有线网络',
@@ -77,9 +78,8 @@ function details(row, ap, role) {
 	};
 }
 
-function TopologyBackhaul(){}
-TopologyBackhaul.prototype.address = address;
-TopologyBackhaul.prototype.transport = transport;
-TopologyBackhaul.prototype.details = details;
-
-return TopologyBackhaul;
+return baseclass.extend({
+    address: address,
+    transport: transport,
+    details: details
+});
