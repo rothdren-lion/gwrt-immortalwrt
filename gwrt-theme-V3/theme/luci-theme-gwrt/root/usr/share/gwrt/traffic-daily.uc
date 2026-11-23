@@ -1,5 +1,5 @@
 import * as fs from 'fs';
-import { select_sample, new_state, update_state, checkpoint_due, public_state, restore_state, persistent_state } from 'gwrt.traffic';
+import { select_sample, new_state, update_state, checkpoint_due, public_state, restore_state, persistent_state, empty_bytes } from 'gwrt.traffic';
 
 const runtime = '/tmp/gwrt-theme';
 const memory_file = runtime + '/traffic-state.json';
@@ -51,14 +51,43 @@ function bandix_snapshot() {
 	// Some rpcd installations do not register the Bandix object, even though
 	// its executable and local service are present. The fixed plugin command
 	// also reads Bandix's configured port; no browser input enters the command.
-	return read_command('if [ -x /usr/bin/timeout ]; then /usr/bin/timeout 5 /usr/libexec/rpcd/luci.bandix_plus call getSnapshot; elif [ -x /bin/timeout ]; then /bin/timeout 5 /usr/libexec/rpcd/luci.bandix_plus call getSnapshot; else /usr/libexec/rpcd/luci.bandix_plus call getSnapshot; fi 2>/dev/null');
+	let plugin = read_command('if [ -x /usr/bin/timeout ]; then /usr/bin/timeout 5 /usr/libexec/rpcd/luci.bandix_plus call getSnapshot; elif [ -x /bin/timeout ]; then /bin/timeout 5 /usr/libexec/rpcd/luci.bandix_plus call getSnapshot; else /usr/libexec/rpcd/luci.bandix_plus call getSnapshot; fi 2>/dev/null');
+	if (plugin?.ok == true && type(plugin?.data?.interfaces) == 'array') return plugin;
+	// Last resort: query Bandix's local HTTP API directly.
+	return read_command('/usr/bin/curl -s -m 5 http://127.0.0.1:8787/api/snapshot 2>/dev/null');
+}
+function valid_num(n) { return type(n) == 'int' || type(n) == 'double' ? n >= 0 : false; }
+function sample_from_iface(item, now, uptime, boot) {
+	let c = item.cumulative, m = item.metrics || {};
+	let bytes = empty_bytes(), rates = {}, available = {};
+	for (let family in ['4', '6']) {
+		let up = c['up_v' + family + '_bytes'], down = c['down_v' + family + '_bytes'];
+		available['ipv' + family] = valid_num(up) && valid_num(down);
+		if (!available['ipv' + family]) continue;
+		bytes['up' + family] = up; bytes['down' + family] = down;
+		rates['up' + family] = valid_num(m['up_v' + family + '_bps']) ? m['up_v' + family + '_bps'] / 8.0 : null;
+		rates['down' + family] = valid_num(m['down_v' + family + '_bps']) ? m['down_v' + family + '_bps'] / 8.0 : null;
+	}
+	if (!available.ipv4 && !available.ipv6) return null;
+	return { now, uptime, boot, source: 'bandix:' + item.ifname, bytes, rates, available };
 }
 function probe() {
 	let snapshot = bandix_snapshot();
 	let network = ubus_call('network.interface', 'dump');
 	let uptime = +split(fs.readfile('/proc/uptime') || '0', ' ')[0];
 	let boot = trim(fs.readfile('/proc/sys/kernel/random/boot_id') || '');
-	return select_sample(snapshot, network, time(), uptime, boot);
+	let sample = select_sample(snapshot, network, time(), uptime, boot);
+	if (!sample && snapshot?.ok == true && type(snapshot?.data?.interfaces) == 'array') {
+		// Bandix may not monitor WAN (e.g. only br-lan). Fall back to the first
+		// interface with cumulative data so the traffic chart still shows data.
+		for (let item in snapshot.data.interfaces) {
+			if (type(item.cumulative) == 'object') {
+				sample = sample_from_iface(item, time(), uptime, boot);
+				if (sample) break;
+			}
+		}
+	}
+	return sample;
 }
 
 if (action == 'read') {
