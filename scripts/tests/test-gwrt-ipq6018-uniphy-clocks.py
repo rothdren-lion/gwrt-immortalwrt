@@ -160,11 +160,11 @@ static void test_group(struct clk_parent_map *map, int count) {
  }
 }
 static void test_rate(struct clk_parent_map *map, const struct parent_map *mux,
- const struct freq_conf *conf, unsigned long rate, int expected) {
+ const struct freq_conf *conf, int num_confs, unsigned long rate, int expected) {
  struct device_node node={0};
  struct clk_core core={.parents=map,.num_parents=7,.of_node=&node,.name="port5"};
  struct clk_rcg2 rcg={.hw={.core=&core},.parent_map=mux};
- struct freq_multi_tbl freq={.confs=conf,.num_confs=2};
+ struct freq_multi_tbl freq={.confs=conf,.num_confs=num_confs};
  for(int i=0;i<7;i++) map[i].core=NULL;
  of_mode=0; clkdev_found=false; sdk_registered=true;
  const struct freq_conf *selected=__clk_rcg2_select_conf(&rcg.hw,&freq,rate);
@@ -189,13 +189,17 @@ int main(void) {
 '''
 group_tests = '\n'.join(f'test_group({name},ARRAY_SIZE({name}));' for name in groups)
 rate_tests = {}
-for mode, uniphy in [('PSGMII', 0), ('UNIPHY1', 1)]:
+# 0084 puts UNIPHY1 SGMII entries before the PSGMII ones; with both
+# UNIPHY parents at 125 MHz the first exact match wins, so both modes
+# resolve to UNIPHY1. LAN ports use dedicated P_UNIPHY0 fixed tables.
+for mode, uniphy in [('PSGMII', 1), ('UNIPHY1', 1)]:
     calls = []
     for direction in ('rx', 'tx'):
         group = groups[0 if direction == 'rx' else 1]
         for speed, rate in [('25', 25000000), ('125', 125000000)]:
             calls.append(f'test_rate({group},{group}_map,'
-                         f'ftbl_nss_port5_{direction}_clk_src_{speed},{rate},'
+                         f'ftbl_nss_port5_{direction}_clk_src_{speed},'
+                         f'ARRAY_SIZE(ftbl_nss_port5_{direction}_clk_src_{speed}),{rate},'
                          f'P_UNIPHY{uniphy}_{direction.upper()});')
     rate_tests[mode] = '\n'.join(calls)
 main = main.replace('GROUP_TESTS', group_tests)
