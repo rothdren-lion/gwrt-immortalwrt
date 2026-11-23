@@ -91,6 +91,19 @@ unset_pkg() {
 	echo "  - $sym"
 }
 
+mod_pkg() {
+	sym=$1
+	grep -q "^CONFIG_PACKAGE_${sym}=m$" "$TOP/.config" && return 0
+	if grep -q "^# CONFIG_PACKAGE_${sym} is not set$" "$TOP/.config"; then
+		sed -i "s|^# CONFIG_PACKAGE_${sym} is not set$|CONFIG_PACKAGE_${sym}=m|" "$TOP/.config"
+	elif grep -q "^CONFIG_PACKAGE_${sym}=y$" "$TOP/.config"; then
+		sed -i "s|^CONFIG_PACKAGE_${sym}=y$|CONFIG_PACKAGE_${sym}=m|" "$TOP/.config"
+	else
+		echo "CONFIG_PACKAGE_${sym}=m" >>"$TOP/.config"
+	fi
+	echo "  =m $sym"
+}
+
 echo "[sbe1v1k] 无线栈（ath11k-ahb 内置 + ath12k QCN9274，backports mac80211）:"
 for p in \
 	kmod-ath11k-ahb \
@@ -155,7 +168,6 @@ done
 
 echo "[sbe1v1k] 插件面板（只要 LuCI，不要本体）:"
 for p in \
-	luci-app-easytier \
 	luci-app-iptv \
 	smartdns \
 	luci-app-smartdns ; do
@@ -206,6 +218,14 @@ for p in \
 	easytier-noweb \
 	gecoosac \
 	luci-app-gecoosac \
+	luci-theme-argon \
+	ubi-utils \
+	nand-utils ; do
+	unset_pkg "$p"
+done
+
+echo "[sbe1v1k] 可手动安装的模块（=m，不编入固件）:"
+for p in \
 	docker \
 	dockerd \
 	docker-compose \
@@ -213,10 +233,20 @@ for p in \
 	kmod-wireguard \
 	kmod-nft-tproxy \
 	kmod-inet-diag \
-	luci-theme-argon \
-	ubi-utils \
-	nand-utils ; do
-	unset_pkg "$p"
+	kmod-fs-nfsd \
+	kmod-fs-nfs \
+	kmod-fs-nfs-common \
+	kmod-fs-cifs ; do
+	mod_pkg "$p"
+done
+
+echo "[sbe1v1k] 集成插件（编入固件）:"
+for p in \
+	gwrt-eqos \
+	ksmbd-tools \
+	nfs-kernel-server \
+	aria2 ; do
+	add_pkg "$p"
 done
 
 make defconfig >/dev/null
