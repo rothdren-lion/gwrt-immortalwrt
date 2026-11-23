@@ -107,8 +107,10 @@ define Package/nss-firmware-common/install
 	$(call nss-firmware-line,$(1),12.5)
 	$(call nss-firmware-line,$(1),11.4)
 	$(LN) qca-nss0-retail-$(NSS_LINE).bin $(1)/lib/firmware/qca-nss0-retail.bin
+	$(LN) qca-nss0-retail.bin $(1)/lib/firmware/qca-nss0.bin
 	$(if $(filter HK,$(NSS_SOC)),$(LN) qca-nss1-retail-$(NSS_LINE).bin \
 		$(1)/lib/firmware/qca-nss1-retail.bin)
+	$(if $(filter HK,$(NSS_SOC)),$(LN) qca-nss1-retail.bin $(1)/lib/firmware/qca-nss1.bin)
 endef
 
 define Package/nss-firmware-ipq807x/install
