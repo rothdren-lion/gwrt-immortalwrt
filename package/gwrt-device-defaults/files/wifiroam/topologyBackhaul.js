@@ -77,4 +77,9 @@ function details(row, ap, role) {
 	};
 }
 
-return { address: address, transport: transport, details: details };
+function TopologyBackhaul(){}
+TopologyBackhaul.prototype.address = address;
+TopologyBackhaul.prototype.transport = transport;
+TopologyBackhaul.prototype.details = details;
+
+return TopologyBackhaul;
