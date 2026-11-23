@@ -45,10 +45,17 @@ baseline = (ROOT / 'config.ss01-261101-01-nss').read_text()
 ss01_apps = {name for name in re.findall(r'^CONFIG_PACKAGE_([^=]+)=y$', baseline, re.M)
              if re.fullmatch(r'(?:luci-(?:app|i18n)-[a-z0-9+.-]+|gwrt-[a-z0-9+.-]+|daed(?:-[a-z0-9+.-]+)?)', name)}
 
+# CS-02/CS-02-GWRT2 不带 gecoosac（用户要求删除），从 SS-01 继承的应用
+# 基线中剔除 gecoosac 相关包，避免校验报 missing。
+_GECOSOS_PKGS = {'gecoosac', 'luci-app-gecoosac', 'luci-i18n-gecoosac-zh-cn'}
+
 def requirements(device):
     required, forbidden = set(), set()
     if args.preset in jdc_presets:
-        required |= ss01_apps | {'daed', 'sgdisk'}
+        req = ss01_apps | {'daed', 'sgdisk'}
+        if args.preset in ('cs02', 'cs02-gwrt2'):
+            req -= _GECOSOS_PKGS
+        required |= req
         forbidden |= {'luci-app-homeproxy', 'luci-i18n-homeproxy-zh-cn'}
         if args.preset != 'ss01':
             required |= {'kmod-qca-edma', 'kmod-qca-ppe'}

@@ -49,7 +49,10 @@ def main():
 
     if args.preset != 'ss01':
         if args.preset in ('cs02', 'cs02-gwrt2'):
-            # CS-02: keep NSS (user wants PPE+NSS), add PPE/EDMA
+            # CS-02 DSA PPE/EDMA 路径与 NSS/SSDK 硬件冲突：NSS 禁止，PPE 必选
+            for name in re.findall(r'^CONFIG_PACKAGE_([^=]+)=y$', source, re.M):
+                if name.startswith(('kmod-qca-nss', 'kmod-qca-ssdk', 'kmod-nss-', 'nss-firmware', 'nss-eip-firmware')):
+                    set_value('PACKAGE_' + name, None)
             for name in ('kmod-qca-ppe', 'kmod-qca-edma'):
                 set_value('PACKAGE_' + name, 'y')
         else:
