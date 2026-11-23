@@ -1,0 +1,776 @@
+<script type="text/javascript">
+//<![CDATA[
+	var componentMeta = {
+		mainprogram: {
+			label: '<%:SSR Plus+ Main Program%>',
+			help: '<%:The online upgrade downloads the latest luci-app-ssr-plus package from fw876/helloworld releases and installs the matching IPK or APK package for this system.%>'
+		},
+		xray: {
+			label: '<%:Xray-core%>',
+			help: '<%:The online upgrade downloads and installs the matching Xray-core package for this system from fw876/helloworld releases.%>'
+		},
+		mihomo: {
+			label: '<%:Mihomo%>',
+			help: '<%:The online upgrade downloads and installs the matching Mihomo IPK or APK package for this system from fw876/helloworld releases.%>'
+		},
+		naiveproxy: {
+			label: '<%:NaiveProxy%>',
+			help: '<%:The online upgrade downloads and installs the matching NaiveProxy package for this system from fw876/helloworld releases.%>'
+		}
+	};
+
+	var geoMeta = {
+		country_mmdb: {
+			label: '<%:Country MMDB%>',
+			help: '<%:Update the Country.mmdb database used by Xray/V2Ray runtime when available.%>'
+		},
+		geosite: {
+			label: '<%:OpenClash GeoSite Database%>',
+			help: '<%:Update the GeoSite.dat database used by Mihomo/Clash runtime when available.%>',
+			require: '/etc/openclash'
+		},
+		v2ray_geoip: {
+			label: '<%:V2Ray GeoIP Databases%>',
+			help: '<%:Update the geoip.dat used by Xray/V2Ray runtime when available.%>'
+		},
+		v2ray_geosite: {
+			label: '<%:V2Ray GeoSite Databases%>',
+			help: '<%:Update the geosite.dat used by Xray/V2Ray runtime when available.%>'
+		}
+	};
+
+	var componentMessageMap = {
+		'Already up to date': '<%:Already up to date%>',
+		'Upgrade completed': '<%:Upgrade completed%>',
+		'Unsupported ARCH': '<%:Unsupported ARCH%>',
+		'Failed to fetch release metadata': '<%:Failed to fetch release metadata%>',
+		'Matching release asset not found': '<%:Matching release asset not found%>',
+		'Missing unzip support': '<%:Missing unzip support%>',
+		'Missing gzip support': '<%:Missing gzip support%>',
+		'Missing xz support': '<%:Missing xz support%>',
+		'Failed to create temp directory': '<%:Failed to create temp directory%>',
+		'Download failed': '<%:Download failed%>',
+		'Extract failed': '<%:Extract failed%>',
+		'xray binary not found in archive': '<%:xray binary not found in archive%>',
+		'mihomo binary not found in archive': '<%:mihomo binary not found in archive%>',
+		'naive binary not found in archive': '<%:naive binary not found in archive%>',
+		'Install failed': '<%:Install failed%>',
+		'Installed binary failed to run': '<%:Installed binary failed to run%>',
+		'Unsupported package manager': '<%:Unsupported package manager%>',
+		'Installed package check failed': '<%:Installed package check failed%>'
+	};
+
+	function selectedComponent() {
+		var selector = document.getElementById('component-selector');
+		return selector ? selector.value : 'mainprogram';
+	}
+
+	function selectedMirror() {
+		var selector = document.getElementById('component-mirror');
+		return selector ? selector.value : 'direct';
+	}
+
+	function componentHelp(component) {
+		return componentMeta[component] ? componentMeta[component].help : '';
+	}
+
+	function displayMessage(message) {
+		return componentMessageMap[message] || message || '';
+	}
+
+	function displayError(error) {
+		if (!error) {
+			return '';
+		}
+
+		var map = {
+			unsupported_arch: '<%:Unsupported ARCH%>',
+			unsupported_package_manager: '<%:Unsupported package manager%>',
+			fetch_failed: '<%:Failed to fetch release metadata%>',
+			asset_not_found: '<%:Matching release asset not found%>',
+			unsupported_component: '<%:Unsupported component%>',
+			unknown_error: '<%:Unknown error%>'
+		};
+
+		return map[error] || error;
+	}
+
+	function renderComponentInfo(data, checkedRemote) {
+		// console.log('Geo data:', data);
+		var panel = document.getElementById('component-status');
+		var upgradeButton = document.getElementById('component-upgrade');
+		var action = document.getElementById('component-action');
+		var help = document.getElementById('component-help');
+		var html = [];
+		var component = data && data.component ? data.component : selectedComponent();
+
+		if (!panel) {
+			return;
+		}
+
+		if (!data) {
+			panel.innerHTML = '<span style="color:red"><%:Failed to query component information.%></span>';
+			if (upgradeButton) upgradeButton.disabled = true;
+			return;
+		}
+
+		if (help) {
+			help.innerHTML = componentHelp(component);
+		}
+
+		html.push('<div><strong><%:Installed Version%>:</strong> ' + (data.current_version || '<%:Not installed%>') + '</div>');
+		html.push('<div><strong><%:Latest Version%>:</strong> ' + (data.latest_version || '<%:Unknown%>') + '</div>');
+		if (data.package_manager) {
+			html.push('<div><strong><%:Package Manager%>:</strong> ' + data.package_manager + '</div>');
+		}
+		html.push('<div><strong><%:Current ARCH%>:</strong> ' + (data.arch || '<%:Unknown%>') + '</div>');
+		html.push('<div><strong><%:Release Asset%>:</strong> ' + (data.asset || '<%:Unknown%>') + '</div>');
+
+		if (data.error) {
+			html.push('<div style="color:red"><%:Status%>: ' + displayError(data.error) + '</div>');
+		} else if (!checkedRemote) {
+			html.push('<div style="color:#666"><%:Status%>: <%:No Check%></div>');
+		} else if (data.can_upgrade) {
+			html.push('<div style="color:#d48806"><%:Status%>: <%:Upgrade available%></div>');
+		} else {
+			html.push('<div style="color:green"><%:Status%>: <%:Already up to date%></div>');
+		}
+
+		panel.innerHTML = html.join('');
+
+		if (upgradeButton) {
+			upgradeButton.disabled = !!data.error || !checkedRemote || !data.latest_version || !data.can_upgrade;
+		}
+
+		if (action) {
+			action.innerHTML = data.message
+				? '<span style="color:' + (data.success ? 'green' : 'red') + '">' + displayMessage(data.message) + '</span>'
+				: '';
+		}
+	}
+
+	function queryComponentInfo(button, doUpgrade) {
+		var component = selectedComponent();
+		var mirror = selectedMirror();
+		var action = document.getElementById('component-action');
+		var url = doUpgrade
+			? '<%=luci.dispatcher.build_url("admin", "services", "shadowsocksr", "component_upgrade")%>'
+			: '<%=luci.dispatcher.build_url("admin", "services", "shadowsocksr", "component_status")%>';
+
+		if (button) {
+			button.disabled = true;
+			button.value = doUpgrade ? '<%:Upgrading...%>' : '<%:Checking...%>';
+		}
+
+		if (action) {
+			action.innerHTML = doUpgrade ? '<%:Processing...%>' : '';
+		}
+
+		XHR.get(url, { component: component, mirror: mirror }, function(x, rv) {
+			renderComponentInfo(rv, true);
+			if (button) {
+				button.disabled = false;
+				button.value = doUpgrade ? '<%:Upgrade%>' : '<%:Check Update%>';
+			}
+		});
+	}
+
+	function queryLocalComponentInfo() {
+		var action = document.getElementById('component-action');
+		if (action) {
+			action.innerHTML = '';
+		}
+		XHR.get('<%=luci.dispatcher.build_url("admin", "services", "shadowsocksr", "component_local_status")%>', {
+			component: selectedComponent(),
+			mirror: selectedMirror()
+		}, function(x, rv) {
+			renderComponentInfo(rv, false);
+		});
+	}
+
+	function onComponentChange() {
+		queryLocalComponentInfo();
+	}
+
+	function onMirrorChange() {
+		var mirror = selectedMirror();
+		XHR.get('<%=luci.dispatcher.build_url("admin", "services", "shadowsocksr", "component_set_mirror")%>', {
+			mirror: mirror
+		}, function() {
+			queryLocalComponentInfo();
+			queryLocalGeoInfo();
+		});
+	}
+
+	function selectedGeoComponent() {
+		var selector = document.getElementById('geo-selector');
+		return selector ? selector.value : 'country_mmdb';
+	}
+
+	function geoHelp(component) {
+		return geoMeta[component] ? geoMeta[component].help : '';
+	}
+
+	function loadGeoComponent() {
+		var url = '<%=luci.dispatcher.build_url("admin", "services", "shadowsocksr", "geo_component")%>';
+		var selector = document.getElementById('geo-selector');
+		if (!selector)
+			return;
+
+		XHR.get(url, {}, function(x, rv) {
+			if (!rv || !Array.isArray(rv.component))
+				return;
+
+			var fragment = document.createDocumentFragment();
+			for (var i = 0; i < rv.component.length; i++) {
+				var comp = rv.component[i];
+				var meta = geoMeta[comp];
+				if (!meta)
+					continue;
+
+				var option = document.createElement('option');
+				option.value = comp;
+				option.textContent = meta.label;
+				fragment.appendChild(option);
+			}
+
+			selector.innerHTML = '';
+			selector.appendChild(fragment);
+
+			if (selector.options.length > 0) {
+				selector.selectedIndex = 0;
+				onGeoChange();
+			}
+		});
+	}
+
+	function renderGeoInfo(data, checkedRemote) {
+		// console.log('Geo data:', data);
+		var panel = document.getElementById('geo-status');
+		var upgradeButton = document.getElementById('geo-upgrade');
+		var action = document.getElementById('geo-action');
+		var help = document.getElementById('geo-help');
+		var html = [];
+		var component = data && data.component ? data.component : selectedGeoComponent();
+
+		if (!panel) {
+			return;
+		}
+
+		if (!data) {
+			panel.innerHTML = '<span style="color:red"><%:Failed to query geo database information.%></span>';
+			if (upgradeButton) upgradeButton.disabled = true;
+			return;
+		}
+
+		if (help) {
+			help.innerHTML = geoHelp(component);
+		}
+
+		html.push('<div><strong><%:Current Version%>:</strong> ' + (data.current_version || '<%:File Not Exist%>') + '</div>');
+		html.push('<div><strong><%:Latest Version%>:</strong> ' + (data.latest_version || '<%:Unknown%>') + '</div>');
+		var installed = data.installed !== undefined ? data.installed : (data.current_version ? true : false);
+		html.push('<div><strong><%:Installed%>:</strong> ' + (installed ? '<%:Yes%>' : '<%:No%>') + '</div>');
+		if (data.component !== 'v2ray_geoip' && data.current_version_extra) {
+			html.push('<div><strong><%:Additional Version%>:</strong> ' + data.current_version_extra + '</div>');
+		}
+		if (data.component !== 'v2ray_geosite' && data.current_version_extra) {
+			html.push('<div><strong><%:Additional Version%>:</strong> ' + data.current_version_extra + '</div>');
+		}
+		if (data.error) {
+			html.push('<div style="color:red"><%:Status%>: ' + displayError(data.error) + '</div>');
+		} else if (!checkedRemote) {
+			html.push('<div style="color:#666"><%:Status%>: <%:No Check%></div>');
+		} else if (data.can_upgrade) {
+			html.push('<div style="color:#d48806"><%:Status%>: <%:Upgrade available%></div>');
+		} else if (data.latest_version) {
+			html.push('<div style="color:green"><%:Status%>: <%:Already up to date%></div>');
+		} else if (data.message) {
+			html.push('<div style="color:green"><%:Status%>: ' + (data.success ? displayMessage(data.message) : (data.message || '<%:Unknown%>')) + '</div>');
+		} else {
+			html.push('<div style="color:#666"><%:Status%>: <%:Ready.%></div>');
+		}
+
+		panel.innerHTML = html.join('');
+		if (upgradeButton) {
+			upgradeButton.disabled = !!data.error || !checkedRemote || !data.latest_version || !data.can_upgrade;
+		}
+		if (action) {
+			action.innerHTML = data.message
+				? '<span style="color:' + (data.success ? 'green' : 'red') + '">' + displayMessage(data.message) + '</span>'
+				: '';
+		}
+	}
+
+	function queryGeoInfo(button, doUpgrade) {
+		var component = selectedGeoComponent();
+		var mirror = selectedMirror();
+		var action = document.getElementById('geo-action');
+		var url = doUpgrade
+			? '<%=luci.dispatcher.build_url("admin", "services", "shadowsocksr", "geo_upgrade")%>'
+			: '<%=luci.dispatcher.build_url("admin", "services", "shadowsocksr", "geo_status")%>';
+
+		if (button) {
+			button.disabled = true;
+			button.value = doUpgrade ? '<%:Upgrading...%>' : '<%:Checking...%>';
+		}
+
+		if (action) {
+			action.innerHTML = doUpgrade ? '<%:Processing...%>' : '';
+		}
+
+		XHR.get(url, { component: component, mirror: mirror }, function(x, rv) {
+			renderGeoInfo(rv, true);
+			if (button) {
+				button.disabled = false;
+				button.value = doUpgrade ? '<%:Upgrade%>' : '<%:Check Update%>';
+			}
+		});
+	}
+
+	function queryLocalGeoInfo() {
+		var action = document.getElementById('geo-action');
+		if (action) {
+			action.innerHTML = '';
+		}
+		XHR.get('<%=luci.dispatcher.build_url("admin", "services", "shadowsocksr", "geo_local_status")%>', {
+			component: selectedGeoComponent(),
+			mirror: selectedMirror()
+		}, function(x, rv) {
+			renderGeoInfo(rv, false);
+		});
+	}
+
+	function onGeoChange() {
+		queryLocalGeoInfo();
+	}
+
+	function makeDashboardBtn(label, fn, args) {
+		var argStr = args.map(function(a){ return "'" + a + "'"; }).join(', ');
+		return '<input type="button" class="btn cbi-button cbi-button-apply" value="' + label + '" onclick="return ' + fn + '(this, ' + argStr + ')"/>';
+	}
+
+	window.switch_dashboard = window.switch_dashboard || function(btn, n, type) {
+		btn.disabled = true;
+		btn.value = '<%:Downloading File...%>';
+		XHR.get('<%=luci.dispatcher.build_url("admin", "services", "shadowsocksr", "switch_dashboard")%>', {name: n, type: type}, function(x, status) {
+			if (!x || x.status != 200) return;
+			if (status.download_state == "0") {
+				var isUpdate = (n == "Metacubexd" || n == "Zashboard");
+				var nextLabel, nextType;
+				if (isUpdate) {
+					nextLabel = '<%:Update Successful%> - ' + '<%:Update Version%>';
+					nextType  = 'Official';
+				} else {
+					nextLabel = '<%:Switch Successful%> - ' + (type == "Meta" ? '<%:Switch To Official Version%>' : '<%:Switch To Meta Version%>');
+					nextType  = type == "Meta" ? 'Official' : 'Meta';
+				}
+				document.getElementById('switch_dashboard_'  + n).innerHTML = makeDashboardBtn(nextLabel, 'switch_dashboard', [n, nextType]);
+				document.getElementById('default_dashboard_' + n).firstElementChild.disabled = false;
+				document.getElementById('delete_dashboard_'  + n).firstElementChild.disabled = false;
+			} else {
+				btn.value = status.download_state == "2" ? '<%:Unzip Error%>'
+						  : (n == "Metacubexd" || n == "Zashboard") ? '<%:Update Failed%>' : '<%:Switch Failed%>';
+			}
+			btn.disabled = false;
+		});
+		return false;
+	};
+
+	window.delete_dashboard = window.delete_dashboard || function(btn, n) {
+		if (!confirm("<%:Are you sure you want to delete this panel?%>")) return false;
+		btn.disabled = true;
+		XHR.get('<%=luci.dispatcher.build_url("admin", "services", "shadowsocksr", "delete_dashboard")%>', {name: n}, function(x, status) {
+			if (!x || x.status != 200) { btn.disabled = false; return; }
+			if (status.delete_state == "1") {
+				var defBtn = document.getElementById('default_dashboard_' + n).firstElementChild;
+				if (defBtn.disabled) defBtn.value = '<%:Set to Default%>';
+				defBtn.disabled = true;
+			} else btn.disabled = false;
+		});
+		return false;
+	};
+
+	window.default_dashboard = window.default_dashboard || function(btn, n) {
+		btn.disabled = true;
+		XHR.get('<%=luci.dispatcher.build_url("admin", "services", "shadowsocksr", "default_dashboard")%>', {name: n}, function(x, status) {
+			if (!x || x.status != 200) { btn.disabled = false; return; }
+			btn.value = '<%:Default%>';
+			document.querySelectorAll('[id^="default_dashboard_"]').forEach(function(el) {
+				var b = el.firstElementChild;
+				if (b && b !== btn && b.value === '<%:Default%>') {
+					b.disabled = false;
+					b.value = '<%:Set to Default%>';
+				}
+			});
+		});
+		return false;
+	};
+
+	function initDashboardPanels() {
+		['Dashboard', 'Yacd', 'Metacubexd', 'Zashboard'].forEach(function(name) {
+			var switchEl  = document.getElementById('switch_dashboard_'  + name);
+			var defaultEl = document.getElementById('default_dashboard_' + name);
+			var deleteEl  = document.getElementById('delete_dashboard_'  + name);
+
+			if (!switchEl || !defaultEl || !deleteEl) {
+				return;
+			}
+
+			XHR.get('<%=luci.dispatcher.build_url("admin", "services", "shadowsocksr", "dashboard_type")%>', null, function(x, status) {
+				if (!x || x.status != 200) return;
+
+				var switchLabel;
+				if (name == "Metacubexd") {
+					switchLabel = ['<%:Update Version%>', 'Official'];
+				} else if (name == "Zashboard") {
+					switchLabel = ['<%:Update Version%>', 'Official'];
+				} else {
+					var isMeta = (name == "Dashboard" ? status.dashboard_type : status.yacd_type) == "Meta";
+					switchLabel = isMeta
+						? ['<%:Switch To Official Version%>', 'Official']
+						: ['<%:Switch To Meta Version%>',    'Meta'];
+				}
+				switchEl.innerHTML = makeDashboardBtn(switchLabel[0], 'switch_dashboard', [name, switchLabel[1]]);
+
+				if (status.default_dashboard == name.toLowerCase()) {
+					defaultEl.innerHTML = makeDashboardBtn('<%:Default%>', 'default_dashboard', [name]);
+					defaultEl.firstElementChild.disabled = true;
+				}
+				if (!status[name.toLowerCase()]) {
+					defaultEl.firstElementChild.disabled = true;
+					deleteEl.firstElementChild.disabled  = true;
+				}
+			});
+		});
+	}
+
+	window.setTimeout(function() {
+		onComponentChange();
+		loadGeoComponent();
+		initDashboardPanels();
+	}, 0);
+//]]>
+</script>
+
+<style>
+	.component-upgrade-actions {
+		display: flex;
+		gap: 10px;
+		flex-wrap: wrap;
+		margin-top: 10px;
+		align-items: center;
+	}
+
+	.component-upgrade-card {
+		line-height: 1.8;
+	}
+
+	.component-upgrade-help {
+		margin-top: 6px;
+		color: #666;
+	}
+
+	.component-upgrade-result {
+		margin-top: 8px;
+	}
+
+	.component-selector {
+		width: 100%;
+		min-width: 180px;
+	}
+
+	.component-layout {
+		display: flex;
+		gap: 24px;
+		align-items: flex-start;
+	}
+
+	.component-left {
+		width: 320px;
+		min-width: 260px;
+	}
+
+	.component-right {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.component-select-stack {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+
+	.component-select-item {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+
+	.component-select-label {
+		font-size: 12px;
+		line-height: 1.3;
+		color: #666;
+	}
+
+	.component-select-label strong {
+		display: block;
+		font-size: 13px;
+		color: #444;
+	}
+
+	.dashboard-update-grid {
+		display: grid;
+		grid-template-columns: 320px 1fr;
+		gap: 8px 24px;
+		align-items: center;
+	}
+
+	.dashboard-update-grid-label {
+		display: flex;
+		align-items: center;
+		min-height: 42px;
+	}
+
+	.dashboard-update-grid-label .component-select-label strong {
+		font-size: 18px;
+		font-weight: normal;
+		color: #444;
+	}
+
+	.dashboard-update-grid-label-first {
+		min-height: 52px;
+	}
+
+	.dashboard-update-grid-label-first .component-select-label strong {
+		font-size: 13px;
+		font-weight: bold;
+	}
+
+	.dashboard-update-grid-actions {
+		min-height: 42px;
+	}
+
+	.dashboard-update-grid-actions .ssr-clash-dashboard-actions {
+		display: flex;
+		gap: 10px;
+		flex-wrap: wrap;
+		align-items: center;
+	}
+
+	.dashboard-update-grid-actions .ssr-clash-dashboard-actions .cbi-button {
+		width: 140px;
+		margin: 0;
+		white-space: nowrap;
+	}
+
+	html[data-darkmode="true"] .dashboard-update-grid-label .component-select-label {
+		color: #aaa;
+	}
+
+	html[data-darkmode="true"] .dashboard-update-grid-label .component-select-label strong {
+		color: #e0e0e0;
+	}
+
+	@media (max-width: 900px) {
+		.component-layout {
+			flex-direction: column;
+		}
+
+		.component-left {
+			width: 100%;
+			min-width: 0;
+		}
+
+		.dashboard-update-grid {
+			grid-template-columns: 1fr;
+			gap: 4px;
+		}
+
+		.dashboard-update-grid-label {
+			min-height: auto;
+			margin: 12px 0 4px;
+		}
+
+		.dashboard-update-grid-label-first {
+			min-height: auto;
+		}
+
+		.dashboard-update-grid-actions {
+			min-height: auto;
+			margin-bottom: 8px;
+		}
+
+		.dashboard-update-grid-actions .ssr-clash-dashboard-actions .cbi-button {
+			width: 100%;
+		}
+
+		.dashboard-update-grid-actions-empty {
+			display: none;
+		}
+	}
+</style>
+
+<fieldset class="cbi-section">
+	<legend><%:Core Components%></legend>
+	<div class="cbi-value">
+		<div class="cbi-value-field component-upgrade-card">
+			<div class="component-layout">
+				<div class="component-left">
+					<div class="component-select-stack">
+						<div class="component-select-item">
+							<div class="component-select-label">
+								<strong><%:Download Source%></strong>
+								<span><%:Address%></span>
+							</div>
+							<select id="component-mirror" class="cbi-input-select component-selector" onchange="onMirrorChange()">
+								<option value="direct" selected="selected"><%:GitHub Direct%></option>
+								<option value="ghproxy">mirror.ghproxy.com</option>
+								<option value="ghproxy_cc">ghproxy.cc</option>
+								<option value="ghfast">ghfast.top</option>
+								<option value="jsdelivr">cdn.jsdelivr.net</option>
+							</select>
+						</div>
+						<div class="component-select-item">
+							<div class="component-select-label">
+								<strong><%:Component%></strong>
+								<span><%:Package Name%></span>
+							</div>
+							<select id="component-selector" class="cbi-input-select component-selector" onchange="onComponentChange()">
+								<option value="mainprogram"><%:SSR Plus+ Main Program%></option>
+								<option value="xray"><%:Xray-core%></option>
+								<option value="mihomo"><%:Mihomo%></option>
+								<option value="naiveproxy"><%:NaiveProxy%></option>
+							</select>
+						</div>
+					</div>
+				</div>
+				<div class="component-right">
+					<div id="component-status"><em><%:Collecting data...%></em></div>
+					<div class="component-upgrade-help" id="component-help"></div>
+					<div class="component-upgrade-actions">
+						<input type="button" class="btn cbi-button cbi-button-reload" value="<%:Check Update%>" onclick="queryComponentInfo(this, false)" />
+						<input type="button" class="btn cbi-button cbi-button-apply" id="component-upgrade" value="<%:Upgrade%>" onclick="queryComponentInfo(this, true)" />
+					</div>
+					<div class="component-upgrade-result" id="component-action"></div>
+				</div>
+			</div>
+		</div>
+	</div>
+</fieldset>
+
+<fieldset class="cbi-section">
+	<legend><%:Geo Database Update%></legend>
+	<div class="cbi-value">
+		<div class="cbi-value-field component-upgrade-card">
+			<div class="component-layout">
+				<div class="component-left">
+					<div class="component-select-stack">
+						<div class="component-select-item">
+							<div class="component-select-label">
+								<strong><%:Database%></strong>
+								<span><%:Geo Resource%></span>
+							</div>
+							<select id="geo-selector" class="cbi-input-select component-selector" onchange="onGeoChange()">
+								<option value="country_mmdb"><%:Country MMDB%></option>
+								<option value="geosite"><%:OpenClash GeoSite Database%></option>
+								<option value="v2ray_geoip"><%:V2Ray GeoIP Databases%></option>
+								<option value="v2ray_geosite"><%:V2Ray GeoSite Databases%></option>
+							</select>
+						</div>
+					</div>
+				</div>
+				<div class="component-right">
+					<div id="geo-status"><em><%:Collecting data...%></em></div>
+					<div class="component-upgrade-help" id="geo-help"></div>
+					<div class="component-upgrade-actions">
+						<input type="button" class="btn cbi-button cbi-button-reload" value="<%:Check Update%>" onclick="queryGeoInfo(this, false)" />
+						<input type="button" class="btn cbi-button cbi-button-apply" id="geo-upgrade" value="<%:Upgrade%>" onclick="queryGeoInfo(this, true)" />
+					</div>
+					<div class="component-upgrade-result" id="geo-action"></div>
+				</div>
+			</div>
+		</div>
+	</div>
+</fieldset>
+
+<fieldset class="cbi-section">
+	<legend><%:Dashboard Update%></legend>
+	<div class="cbi-value">
+		<div class="cbi-value-field component-upgrade-card">
+			<div class="dashboard-update-grid">
+				<div class="dashboard-update-grid-label dashboard-update-grid-label-first">
+					<div class="component-select-label">
+						<strong><%:Panel Version Management%></strong>
+					</div>
+				</div>
+				<div class="dashboard-update-grid-actions dashboard-update-grid-actions-empty"></div>
+				<div class="dashboard-update-grid-label">
+					<div class="component-select-label">
+						<strong><%:Yacd Panel%></strong>
+					</div>
+				</div>
+				<div class="dashboard-update-grid-actions">
+					<div class="ssr-clash-dashboard-actions">
+						<div id="switch_dashboard_Yacd"><%:Collecting data...%></div>
+						<div id="delete_dashboard_Yacd">
+							<input type="button" class="btn cbi-button cbi-button-reset" value="<%:Delete%>" onclick="return delete_dashboard(this, 'Yacd')"/>
+						</div>
+						<div id="default_dashboard_Yacd">
+							<input type="button" class="btn cbi-button cbi-button-apply" value="<%:Set to Default%>" onclick="return default_dashboard(this, 'Yacd')"/>
+						</div>
+					</div>
+				</div>
+				<div class="dashboard-update-grid-label">
+					<div class="component-select-label">
+						<strong><%:Dashboard Panel%></strong>
+					</div>
+				</div>
+				<div class="dashboard-update-grid-actions">
+					<div class="ssr-clash-dashboard-actions">
+						<div id="switch_dashboard_Dashboard"><%:Collecting data...%></div>
+						<div id="delete_dashboard_Dashboard">
+							<input type="button" class="btn cbi-button cbi-button-reset" value="<%:Delete%>" onclick="return delete_dashboard(this, 'Dashboard')"/>
+						</div>
+						<div id="default_dashboard_Dashboard">
+							<input type="button" class="btn cbi-button cbi-button-apply" value="<%:Set to Default%>" onclick="return default_dashboard(this, 'Dashboard')"/>
+						</div>
+					</div>
+				</div>
+				<div class="dashboard-update-grid-label">
+					<div class="component-select-label">
+						<strong><%:Zashboard Panel%></strong>
+					</div>
+				</div>
+				<div class="dashboard-update-grid-actions">
+					<div class="ssr-clash-dashboard-actions">
+						<div id="switch_dashboard_Zashboard"><%:Collecting data...%></div>
+						<div id="delete_dashboard_Zashboard">
+							<input type="button" class="btn cbi-button cbi-button-reset" value="<%:Delete%>" onclick="return delete_dashboard(this, 'Zashboard')"/>
+						</div>
+						<div id="default_dashboard_Zashboard">
+							<input type="button" class="btn cbi-button cbi-button-apply" value="<%:Set to Default%>" onclick="return default_dashboard(this, 'Zashboard')"/>
+						</div>
+					</div>
+				</div>
+				<div class="dashboard-update-grid-label">
+					<div class="component-select-label">
+						<strong><%:Metacubexd Panel%></strong>
+					</div>
+				</div>
+				<div class="dashboard-update-grid-actions">
+					<div class="ssr-clash-dashboard-actions">
+						<div id="switch_dashboard_Metacubexd"><%:Collecting data...%></div>
+						<div id="delete_dashboard_Metacubexd">
+							<input type="button" class="btn cbi-button cbi-button-reset" value="<%:Delete%>" onclick="return delete_dashboard(this, 'Metacubexd')"/>
+						</div>
+						<div id="default_dashboard_Metacubexd">
+							<input type="button" class="btn cbi-button cbi-button-apply" value="<%:Set to Default%>" onclick="return default_dashboard(this, 'Metacubexd')"/>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+</fieldset>

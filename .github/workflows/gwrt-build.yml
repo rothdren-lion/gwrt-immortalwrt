@@ -1,0 +1,338 @@
+name: GWRT firmware build
+
+on:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: 'Device preset'
+        required: true
+        default: 'cp02'
+        type: choice
+        options:
+          - ss01
+          - cs02
+          - cs02-gwrt2
+          - cs06
+          - cs08
+          - be6500
+          - xer5
+          - cs07
+          - cp02
+          - pzl8
+          - nezha
+          - bdy-g98-direct
+          - bdy-g98-uefi
+          - mt7981
+          - mt7986
+          - an758x
+          - an7583
+      version:
+        description: 'Version (YYMMDD-NN), empty = today-01'
+        required: false
+        default: ''
+      model:
+        description: 'Single model (e.g. xingloo_ax3000), empty = all devices of the preset'
+        required: false
+        default: ''
+      models:
+        description: 'Limit the original preset to these device profile names (space or comma separated)'
+        required: false
+        default: ''
+      images:
+        description: 'Collect only factory (when present) and sysupgrade firmware images'
+        required: false
+        default: 'flashable'
+        type: choice
+        options:
+          - flashable
+      release:
+        description: 'Publish images to GitHub Releases'
+        required: false
+        default: false
+        type: boolean
+  workflow_call:
+    inputs:
+      device:
+        required: true
+        type: string
+      version:
+        default: ''
+        type: string
+      model:
+        default: ''
+        type: string
+      models:
+        default: ''
+        type: string
+      images:
+        default: 'flashable'
+        type: string
+      release:
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gwrt-build-${{ inputs.device }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          # 内核 BTF（daed 必需）关闭了 DEBUG_INFO_REDUCED，DWARF 会让 build_dir 暴涨，
+          # 261115-02 首次带 BTF 构建即因 "Free space left: 0 MB" 失败。这里再腾出
+          # 宿主镜像里的大件（swift/jvm/powershell/az/ghcup/sam/npm 缓存）约 10-15G。
+          sudo rm -rf /usr/share/swift /usr/lib/jvm /usr/local/share/powershell /opt/az \
+            /usr/local/.ghcup /usr/local/aws-sam-cli /opt/pipx /usr/share/miniconda \
+            /usr/local/lib/node_modules/npm/node_modules/npm-audit-report 2>/dev/null || true
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          sudo rm -rf ~/.cache/pip ~/.npm /home/runner/.cache 2>/dev/null || true
+          sudo apt-get clean
+          sudo swapoff -a || true
+          sudo rm -f /swapfile
+          sudo fallocate -l 6G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          df -h /
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y -o Acquire::Retries=5
+          sudo apt-get install -y -o Acquire::Retries=5 build-essential busybox clang llvm flex bison g++ gawk gcc-multilib g++-multilib gettext git libncurses-dev libssl-dev python3-setuptools rsync squashfs-tools unzip util-linux zlib1g-dev file wget swig xz-utils dwarves
+          # bpf.mk (daed) needs unversioned llvm tools in PATH
+          LLVM_BIN="$(dirname "$(readlink -f "$(command -v clang)")")"
+          for t in llvm-strip llc opt llvm-dis; do
+            [ -x "$LLVM_BIN/$t" ] && sudo ln -sf "$LLVM_BIN/$t" "/usr/local/bin/$t"
+          done
+          command -v llvm-strip && llvm-strip --version | head -1
+
+      - name: Cache downloads
+        uses: actions/cache@v4
+        with:
+          path: dl
+          key: gwrt-dl-${{ hashFiles('rules.mk', 'Config.in', 'include/**') }}
+          restore-keys: |
+            gwrt-dl-
+
+      - name: Cache toolchain
+        uses: actions/cache@v4
+        with:
+          path: staging_dir/toolchain-*
+          key: gwrt-tc-2404-${{ hashFiles('toolchain/**', 'tools/**', 'include/kernel*', 'rules.mk', 'Config.in') }}
+          restore-keys: |
+            gwrt-tc-2404-
+
+      - name: Install feeds
+        run: |
+          case "${{ inputs.device }}" in
+            ss01|cs02|cs02-gwrt2|cs07) cp configs/ipq60xx-feeds.conf feeds.conf ;;
+          esac
+          ./scripts/feeds update -a
+          for feed in feeds/*; do
+            [ -d "$feed/.git" ] || continue
+            printf '%s %s\n' "$feed" "$(git -C "$feed" rev-parse HEAD)"
+          done > feeds-revisions.txt
+          sh scripts/gwrt-apply-feed-overlays.sh
+          ./scripts/feeds install -a
+          sh gwrt-theme-V3/scripts/integrate.sh --no-config
+          # python3-base 要先编 libffi 才有 ffi.h
+          sed -i 's|^  DEPENDS:=+libpython3$|  DEPENDS:=+libpython3 +libffi|' \
+              feeds/packages/lang/python/python3/Makefile
+
+      - name: Generate config
+        env:
+          GWRT_MODELS: ${{ inputs.models || inputs.model }}
+        run: |
+          VER="${{ inputs.version }}"
+          [ -n "$VER" ] || VER="$(date -u +%y%m%d)-01"
+          echo "VER=$VER" >> "$GITHUB_ENV"
+          case "${{ inputs.device }}" in
+            ss01) MN="亚瑟ss-01" ;;
+            cs02) MN="雅典娜cs-02" ;;
+            cs02-gwrt2) MN="雅典娜cs-02-gwrt2" ;;
+            cs06) MN="赵云cs-06" ;;
+            cs08) MN="太乙2pluscs-08" ;;
+            be6500) MN="小米BE6500" ;;
+            cs07) MN="太乙er1-cs-07" ;;
+            *) MN="" ;;
+          esac
+          echo "MODEL_NAME=$MN" >> "$GITHUB_ENV"
+          case "${{ inputs.device }}" in
+            ss01|cs02|cs02-gwrt2|cs07) python3 scripts/gwrt-mk-ipq60xx-config.py "${{ inputs.device }}" --version "$VER" ;;
+            cs06) OUT=.config VER="$VER" sh gwrt-mk-cs06-config.sh ;;
+            cs08) OUT=.config VER="$VER" sh gwrt-mk-cs08-config.sh ;;
+            be6500) OUT=.config VER="$VER" sh gwrt-mk-be6500-config.sh ;;
+            xer5) cp configs/config.xer5-261011-built .config ;;
+            cp02) OUT=.config VER="$VER" sh gwrt-mk-cp02-config.sh ;;
+            pzl8) OUT=.config VER="$VER" sh gwrt-mk-pzl8-config.sh ;;
+            nezha) OUT=.config VER="$VER" sh gwrt-mk-nezha-config.sh ;;
+            bdy-g98-direct) OUT=.config VER="$VER" BOOT=direct sh gwrt-mk-bdy-g98-config.sh ;;
+            bdy-g98-uefi) OUT=.config VER="$VER" BOOT=uefi sh gwrt-mk-bdy-g98-config.sh ;;
+            mt7981) OUT=.config GWRT_NO_SELF_DEFCONFIG=1 VER="$VER" sh gwrt-mk-xingloo-ax3000-config.sh ;;
+            mt7986) OUT=.config GWRT_NO_SELF_DEFCONFIG=1 VER="$VER" sh gwrt-mk-mt7986-config.sh ;;
+            an758x) OUT=.config VER="$VER" DEVICE=all WITH_OPENCLASH=1 WITH_SMB=1 sh gwrt-mk-an7581-config.sh ;;
+            an7583) OUT=.config VER="$VER" DEVICE=all SUB=an7583 WITH_OPENCLASH=1 WITH_SMB=1 sh gwrt-mk-an7581-config.sh ;;
+            *) echo "unknown device preset: ${{ inputs.device }}"; exit 1 ;;
+          esac
+          if [ -n "$GWRT_MODELS" ]; then
+            python3 scripts/gwrt-select-models.py .config "$GWRT_MODELS"
+          fi
+          make defconfig
+          # 一个预设只允许一个 SoC 序列（多 board = make world 串台）
+          sh gwrt-check-target.sh .config "${{ inputs.device }}"
+          python3 scripts/gwrt-validate-build-config.py .config "${{ inputs.device }}" --models "$GWRT_MODELS"
+          sh scripts/gwrt-source-preflight.sh
+          grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)|^CONFIG_VERSION_NUMBER|^CONFIG_PACKAGE_(gwrt-agent|gwrt-mesh-apmode|gwrt-device-defaults|ucode-mod-socket)' .config
+
+      - name: Test SS-01 calibration reboot guard
+        if: inputs.device == 'ss01'
+        run: sh scripts/tests/test-gwrt-caldata-reboot.sh
+
+      - name: Test IPQ60xx factory layout audit
+        if: contains(fromJSON('["cs02","cs02-gwrt2","cs07"]'), inputs.device)
+        run: python3 scripts/tests/test-ipq60xx-factory-rootfs.py
+
+      - name: Test SS-01 mesh preset
+        if: inputs.device == 'ss01'
+        run: |
+          GWRT_SS01_TEST_BUSYBOX="$(command -v busybox)"
+          export GWRT_SS01_TEST_BUSYBOX
+          sh scripts/tests/test-ss01-mesh-preset.sh
+          python3 scripts/tests/test-ss01-firstboot.py
+          python3 scripts/tests/test-gwrt-wifiroam-autopair.py
+
+      - name: Build firmware
+        id: build_firmware
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p logs
+          case "${{ inputs.device }}" in
+            ss01|cs02|cs02-gwrt2|cs07)
+              taskset -c 0-5 make -j6 download \
+                REVISION="$(git rev-parse --short HEAD)" \
+                GWRT_CS02_KERNEL_SIZE=12288k 2>&1 | tee logs/download.log ;;
+          esac
+          taskset -c 0-5 make -j6 \
+            REVISION="$(git rev-parse --short HEAD)" \
+            GWRT_CS02_KERNEL_SIZE=12288k \
+            CONFIG_VERSION_DIST=GWRT \
+            CONFIG_VERSION_NUMBER="$VER" 2>&1 | tee logs/build.log \
+            || taskset -c 0-5 make -j1 V=s \
+            REVISION="$(git rev-parse --short HEAD)" \
+            GWRT_CS02_KERNEL_SIZE=12288k \
+            CONFIG_VERSION_DIST=GWRT \
+            CONFIG_VERSION_NUMBER="$VER" 2>&1 | tee -a logs/build.log
+
+      - name: Verify packages and image hashes
+        env:
+          GWRT_MODELS: ${{ inputs.models || inputs.model }}
+        run: |
+          python3 scripts/gwrt-validate-build-config.py .config "${{ inputs.device }}" --models "$GWRT_MODELS" --manifests bin/targets
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          sums = list(Path('bin/targets').rglob('sha256sums'))
+          assert sums, 'no image checksum file produced'
+          for path in sums:
+              subprocess.run(['sha256sum', '-c', path.name], cwd=path.parent, check=True)
+          PY
+
+      - name: Verify SS-01 packaged theme and Ethernet
+        if: success() && inputs.device == 'ss01'
+        shell: bash
+        run: |
+          set -o pipefail
+          nss_init=$(find build_dir -path '*/qca-nss-drv-*/nss_init.c' -print -quit)
+          test -n "$nss_init"
+          python3 scripts/tests/test-gwrt-nss-symbol-cleanup.py "$nss_init" | tee logs/ss01-nss-cleanup-test.log
+          kernel_dir=$(find build_dir -type d -name 'linux-6.18.*' -print -quit)
+          test -n "$kernel_dir"
+          python3 scripts/tests/test-gwrt-ipq6018-uniphy-clocks.py "$kernel_dir" | tee logs/ss01-uniphy-clocks-test.log
+          python3 scripts/gwrt-verify-ss01-image.py bin/targets/qualcommax/ipq60xx | tee logs/ss01-image-audit.log
+
+      - name: Verify DSA IPQ60xx packaged Ethernet and applications
+        if: success() && contains(fromJSON('["cs02","cs02-gwrt2","cs07"]'), inputs.device)
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 scripts/gwrt-verify-ipq60xx-image.py bin/targets/qualcommax/ipq60xx "${{ inputs.device }}" | tee logs/ipq60xx-image-audit.log
+
+      - name: Save IPQ60xx verification records
+        if: success() && contains(fromJSON('["ss01","cs02","cs02-gwrt2","cs07"]'), inputs.device)
+        uses: actions/upload-artifact@v4
+        with:
+          name: gwrt-${{ inputs.device }}-${{ env.VER }}-verification
+          include-hidden-files: true
+          path: |
+            logs/ss01-image-audit.log
+            logs/ss01-nss-cleanup-test.log
+            logs/ss01-uniphy-clocks-test.log
+            logs/ipq60xx-image-audit.log
+            .config
+            feeds-revisions.txt
+            bin/targets/qualcommax/ipq60xx/*.manifest
+            bin/targets/qualcommax/ipq60xx/profiles.json
+            bin/targets/qualcommax/ipq60xx/sha256sums
+            bin/targets/qualcommax/ipq60xx/*.buildinfo
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Collect images
+        if: success()
+        run: |
+          mkdir -p out
+          python3 scripts/gwrt-collect-firmware.py \
+            --profiles bin/targets \
+            --mode "${{ inputs.images }}" \
+            --output out
+
+      - name: Upload artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gwrt-${{ inputs.device }}-${{ env.VER }}
+          path: out/
+          retention-days: 30
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gwrt-${{ inputs.device }}-${{ env.VER }}-logs
+          path: logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Preserve IPQ60xx images for failed package inspection
+        if: failure() && contains(fromJSON('["ss01","cs02","cs02-gwrt2","cs07"]'), inputs.device) && steps.build_firmware.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gwrt-${{ inputs.device }}-${{ env.VER }}-inspection
+          path: |
+            bin/targets/qualcommax/ipq60xx/*.bin
+            bin/targets/qualcommax/ipq60xx/*.manifest
+            bin/targets/qualcommax/ipq60xx/profiles.json
+            bin/targets/qualcommax/ipq60xx/sha256sums
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish release
+        if: success() && inputs.release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "gwrt-${{ inputs.device }}-${{ env.VER }}" out/* \
+            --title "GWRT ${{ inputs.device }} ${{ env.VER }}" \
+            --notes "自动构建: ${{ inputs.device }} @ ${{ github.sha }}"

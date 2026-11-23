@@ -1,0 +1,11 @@
+#!/bin/sh
+# 默认界面语言：简体中文
+#
+# LuCI 的 luci.main.lang 默认是 auto（跟浏览器 Accept-Language），
+# 英文浏览器下 SSR/EasyTier 这类老式 Lua 页面就全是英文。
+# 这里固定成 zh_cn；想切回英文：uci set luci.main.lang='en' && uci commit luci
+[ -f /etc/config/luci ] || exit 0
+[ "$(uci -q get luci.main.lang)" = "auto" ] || exit 0
+uci -q set luci.main.lang='zh_cn'
+uci -q commit luci
+exit 0

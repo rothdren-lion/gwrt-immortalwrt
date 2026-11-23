@@ -1,0 +1,70 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: luci-app-kixdns-lite\n"
+"Language: zh_Hans\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "KixDNS is an asynchronous DNS forwarder. Start or stop the service and change its listen port here. Saving restarts the service."
+msgstr "KixDNS 是一个异步 DNS 转发器。在这里可以启动/停止服务并修改监听端口，保存后会重启服务。"
+
+msgid "Status"
+msgstr "状态"
+
+msgid "Running"
+msgstr "运行中"
+
+msgid "Not running"
+msgstr "未运行"
+
+msgid "Unknown"
+msgstr "未知"
+
+msgid "Listen address"
+msgstr "监听地址"
+
+msgid "Settings"
+msgstr "设置"
+
+msgid "Enable at boot"
+msgstr "开机自启"
+
+msgid "Start KixDNS automatically when the router boots."
+msgstr "路由器启动时自动启动 KixDNS。"
+
+msgid "Listen port"
+msgstr "监听端口"
+
+msgid "UDP and TCP listen port. Only the port part of bind_udp and bind_tcp is changed, the host part is kept."
+msgstr "UDP 和 TCP 监听端口。只会修改 bind_udp / bind_tcp 中的端口部分，主机地址保持不变。"
+
+msgid "Save & Apply"
+msgstr "保存并应用"
+
+msgid "Start"
+msgstr "启动"
+
+msgid "Stop"
+msgstr "停止"
+
+msgid "The configuration file is missing or is not valid JSON, editing is disabled."
+msgstr "配置文件缺失或不是合法 JSON，已禁止编辑。"
+
+msgid "Service action executed:"
+msgstr "已执行服务操作："
+
+msgid "Unable to execute service action:"
+msgstr "无法执行服务操作："
+
+msgid "Invalid listen port, expected a number between 1 and 65535."
+msgstr "监听端口无效，必须是 1 到 65535 之间的数字。"
+
+msgid "Unable to read"
+msgstr "无法读取"
+
+msgid "Configuration applied, KixDNS has been restarted."
+msgstr "配置已应用，KixDNS 已重启。"
+
+msgid "Unable to apply the configuration:"
+msgstr "无法应用配置："

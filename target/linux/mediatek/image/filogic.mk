@@ -1069,7 +1069,8 @@ define Device/cmcc_rax3000m_common
   DEVICE_DTC_FLAGS := --pad 4096
   DEVICE_DTS_LOADADDR := 0x43f00000
   DEVICE_PACKAGES := kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware kmod-usb3 \
-	automount f2fsck mkf2fs
+	automount f2fsck mkf2fs \
+	kmod-ledtrig-network gwrt-eqos gwrt-device-defaults
   KERNEL_LOADADDR := 0x44000000
   KERNEL := kernel-bin | libdeflate-gzip
   KERNEL_INITRAMFS := kernel-bin | lzma | \
@@ -1183,6 +1184,51 @@ define Device/comfast_cf-wa933-128m
   $(call Device/comfast_cf-wa933-common)
 endef
 TARGET_DEVICES += comfast_cf-wa933-128m
+
+define Device/xingloo_ax3000
+  DEVICE_VENDOR := XINGLOO
+  DEVICE_MODEL := AX3000
+  DEVICE_DTS := mt7981b-xingloo-ax3000
+  DEVICE_DTS_DIR := ../dts
+  DEVICE_DTC_FLAGS := --pad 4096
+  DEVICE_DTS_LOADADDR := 0x43f00000
+  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware \
+	kmod-ledtrig-network gwrt-eqos gwrt-device-defaults
+  KERNEL_LOADADDR := 0x44000000
+  UBINIZE_OPTS := -E 5
+  BLOCKSIZE := 128k
+  PAGESIZE := 2048
+  IMAGE_SIZE := 65536k
+  KERNEL_IN_UBI := 1
+  IMAGES := sysupgrade.bin factory.bin
+  IMAGE/factory.bin := append-ubi | check-size $$$$(IMAGE_SIZE)
+  IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
+  SUPPORTED_DEVICES += xingloo,ax3000 comfast,cf-wr630ax cf-wr630ax
+endef
+TARGET_DEVICES += xingloo_ax3000
+
+define Device/xingloo_ax3000-512m
+  DEVICE_VENDOR := XINGLOO
+  DEVICE_MODEL := AX3000
+  DEVICE_VARIANT := 512M
+  DEVICE_DTS := mt7981b-xingloo-ax3000-512m
+  DEVICE_DTS_DIR := ../dts
+  DEVICE_DTC_FLAGS := --pad 4096
+  DEVICE_DTS_LOADADDR := 0x43f00000
+  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware \
+	kmod-ledtrig-network gwrt-eqos gwrt-device-defaults
+  KERNEL_LOADADDR := 0x44000000
+  UBINIZE_OPTS := -E 5
+  BLOCKSIZE := 128k
+  PAGESIZE := 2048
+  IMAGE_SIZE := 65536k
+  KERNEL_IN_UBI := 1
+  IMAGES := sysupgrade.bin factory.bin
+  IMAGE/factory.bin := append-ubi | check-size $$$$(IMAGE_SIZE)
+  IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
+  SUPPORTED_DEVICES += xingloo,ax3000 comfast,cf-wr630ax cf-wr630ax
+endef
+TARGET_DEVICES += xingloo_ax3000-512m
 
 define Device/comfast_cf-wr632ax-common
   DEVICE_VENDOR := COMFAST
@@ -2140,7 +2186,8 @@ define Device/h3c_magic-nx30-pro
 	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | pad-to 64k
   IMAGE/sysupgrade.itb := append-kernel | \
 	fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-static-with-rootfs | append-metadata
-  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware
+  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware \
+	kmod-ledtrig-network gwrt-eqos gwrt-device-defaults
   ARTIFACTS := preloader.bin bl31-uboot.fip
   ARTIFACT/preloader.bin := mt7981-bl2 spim-nand-ddr3
   ARTIFACT/bl31-uboot.fip := mt7981-bl31-uboot h3c_magic-nx30-pro
@@ -2365,6 +2412,95 @@ define Device/jcg_q30-pro
   ARTIFACT/bl31-uboot.fip := mt7981-bl31-uboot jcg_q30-pro
 endef
 TARGET_DEVICES += jcg_q30-pro
+
+# GWRT 2026-10-06: CLX S20P (MT7986A / Filogic 830)
+# Ported from local adaptation diff (S20-S20l/适配diff/s20p-immortalwrt.patch,
+# based on immortalwrt master 2024-10). eMMC layout, DDR4.
+define Device/clx_s20p
+  DEVICE_VENDOR := CLX
+  DEVICE_MODEL := S20P
+  DEVICE_DTS := mt7986a-clx-s20p
+  DEVICE_DTS_DIR := ../dts
+  DEVICE_DTC_FLAGS := --pad 4096
+  DEVICE_DTS_LOADADDR := 0x43f00000
+  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7986-firmware mt7986-wo-firmware kmod-usb3 \
+	kmod-nvme nvme-cli \
+	automount e2fsprogs f2fsck mkf2fs
+  KERNEL_LOADADDR := 0x44000000
+  KERNEL := kernel-bin | gzip
+  KERNEL_INITRAMFS := kernel-bin | lzma | \
+	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | pad-to 64k
+  KERNEL_INITRAMFS_SUFFIX := -recovery.itb
+  IMAGES := sysupgrade.itb
+  IMAGE_SIZE := $$(shell expr 64 + $$(CONFIG_TARGET_ROOTFS_PARTSIZE))m
+  IMAGE/sysupgrade.itb := append-kernel | \
+	fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-static-with-rootfs | \
+	pad-rootfs | append-metadata
+  # GWRT 2026-10-09: 只出 gpt.bin + sysupgrade.itb；
+  # preloader.bin / bl31-uboot.fip 需要本树不存在的
+  # trusted-firmware-a-mt7986-emmc-ddr4 与 u-boot-mt7986_clx_s20p 变体，
+  # 且实测非必需（仅首次刷 uboot/救砖才用），故不再生成。
+  ARTIFACTS := gpt.bin
+  ARTIFACT/gpt.bin := mt798x-gpt emmc
+endef
+TARGET_DEVICES += clx_s20p
+define Device/clx_s20l
+  DEVICE_VENDOR := CLX
+  DEVICE_MODEL := S20L
+  DEVICE_DTS := mt7986a-clx-s20l
+  DEVICE_DTS_DIR := ../dts
+  DEVICE_DTC_FLAGS := --pad 4096
+  DEVICE_DTS_LOADADDR := 0x43f00000
+  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7986-firmware mt7986-wo-firmware kmod-usb3 \
+	kmod-nvme nvme-cli \
+	automount e2fsprogs f2fsck mkf2fs
+  KERNEL_LOADADDR := 0x44000000
+  KERNEL := kernel-bin | gzip
+  KERNEL_INITRAMFS := kernel-bin | lzma | \
+	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | pad-to 64k
+  KERNEL_INITRAMFS_SUFFIX := -recovery.itb
+  IMAGES := sysupgrade.itb
+  IMAGE_SIZE := $$(shell expr 64 + $$(CONFIG_TARGET_ROOTFS_PARTSIZE))m
+  IMAGE/sysupgrade.itb := append-kernel | \
+	fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-static-with-rootfs | \
+	pad-rootfs | append-metadata
+  # GWRT 2026-10-09: 只出 gpt.bin + sysupgrade.itb；
+  # preloader.bin / bl31-uboot.fip 需要本树不存在的
+  # trusted-firmware-a-mt7986-emmc-ddr4 与 u-boot-mt7986_clx_s20p 变体，
+  # 且实测非必需（仅首次刷 uboot/救砖才用），故不再生成。
+  ARTIFACTS := gpt.bin
+  ARTIFACT/gpt.bin := mt798x-gpt emmc
+endef
+TARGET_DEVICES += clx_s20l
+define Device/clx_s20m
+  DEVICE_VENDOR := CLX
+  DEVICE_MODEL := S20M
+  DEVICE_DTS := mt7986a-clx-s20m
+  DEVICE_DTS_DIR := ../dts
+  DEVICE_DTC_FLAGS := --pad 4096
+  DEVICE_DTS_LOADADDR := 0x43f00000
+  DEVICE_PACKAGES := -kmod-mt7915e -kmod-mt7986-firmware -mt7986-wo-firmware -wpad-openssl \
+	kmod-usb3 \
+	kmod-nvme nvme-cli \
+	automount e2fsprogs f2fsck mkf2fs
+  KERNEL_LOADADDR := 0x44000000
+  KERNEL := kernel-bin | gzip
+  KERNEL_INITRAMFS := kernel-bin | lzma | \
+	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | pad-to 64k
+  KERNEL_INITRAMFS_SUFFIX := -recovery.itb
+  IMAGES := sysupgrade.itb
+  IMAGE_SIZE := $$(shell expr 64 + $$(CONFIG_TARGET_ROOTFS_PARTSIZE))m
+  IMAGE/sysupgrade.itb := append-kernel | \
+	fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-static-with-rootfs | \
+	pad-rootfs | append-metadata
+  # GWRT 2026-10-09: 只出 gpt.bin + sysupgrade.itb；
+  # preloader.bin / bl31-uboot.fip 需要本树不存在的
+  # trusted-firmware-a-mt7986-emmc-ddr4 与 u-boot-mt7986_clx_s20p 变体，
+  # 且实测非必需（仅首次刷 uboot/救砖才用），故不再生成。
+  ARTIFACTS := gpt.bin
+  ARTIFACT/gpt.bin := mt798x-gpt emmc
+endef
+TARGET_DEVICES += clx_s20m
 
 define Device/jdcloud_re-cp-03
   DEVICE_VENDOR := JDCloud
@@ -3426,7 +3562,8 @@ define Device/qihoo_360t7-common
   IMAGE/sysupgrade.itb := append-kernel | \
 	fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-static-with-rootfs | \
 	append-metadata
-  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware
+  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware \
+	kmod-ledtrig-network gwrt-eqos gwrt-device-defaults
   ARTIFACTS := bl31-uboot.fip preloader.bin
 endef
 
@@ -4117,7 +4254,8 @@ define Device/xiaomi_mi-router-ax3000t
   UBINIZE_OPTS := -E 5
   BLOCKSIZE := 128k
   PAGESIZE := 2048
-  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware
+  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware \
+	kmod-ledtrig-network gwrt-eqos gwrt-device-defaults
 ifeq ($(IB),)
 ifneq ($(CONFIG_TARGET_ROOTFS_INITRAMFS),)
   ARTIFACTS := initramfs-factory.ubi
@@ -4137,7 +4275,8 @@ define Device/xiaomi_mi-router-ax3000t-ubootmod
   UBINIZE_OPTS := -E 5
   BLOCKSIZE := 128k
   PAGESIZE := 2048
-  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware
+  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware \
+	kmod-ledtrig-network gwrt-eqos gwrt-device-defaults
   KERNEL_IN_UBI := 1
   UBOOTENV_IN_UBI := 1
   IMAGES := sysupgrade.itb

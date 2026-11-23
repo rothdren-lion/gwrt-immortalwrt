@@ -30,9 +30,11 @@ define KernelPackage/nft-fullcone
   DEPENDS:=+kmod-nft-nat
   TITLE:=nftables fullcone expression support
   FILES:= $(PKG_BUILD_DIR)/src/nft_fullcone.ko
+  # 2026-10-10 GWRT: 不再强制 NF_CONNTRACK_CHAIN_EVENTS=y（源码两种 API 都有分支，
+  # !defined(CONFIG_NF_CONNTRACK_CHAIN_EVENTS) 时走 5.15+ 新单参 API）；
+  # qca-nss-ecm 2026.04 只支持新 API，强制 y 会让 ecm 编译失败，统一走新 API。
   KCONFIG:= \
-    CONFIG_NF_CONNTRACK_EVENTS=y \
-    CONFIG_NF_CONNTRACK_CHAIN_EVENTS=y
+    CONFIG_NF_CONNTRACK_EVENTS=y
   AUTOLOAD:=$(call AutoProbe,nft_fullcone)
 endef
 

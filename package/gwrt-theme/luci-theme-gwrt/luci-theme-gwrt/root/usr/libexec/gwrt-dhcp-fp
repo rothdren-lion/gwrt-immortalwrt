@@ -1,0 +1,7 @@
+#!/bin/sh
+# Compatibility shim for installations that still have
+# dhcp.@dnsmasq[0].dhcpscript=/usr/libexec/gwrt-dhcp-fp.
+# DHCP fingerprinting is handled outside dnsmasq's ujail by
+# /etc/hotplug.d/dhcp/30-gwrt-dhcp-fp.  This path must stay a no-op because
+# the dnsmasq sandbox does not provide the full BusyBox tool set or shared /tmp.
+exit 0

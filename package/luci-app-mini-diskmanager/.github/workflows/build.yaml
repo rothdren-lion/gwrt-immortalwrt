@@ -1,0 +1,39 @@
+name: Push / PR
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.arch }} build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch:
+          - x86_64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: project_root/luci-app-mini-diskmanager
+          fetch-depth: 0
+
+      - name: Prepare Package path
+        run: |
+          mkdir -p packages
+          mv project_root/luci-app-mini-diskmanager/luci-app-mini-diskmanager packages/luci-app-mini-diskmanager
+
+      - name: Build
+        uses: openwrt/gh-action-sdk@main
+        env:
+          ARCH: ${{ matrix.arch }}
+          PACKAGES: luci-base luci-app-mini-diskmanager
+
+      - name: Store packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.arch }}-packages
+          path: bin/packages/${{ matrix.arch }}/**/*-mini-diskmanager-*.apk

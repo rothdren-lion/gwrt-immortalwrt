@@ -1,0 +1,5 @@
+__pycache__/
+tests/__pycache__/
+BUILD_TIME
+static/updates/agent/*.apk
+static/updates/agent/*.sig

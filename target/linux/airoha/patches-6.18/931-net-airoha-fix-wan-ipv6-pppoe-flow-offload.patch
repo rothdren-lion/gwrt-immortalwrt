@@ -1,0 +1,122 @@
+From: Ziwei Wu <wuziwei518@gmail.com>
+Subject: [PATCH] net: airoha: fix AN7581 WAN IPv6 PPPoE hardware flow offloading
+
+Fix three critical bugs in Airoha AN7581 PPE hardware flowtable offload
+that caused severe packet drops, NPU stalls and throughput degradation
+(throttled down to tens of KB/s) on IPv6 PPPoE connections:
+
+1. Prevent routed L3 IPv6 packets from falling through to L2 subflow:
+   after a failed ppe->foe_flow lookup the code fell through
+   unconditionally into l2_lookup. The client MAC is learned on br-lan,
+   so the packet was committed as an L2 bridge subflow which clobbered
+   the PPPoE session id in src_mac_hi with 0xf and redirected PSE_PORT
+   to 6 (NPU coprocessor), blackholing the flow. Only true
+   PPE_PKT_TYPE_BRIDGE packets may fall through to l2_lookup.
+
+2. Preserve the PPPoE session id when committing IPv6 subflows: masking
+   src_mac_hi unconditionally with 0xf stripped the lower 16-bit PPPoE
+   session id (AIROHA_FOE_MAC_PPPOE_ID).
+
+3. Exempt IPv6 route entries from unverified AN7581 NPU counter stats
+   updates/reads: like native L2B entries, AN7581 does not expose a
+   compatible NPU flow-stats layout for IPv6 route entries and touching
+   it stalls the NPU pipeline.
+
+4. Account for PPPoE and double VLAN overhead in WAN MTU and PPE frame
+   size: hardcoding mtu + VLAN_ETH_HLEN (1518) truncated standard
+   1500-byte IPv6 packets inside PPPoE (8 bytes PPPOE_SES_HLEN) plus
+   VLAN tags, causing silent drops at the PPE egress. Add 16 bytes
+   headroom to WAN MTU0/MTU1 and the PPE frame limit.
+
+Ported onto the GWRT 6.18.55 baseline: our tree uses airoha_ppe_set_mtu/
+airoha_dev_set_mtu naming (upstream 920 MTU rework not applied), and the
+commit_subflow_entry context includes hwe.bridge.ib2.
+
+Signed-off-by: Ziwei Wu <wuziwei518@gmail.com>
+---
+--- a/drivers/net/ethernet/airoha/airoha_eth.c
++++ b/drivers/net/ethernet/airoha/airoha_eth.c
+@@ -2309,10 +2309,16 @@
+ 	struct airoha_gdm_dev *dev = netdev_priv(netdev);
+ 
+ 	airoha_ppe_set_mtu(dev);
+-	if (!airoha_is_lan_gdm_dev(dev))
++	if (!airoha_is_lan_gdm_dev(dev)) {
+ 		airoha_fe_rmw(dev->eth, REG_WAN_MTU0,
+ 			      WAN_MTU0_MASK,
+-			      FIELD_PREP(WAN_MTU0_MASK, netdev->mtu + VLAN_ETH_HLEN));
++			      FIELD_PREP(WAN_MTU0_MASK,
++					 netdev->mtu + VLAN_ETH_HLEN + 16));
++		airoha_fe_rmw(dev->eth, REG_WAN_MTU0,
++			      WAN_MTU1_MASK,
++			      FIELD_PREP(WAN_MTU1_MASK,
++					 netdev->mtu + VLAN_ETH_HLEN + 16));
++	}
+ }
+ 
+ static int airoha_dev_open(struct net_device *netdev)
+--- a/drivers/net/ethernet/airoha/airoha_ppe.c
++++ b/drivers/net/ethernet/airoha/airoha_ppe.c
+@@ -129,7 +129,7 @@
+ 			len = max_t(u32, len, netdev->mtu);
+ 	}
+ 
+-	len += VLAN_ETH_HLEN;
++	len += VLAN_ETH_HLEN + 16;
+ 	ppe_id = !airoha_is_lan_gdm_dev(dev) && airoha_ppe_is_enabled(eth, 1);
+ 	index = port->id == AIROHA_GDM4_IDX ? 7 : port->id;
+ 	airoha_fe_rmw(eth, REG_PPE_MTU(ppe_id, index),
+@@ -749,8 +749,11 @@
+ 	int ppe_num_stats_entries;
+ 	u8 nbq;
+ 
+-	/* No verified NPU counter layout for native AN7581 L2B entries. */
+-	if (airoha_is_7581(ppe->eth) && type == PPE_PKT_TYPE_BRIDGE)
++	/* No verified NPU counter layout for native AN7581 L2B and IPv6
++	 * route entries.
++	 */
++	if (airoha_is_7581(ppe->eth) &&
++	    (type == PPE_PKT_TYPE_BRIDGE || type >= PPE_PKT_TYPE_IPV6_ROUTE_3T))
+ 		return;
+ 
+ 	ppe_num_stats_entries = airoha_ppe_get_total_num_stats_entries(ppe);
+@@ -1042,7 +1045,9 @@
+ 		 * source mac address
+ 		 */
+ 		hwe.ipv6.l2.src_mac_hi = FIELD_PREP(AIROHA_FOE_MAC_SMAC_ID,
+-						    0xf);
++						    0xf) |
++					     (hwe.ipv6.l2.src_mac_hi &
++					      AIROHA_FOE_MAC_PPPOE_ID);
+ 	} else {
+ 		memcpy(&hwe.bridge.l2, &e->data.bridge.l2,
+ 		       sizeof(hwe.bridge.l2));
+@@ -1108,6 +1113,15 @@
+ 	if (commit_done)
+ 		goto unlock;
+ 
++	/* Routed L3 packets must never fall through into the L2 subflow
++	 * lookup: the client MAC is learned on br-lan, so committing a
++	 * bridge subflow clobbers the PPPoE session id and reroutes the
++	 * flow to the NPU port, blackholing the connection.
++	 */
++	if (FIELD_GET(AIROHA_FOE_IB1_BIND_PACKET_TYPE, hwe->ib1) !=
++	    PPE_PKT_TYPE_BRIDGE)
++		goto unlock;
++
+ l2_lookup:
+ 	airoha_ppe_foe_set_bridge_addrs(&br, eth_hdr(skb));
+ 	e = rhashtable_lookup_fast(&ppe->l2_flows, &br,
+@@ -1497,8 +1511,10 @@
+ 
+ 	hwe = ppe->foe + hash * sizeof(*hwe);
+ 	if (airoha_is_7581(eth) &&
+-	    FIELD_GET(AIROHA_FOE_IB1_BIND_PACKET_TYPE, READ_ONCE(hwe->ib1)) ==
+-	    PPE_PKT_TYPE_BRIDGE)
++	    (FIELD_GET(AIROHA_FOE_IB1_BIND_PACKET_TYPE, READ_ONCE(hwe->ib1)) ==
++	     PPE_PKT_TYPE_BRIDGE ||
++	     FIELD_GET(AIROHA_FOE_IB1_BIND_PACKET_TYPE, READ_ONCE(hwe->ib1)) >=
++	     PPE_PKT_TYPE_IPV6_ROUTE_3T))
+ 		return;
+ 
+ 	ppe_num_stats_entries = airoha_ppe_get_total_num_stats_entries(ppe);

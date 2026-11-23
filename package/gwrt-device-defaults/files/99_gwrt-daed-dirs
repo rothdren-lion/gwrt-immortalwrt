@@ -1,0 +1,7 @@
+#!/bin/sh
+# daed 的 /etc/daed 与 /var/log/daed 目录不会自建；缺失时 daed 直接启动失败，
+# LuCI daed 页面因此显示登录框且 2023 端口不监听。首启补齐目录。
+[ -d /etc/daed ] || mkdir -p /etc/daed
+[ -d /var/log/daed ] || mkdir -p /var/log/daed
+chmod 700 /etc/daed 2>/dev/null
+exit 0

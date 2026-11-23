@@ -1,0 +1,25 @@
+#!/bin/sh
+# GWRT 默认 LAN 网关地址（仅首次启动；用户改过就不动）
+#
+#   XINGLOO AX3000 (CF-WR630AX) -> 192.168.3.3/24
+#   Qihoo 360T7                 -> 192.168.3.4/24（避免和主路由同 IP）
+#
+# 想强制改回：uci set network.lan.ipaddr=192.168.3.3/24 && uci commit network
+[ -f /etc/config/network ] || exit 0
+
+board="$(cat /tmp/sysinfo/board_name 2>/dev/null)"
+case "$board" in
+	qihoo,360t7*) want='192.168.3.4/24' ;;
+	*)            want='192.168.3.3/24' ;;
+esac
+
+cur="$(uci -q get network.lan.ipaddr)"
+case "$cur" in
+	"") ;;
+	192.168.1.1*)
+		# 只在还是出厂默认 192.168.1.1 时替换
+		uci -q set network.lan.ipaddr="$want"
+		uci -q commit network
+		;;
+esac
+exit 0

@@ -1,0 +1,6 @@
+#!/bin/sh
+# Kernel block events may precede the boot-time pass. The helper takes a lock.
+[ "$ACTION" = add ] || exit 0
+case "$DEVNAME" in mmcblk[0-9]*p[0-9]*) ;; *) exit 0 ;; esac
+[ -x /usr/libexec/gwrt-emmc-storage ] || exit 0
+/usr/libexec/gwrt-emmc-storage prepare

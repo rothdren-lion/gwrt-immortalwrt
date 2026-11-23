@@ -1,0 +1,3 @@
+#!/bin/sh
+# Compatibility placeholder; gwrt-emmc-storage owns validated storage defaults.
+exit 0

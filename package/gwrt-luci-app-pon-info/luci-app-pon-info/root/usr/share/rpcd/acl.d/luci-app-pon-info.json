@@ -1,0 +1,15 @@
+{
+	"luci-app-pon-info": {
+		"description": "Read live PON parameters and the recorded PON history",
+		"read": {
+			"ubus": {
+				"luci.pon-info": [ "status", "history" ]
+			}
+		},
+		"write": {
+			"ubus": {
+				"luci.pon-info": [ "record", "clear" ]
+			}
+		}
+	}
+}

@@ -12,3 +12,8 @@
 mconf_check
 # The next line should be removed after 23.05 is EOL
 *conf-cfg
+
+# build artifacts (never commit)
+*.o
+lxdialog/*.o
+*-cfg.sh

@@ -1,0 +1,50 @@
+From: GWRT Build System <build@gwrt.local>
+Subject: [PATCH] nss: skip cleanup when loaded only to export symbols
+
+Without an nss-common node, init returns success before creating any
+workqueue or registering the platform driver. Unloading then calls
+destroy_workqueue(NULL) and panics, as reproduced on RE-SS-01. Track
+successful driver registration and leave symbol-only loads untouched.
+The same guard covers the disabled point-offload early return.
+
+--- a/nss_init.c
++++ b/nss_init.c
+@@ -656,12 +656,15 @@
+ static struct ctl_table_header *nss_skb_hdr;
+ #endif
+ 
++static bool nss_driver_initialized;
++
+ /*
+  * nss_init()
+  *	Registers nss driver
+  */
+ static int __init nss_init(void)
+ {
++	int ret;
+ #if defined(NSS_DRV_POINT_OFFLOAD)
+ 	struct device_node *pof = NULL;
+ #endif
+@@ -967,7 +970,10 @@
+ 	/*
+ 	 * Register platform_driver
+ 	 */
+-	return platform_driver_register(&nss_driver);
++	ret = platform_driver_register(&nss_driver);
++	if (!ret)
++		nss_driver_initialized = true;
++	return ret;
+ }
+ 
+ /*
+@@ -976,6 +982,10 @@
+  */
+ static void __exit nss_cleanup(void)
+ {
++	/* Symbol-only loads do not create workqueues or register a driver. */
++	if (!nss_driver_initialized)
++		return;
++
+ 	nss_info("Exit NSS driver");
+ 
+ #if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))

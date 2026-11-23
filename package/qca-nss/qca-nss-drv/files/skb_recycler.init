@@ -1,0 +1,43 @@
+#!/bin/sh /etc/rc.common
+# shellcheck disable=3043
+
+START=40
+NAME=skb_recycler
+
+skb_recycler_config() {
+	local max_skbs max_spare_skbs enable memtotal
+
+	memtotal=$(awk '/MemTotal/{print $2}' /proc/meminfo)
+	[ "$memtotal" -le 512000 ] && max_skbs=512 || max_skbs=1024
+	[ "$memtotal" -le 512000 ] && max_spare_skbs=128 || max_spare_skbs=256
+	[ "$memtotal" -le 256000 ] && enable=0 || enable=1
+
+	[ "$enable" -eq 0 ] && enable_disable="Disabling" || enable_disable="Enabling"
+
+	if [ -r "/proc/net/$NAME/skb_recycler_enable" ]; then
+		logger -t "$NAME" -p user.notice "$enable_disable $NAME"
+		echo "$enable" > /proc/net/$NAME/skb_recycler_enable
+	else
+		if [ "$enable" -eq 0 ]; then
+			logger -t "$NAME" -p user.warn "$NAME kernel feature 'skb_recycler_enable' not available"
+			logger -t "$NAME" -p user.notice "$enable_disable $NAME"
+			echo 1 > /proc/net/$NAME/max_skbs
+			echo 1 > /proc/net/$NAME/max_spare_skbs
+			echo 1 > /proc/net/$NAME/flush
+		fi
+	fi
+
+	logger -t "$NAME" -p user.notice "Setting max_skbs to $max_skbs"
+	echo "$max_skbs" > /proc/net/$NAME/max_skbs
+
+	logger -t "$NAME" -p user.notice "Setting max_spare_skbs to $max_spare_skbs"
+	echo "$max_spare_skbs" > /proc/net/$NAME/max_spare_skbs
+
+	[ "$enable" -eq 0 ] && echo 1 > /proc/net/$NAME/flush
+}
+
+start() {
+	[ ! -r /proc/net/$NAME ] && logger -t "$NAME" -p user.warn "skb_recycler feature not available" && return
+
+	skb_recycler_config
+}

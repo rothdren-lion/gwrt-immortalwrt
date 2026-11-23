@@ -163,6 +163,12 @@ case "$board" in
 	jdcloud,re-cp-03)
 		[ "$PHYNBR" = "1" ] && mmc_get_mac_binary factory 0xa > /sys${DEVPATH}/macaddress
 		;;
+	clx,s20l|\
+	clx,s20p)
+		addr=$(mmc_get_mac_binary factory 0x4)
+		[ "$PHYNBR" = "0" ] && $addr > /sys${DEVPATH}/macaddress
+		[ "$PHYNBR" = "1" ] && macaddr_setbit_la $addr > /sys${DEVPATH}/macaddress
+		;;
 	jiorouter,ax6000-jidu6101)
 		addr=$(mtd_get_mac_ascii u-boot-env mac)
 		[ "$PHYNBR" = "0" ] && macaddr_add $addr 2 > /sys${DEVPATH}/macaddress

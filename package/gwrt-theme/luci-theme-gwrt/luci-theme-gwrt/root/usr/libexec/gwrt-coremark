@@ -1,0 +1,30 @@
+#!/bin/sh
+
+runtime_dir=$(/usr/libexec/gwrt-runtime-dir) || exit 1
+pidfile=$runtime_dir/coremark.pid
+logfile=$runtime_dir/coremark.log
+
+running() {
+	[ -s "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null
+}
+
+case "${1:-}" in
+	status)
+		running && echo running || echo idle
+		exit 0
+		;;
+	start) ;;
+	*) exit 1 ;;
+esac
+
+if running; then
+	echo running
+	exit 0
+fi
+
+(
+	trap 'rm -f "$pidfile"' EXIT
+	/etc/coremark.sh
+) >"$logfile" 2>&1 &
+echo $! > "$pidfile"
+echo started

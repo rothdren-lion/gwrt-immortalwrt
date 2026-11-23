@@ -1,0 +1,23 @@
+diff --git a/modules/luci-base/ucode/runtime.uc b/modules/luci-base/ucode/runtime.uc
+index e5f11690df..0d3a748fdc 100644
+--- a/modules/luci-base/ucode/runtime.uc
++++ b/modules/luci-base/ucode/runtime.uc
+@@ -155,6 +155,18 @@ export default function(env) {
+ 
+ 	// determine theme
+ 	let media = uci.get('luci', 'main', 'mediaurlbase');
++
++	// GWRT dual-theme: override the theme per listen port (gwrt.theme.port_<port>).
++	// Port 80 keeps the global default (gwrt), port 81 serves the native theme.
++	let port_match = match(getenv('HTTP_HOST') ?? '', /:(\d+)$/);
++
++	if (port_match) {
++		let override = uci.get('gwrt', 'theme', `port_${port_match[1]}`);
++
++		if (override)
++			media = override;
++	}
++
+ 	let status = self.trycompile(`themes/${basename(media)}/header`);
+ 
+ 	if (status !== true) {

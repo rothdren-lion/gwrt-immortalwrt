@@ -1,0 +1,53 @@
+#!/bin/sh /etc/rc.common
+# gwrt-ipv6-auto — IPv6 模式开关（DHCP 中继 / 自动获取上游 PD）
+#
+# 开关（uci /etc/config/gwrt）：
+#   gwrt.ipv6.auto = 1|0    开机自动按检测结果应用（默认 1）
+#   gwrt.ipv6.mode = auto|pd|relay
+#       auto   → 自动判断：PPPoE/公网 IPv4 → 网关(PD)；上级私网 → 二级(Relay)
+#       pd     → 强制网关模式（Prefix Delegation，自动获取上游 IPv6）
+#       relay  → 强制二级模式（DHCPv6 中继/Relay）
+#
+# 手动：/usr/sbin/gwrt-ipv6-auto.sh check | apply [gateway|secondary]
+#
+# 说明：apply 直接写 uci + 后台重启 wan6/odhcpd，不碰 luci-ipv6-mode
+#（那玩意 ifup lan 会把绑定 lan 的 dropbear 踢掉线）。
+
+START=99
+
+ipv6_mode_force() {
+	case "$1" in
+		pd|gateway)      echo "gateway" ;;
+		relay|secondary) echo "secondary" ;;
+		*)               echo "" ;;
+	esac
+}
+
+boot() {
+	local auto mode force
+	auto="$(uci -q get gwrt.ipv6.auto)"
+	mode="$(uci -q get gwrt.ipv6.mode)"
+	[ "${auto:-1}" = "1" ] || { logger -t gwrt-ipv6 "auto=0, skip"; return 0; }
+	force="$(ipv6_mode_force "$mode")"
+
+	# 等网络起来再判断（WAN 拨号/DHCP 需要时间），后台跑不阻塞开机
+	(
+		i=0
+		while [ "$i" -lt 12 ]; do
+			ip route 2>/dev/null | grep -q '^default' && break
+			sleep 5; i=$((i + 1))
+		done
+		sleep 10
+		if [ -n "$force" ]; then
+			logger -t gwrt-ipv6 "apply (forced $force)"
+			/usr/sbin/gwrt-ipv6-auto.sh apply "$force"
+		else
+			logger -t gwrt-ipv6 "apply (auto detect)"
+			/usr/sbin/gwrt-ipv6-auto.sh apply
+		fi
+	) >/dev/null 2>&1 &
+}
+
+start() { boot; }
+
+restart() { boot; }

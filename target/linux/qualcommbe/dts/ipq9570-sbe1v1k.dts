@@ -152,17 +152,6 @@
 	status = "okay";
 };
 
-&rpm_requests {
-	regulators {
-		mp5496_l5: l5 {
-			regulator-min-microvolt = <1800000>;
-			regulator-max-microvolt = <1800000>;
-			regulator-always-on;
-			regulator-boot-on;
-		};
-	};
-};
-
 &sdhc_1 {
 	#address-cells = <1>;
 	#size-cells = <0>;

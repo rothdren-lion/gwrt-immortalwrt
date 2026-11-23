@@ -1,0 +1,74 @@
+#!/bin/sh
+# Delayed multi-radio bring-up. ath12k extracts calibration data after the
+# first phy appears, so the early ieee80211 hotplug can run before hostapd is
+# able to start. Reload once the phys/config exist, then retry while radios
+# are still down (first boot only; exits as soon as every enabled radio is up).
+
+[ -x /sbin/wifi ] || exit 0
+
+. /usr/share/libubox/jshn.sh 2>/dev/null
+
+log() {
+	logger -t gwrt-wifi-late "$*" 2>/dev/null
+}
+
+uci_radios() {
+	uci -q show wireless 2>/dev/null |
+		sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p'
+}
+
+enabled_radios() {
+	local r n=0
+	for r in $(uci_radios); do
+		[ "$(uci -q get "wireless.$r.disabled")" = "1" ] && continue
+		n=$((n + 1))
+	done
+	echo "$n"
+}
+
+up_radios() {
+	local radios r up n=0
+	json_load "$(ubus -S call network.wireless status 2>/dev/null)" || {
+		echo 0
+		return
+	}
+	json_get_keys radios radios 2>/dev/null || {
+		echo 0
+		return
+	}
+	for r in $radios; do
+		json_select "$r" 2>/dev/null || continue
+		json_get_var up up 2>/dev/null
+		json_select .. 2>/dev/null
+		[ "$up" = "1" ] && n=$((n + 1))
+	done
+	echo "$n"
+}
+
+i=0
+while [ "$i" -lt 48 ]; do
+	[ -s /etc/config/wireless ] && break
+	sleep 5
+	i=$((i + 1))
+done
+
+# Last resort only: the ieee80211 hotplug normally creates the config once
+# board.json is available. Never generate it early, or later phys are lost.
+[ -s /etc/config/wireless ] || /sbin/wifi config >/dev/null 2>&1
+[ -s /etc/config/wireless ] || exit 0
+
+enabled="$(enabled_radios)"
+[ "$enabled" -ge 2 ] 2>/dev/null || exit 0
+
+i=0
+while [ "$i" -lt 12 ]; do
+	up="$(up_radios)"
+	[ "$up" -ge "$enabled" ] 2>/dev/null && exit 0
+	log "radios up $up/$enabled; reloading (attempt $((i + 1)))"
+	/sbin/wifi reload >/dev/null 2>&1
+	sleep 15
+	i=$((i + 1))
+done
+
+log "radios still up $(up_radios)/$enabled after retries"
+exit 0

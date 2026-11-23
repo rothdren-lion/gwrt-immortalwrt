@@ -1,0 +1,167 @@
+#!/bin/sh
+# gwrt-mesh-led — 无线漫游（mesh）状态灯
+#
+# 状态来源：ubus call wifiroam status / discover
+#   ok   : 主AP 有在线成员；子AP 已连上主AP        -> 常亮
+#   pair : 主AP 发现未配对设备（可按 MESH 键配对） -> 快闪
+#   wait : 未配置 / 子AP 还没连上主AP             -> 慢闪
+#   idle : 已配置但当前没有 mesh 成员              -> 灭
+#   off  : 守护进程没跑                            -> 灭
+#
+# 闪烁用内核 timer trigger（busybox sleep 不支持小数秒，自己循环会刷错误日志）
+#
+# LED 由 uci 决定：gwrt.mesh_led.leds
+#   auto（默认）: 有 blue:status 用蓝灯；否则用 red:status + green:status
+#   XINGLOO AX3000 : blue:status（原厂规格：蓝灯闪 = MESH/WPS 配对）
+#   Qihoo 360T7    : "red:status green:status"（两灯同亮 = 琥珀色/黄色）
+
+LEDS=""
+LAST=""
+WAIT_TICKS=0
+
+log() { logger -t gwrt-mesh-led "$@"; }
+
+detect_leds() {
+	local cfg l x out
+	cfg="$(uci -q get gwrt.mesh_led.leds)"
+	case "$cfg" in
+		""|auto)
+			LEDS=""
+			if [ -d /sys/class/leds/blue:status ]; then
+				LEDS="blue:status"
+			else
+				for x in red:status green:status; do
+					[ -d "/sys/class/leds/$x" ] && LEDS="$LEDS $x"
+				done
+			fi
+			# Some boards (e.g. Realtek RTL9617C/TYFZA1) expose vendor LED
+			# class names instead of the generic :status colors.  Use the
+			# WPS/pairing LED there, which is what the stock firmware drives
+			# for Mesh pairing.
+			if [ -z "$LEDS" ]; then
+				for x in LED_WPS_G led_wps wps:green wps:blue wps; do
+					[ -d "/sys/class/leds/$x" ] && { LEDS="$x"; break; }
+				done
+			fi
+			;;
+		*) LEDS="$cfg" ;;
+	esac
+	out=""
+	for l in $LEDS; do
+		[ -d "/sys/class/leds/$l" ] && out="$out $l"
+	done
+	LEDS="$(echo $out)"
+	[ -n "$LEDS" ] || log "no usable LED found"
+}
+
+solid() {
+	local l
+	for l in $LEDS; do
+		echo none >"/sys/class/leds/$l/trigger" 2>/dev/null
+		echo 1 >"/sys/class/leds/$l/brightness" 2>/dev/null
+	done
+}
+
+dark() {
+	local l
+	for l in $LEDS; do
+		echo none >"/sys/class/leds/$l/trigger" 2>/dev/null
+		echo 0 >"/sys/class/leds/$l/brightness" 2>/dev/null
+	done
+}
+
+blink() { # $1 = delay_on/off (ms)
+	local l
+	for l in $LEDS; do
+		# 顺序不能反：delay_on/delay_off 只有 trigger=timer 之后才存在
+		echo timer >"/sys/class/leds/$l/trigger" 2>/dev/null
+		echo "$1" >"/sys/class/leds/$l/delay_on" 2>/dev/null
+		echo "$1" >"/sys/class/leds/$l/delay_off" 2>/dev/null
+		echo 1 >"/sys/class/leds/$l/brightness" 2>/dev/null
+	done
+}
+
+# 子AP 的 STA 上联是否真起来（cap_ip 重启后会残留，不能光看它）
+sta_link_up() {
+	local i
+	for i in /sys/class/net/*sta*; do
+		[ -e "$i" ] || continue
+		[ "$(cat "$i/operstate" 2>/dev/null)" = "up" ] && return 0
+	done
+	return 1
+}
+
+mesh_state() {
+	local st role online capip disc
+	st="$(ubus call wifiroam status 2>/dev/null)" || { echo off; return; }
+	[ -n "$st" ] || { echo off; return; }
+	role="$(printf '%s' "$st" | jsonfilter -e '@.role' 2>/dev/null)"
+	online="$(printf '%s' "$st" | jsonfilter -e '@.peers_online' 2>/dev/null)"
+	capip="$(printf '%s' "$st" | jsonfilter -e '@.cap_ip' 2>/dev/null)"
+
+	case "$role" in
+		cap)
+			[ "${online:-0}" -gt 0 ] 2>/dev/null && { echo ok; return; }
+			disc="$(ubus call wifiroam discover 2>/dev/null | \
+				jsonfilter -e '@.devices[*].mac' 2>/dev/null | wc -l)"
+			[ "${disc:-0}" -gt 0 ] && { echo pair; return; }
+			echo idle
+			;;
+		sap)
+			# 常亮必须真的连着：peers_online>0，或 STA 链路 up（有线回传时靠 peers_online）
+			if [ -n "$capip" ] && [ "$capip" != "null" ] && \
+			   { [ "${online:-0}" -gt 0 ] 2>/dev/null || sta_link_up; }; then
+				echo ok
+			else
+				echo wait
+			fi
+			;;
+		unconfigured|"") echo wait ;;
+		*) echo off ;;
+	esac
+}
+
+# 单实例（避免 uci-defaults 与 rcS 各起一个，两个实例抢灯）
+PIDFILE=/var/run/gwrt-mesh-led.pid
+if [ -f "$PIDFILE" ]; then
+	old="$(cat "$PIDFILE" 2>/dev/null)"
+	if [ -n "$old" ] && kill -0 "$old" 2>/dev/null; then
+		exit 0
+	fi
+fi
+echo $$ >"$PIDFILE"
+
+detect_leds
+if [ -z "$LEDS" ]; then
+	# Exit 0 makes procd respawn, which shows up as a crash loop.  A board
+	# with no usable LED simply has nothing to drive, so stay resident.
+	log "no usable LED found; idling"
+	while true; do sleep 3600; done
+fi
+log "driving LEDs:$LEDS"
+
+while true; do
+	s="$(mesh_state)"
+	if [ "$s" != "$LAST" ]; then
+		log "state $LAST -> $s"
+		LAST="$s"
+		WAIT_TICKS=0
+	fi
+	case "$s" in
+		ok)   solid ;;
+		idle|off) dark ;;
+		pair) blink 200 ;;
+		wait)
+			# 未配置/等配对：闪 2 分钟后停（原厂也是 2 分钟后不再闪）。
+			# 用 tick 计数而不是 date：开机 NTP 校时会跳变，用绝对时间会瞬间超时
+			WAIT_TICKS=$((WAIT_TICKS + 2))
+			if [ "$WAIT_TICKS" -lt 120 ]; then
+				blink 700
+			else
+				dark
+			fi
+			;;
+		*)    dark ;;
+	esac
+	sleep 2
+done

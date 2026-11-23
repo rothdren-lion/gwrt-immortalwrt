@@ -1,0 +1,34 @@
+. /lib/functions/uci-defaults.sh
+
+board=$(board_name)
+
+board_config_update
+
+# 2026-09-20（用户要求）：
+#   本文件**不再设置任何默认 SSID**，无线命名交回「源码原始行为」——
+#   wifi-scripts 的 mac80211.uc 在 board.json 没有 ssid defaults 时，
+#   落到它自己的兜底值（上游原值 ImmortalWrt）。
+#   GWRT_2.4G/5.8G/5.2G_<MAC后4> 这套命名由用户自己的钩子脚本在部署时写入，
+#   固件源码侧不再预置（"没有我的钩子脚本就换原"）。
+#
+#   同步还原的还有 mac80211.uc 的硬编码兜底：
+#     fork 曾把 `defaults?.ssid || "ImmortalWrt"` 改成 `|| "GWRT"`，
+#     已改回上游原值（两份副本：files/ 与 wifi-scripts/wifi-scripts/，
+#     构建实际读后者，见 md/BUILD-RULES.md 血泪坑 #10）。
+#
+# 保留的唯一无线相关设置：各射频 MAC 地址数量（结构性，非命名）——
+# wifi-scripts 的 mac80211.uc 读 band_defaults.mac_count。
+case "$board" in
+jdcloud,re-ss-01|jdcloud,re-cs-02|jdcloud,re-cs-02-gwrt2)
+	ucidef_set_wireless_mac_count 2g 7
+	ucidef_set_wireless_mac_count 5g 7
+	# 2026-09-21：5G 信道不能留空（phy 默认 ch100 属 DFS 段）。
+	#   上游 uci-defaults.sh 没有 ucidef_set_wireless_channel，board.json 里
+	#   也没有对应键，所以信道由首启脚本 95_gwrt-wifi-defaults 按机型写入：
+	#   SS-01（2 射频）固定 ch149；CS-02 的 QCN9074 5.2G 由 hotplug 固定 ch36。
+	;;
+esac
+
+board_config_flush
+
+exit 0

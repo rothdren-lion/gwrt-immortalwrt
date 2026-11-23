@@ -1,0 +1,75 @@
+#!/bin/sh /etc/rc.common
+# Manage only LuCI's exports; preserve administrator-owned /etc/exports.
+START=99
+STOP=59
+
+nfs_share() {
+	local enabled path clients options
+	config_get_bool enabled "$1" enabled 0
+	[ "$enabled" = 1 ] || return 0
+	config_get path "$1" path
+	config_get clients "$1" clients
+	config_get options "$1" options rw,sync,root_squash,no_subtree_check
+	case "$path" in /*) ;; *) return 1 ;; esac
+	case "$path" in *[!a-zA-Z0-9_./-]*|*/../*|*/..) return 1 ;; esac
+	case "$clients" in ''|*[!a-zA-Z0-9_.:/,*?-]*) return 1 ;; esac
+	case "$options" in ''|*[!a-zA-Z0-9_,=.-]*) return 1 ;; esac
+	[ -d "$path" ] || return 1
+	# Managed eMMC exports must never expose an unmounted overlay directory.
+	local managed mount device
+	config_get managed "$1" gwrt_auto 0
+	if [ "$managed" = 1 ]; then
+		mount=$(uci -q get gwrt.storage.mount)
+		device=$(uci -q get gwrt.storage.device)
+		[ "$path" = "$mount" ] && [ -n "$device" ] || return 1
+		awk -v dev="$device" -v target="$mount" '$1 == dev && $2 == target {ok=1} END {exit !ok}' /proc/mounts || return 1
+	fi
+	printf '%s %s(%s)\n' "$path" "$clients" "$options" >>"$exports_tmp"
+}
+
+nfs_mount() {
+	local enabled target source options delay
+	config_get_bool enabled "$1" enabled 0
+	[ "$enabled" = 1 ] || return 0
+	config_get target "$1" target
+	config_get source "$1" source
+	config_get options "$1" options rw,nolock
+	config_get delay "$1" delay 0
+	case "$target" in /mnt/*|/media/*) ;; *) return 1 ;; esac
+	case "$delay" in ''|*[!0-9]*) delay=0 ;; esac
+	[ "$delay" -le 30 ] || delay=30
+	[ "$delay" = 0 ] || sleep "$delay"
+	awk -v target="$target" '$2 == target {found=1} END {exit !found}' /proc/mounts && return 0
+	mkdir -p "$target" && mount -t nfs -o "$options" "$source" "$target"
+}
+
+start() {
+	mkdir -p /etc/exports.d /var/run
+	exports_tmp=$(mktemp /etc/exports.d/.gwrt-luci.XXXXXX) || return 1
+	config_load nfs
+	config_foreach nfs_share share
+	chmod 0644 "$exports_tmp"
+	mv "$exports_tmp" /etc/exports.d/gwrt-luci.exports || return 1
+	if [ -s /etc/exports.d/gwrt-luci.exports ]; then
+		if [ ! -x /usr/sbin/nfsv4.exportd ] && [ -x /etc/init.d/rpcbind ]; then /etc/init.d/rpcbind start; fi
+		/etc/init.d/nfsd status >/dev/null 2>&1 || /etc/init.d/nfsd start || return 1
+		touch /var/run/gwrt-nfs-owned
+	fi
+	exportfs -r || return 1
+	if [ ! -s /etc/exports.d/gwrt-luci.exports ] && [ -f /var/run/gwrt-nfs-owned ]; then
+		# Leave a separately configured server running if it still has exports.
+		if [ -z "$(exportfs -s 2>/dev/null)" ]; then /etc/init.d/nfsd stop; fi
+		rm -f /var/run/gwrt-nfs-owned
+	fi
+	config_foreach nfs_mount mount
+}
+
+reload() { start; }
+restart() { start; }
+stop() {
+	mkdir -p /etc/exports.d
+	: > /etc/exports.d/gwrt-luci.exports
+	exportfs -r
+	if [ -f /var/run/gwrt-nfs-owned ] && [ -z "$(exportfs -s 2>/dev/null)" ]; then /etc/init.d/nfsd stop; fi
+	rm -f /var/run/gwrt-nfs-owned
+}

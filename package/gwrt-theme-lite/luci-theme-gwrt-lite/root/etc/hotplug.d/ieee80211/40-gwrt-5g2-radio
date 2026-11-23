@@ -1,0 +1,5 @@
+#!/bin/sh
+# Retired: wireless defaults are generated once by wifi-scripts/mac80211.uc.
+# Keep this file as a no-op so a theme upgrade replaces the old runtime hook.
+# A UI theme must not change saved SSIDs, regulatory settings or radio widths.
+exit 0

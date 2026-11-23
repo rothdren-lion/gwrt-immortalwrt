@@ -1,6 +1,7 @@
 #!/usr/bin/env ucode
 import { readfile } from "fs";
 import * as uci from 'uci';
+import { load_policy, radio_defaults } from '/lib/wifi/gwrt-defaults.uc';
 
 const bands_order = [ "60G", "6G", "5G", "2G" ];
 const htmode_order = [ "EHT", "HE", "VHT", "HT" ];
@@ -13,6 +14,7 @@ let idx = 0;
 let commit;
 
 let config = uci.cursor().get_all("wireless") ?? {};
+let policy = load_policy();
 
 function radio_exists(path, macaddr, phy, radio) {
 	for (let name, s in config) {
@@ -93,6 +95,14 @@ for (let phy_name, phy in board.wlan) {
 			num_global_macaddr = board.wlan.defaults.ssids?.[band_name]?.mac_count;
 		}
 
+		let product = radio_defaults(policy, board, phy.path, band_name,
+			band, rband, channel, htmode, macaddr);
+		if (product) {
+			channel = product.channel;
+			htmode = product.htmode;
+			country ||= product.country;
+		}
+
 		if (length(info.radios) > 0)
 			id += `\nset ${s}.radio='${radio.index}'`;
 
@@ -104,14 +114,15 @@ set ${s}.channel='${channel}'
 set ${s}.htmode='${htmode}'
 set ${s}.country='${country || ''}'
 set ${s}.num_global_macaddr='${num_global_macaddr || ''}'
+set ${s}.disabled='${product?.disabled ?? 0}'
 
 set ${si}=wifi-iface
 set ${si}.device='${name}'
 set ${si}.network='lan'
 set ${si}.mode='ap'
-set ${si}.ssid='${defaults?.ssid || "ImmortalWrt"}'
-set ${si}.encryption='${defaults?.encryption || encryption}'
-set ${si}.key='${defaults?.key || ""}'
+set ${si}.ssid='${defaults?.ssid || product?.ssid || "ImmortalWrt"}'
+set ${si}.encryption='${defaults?.encryption || (defaults?.ssid ? encryption : product?.encryption) || encryption}'
+set ${si}.key='${defaults?.key || (defaults?.ssid ? "" : product?.key) || ""}'
 set ${si}.disabled='0'
 
 `);

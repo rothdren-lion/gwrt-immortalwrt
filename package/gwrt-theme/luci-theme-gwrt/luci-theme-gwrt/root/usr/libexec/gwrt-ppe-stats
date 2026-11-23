@@ -1,0 +1,135 @@
+#!/bin/sh
+# gwrt-ppe-stats — Airoha PPE（硬件加速流表）状态汇总
+#
+# 只读内核 debugfs，AN758x / EN758x 全系列通用（an7581 双 PPE、an7583 单 PPE）。
+#
+#   数据来源
+#     /sys/kernel/debug/ppe/config    npu_attached、ppeN_table_cfg、CPU 默认口
+#     /sys/kernel/debug/ppe/entries   每条有效加速流（state/type/packets/bytes）
+#
+#   输出（单行 JSON，供 LuCI 仪表盘 file.exec 读取）
+#     available  debugfs 是否存在（0 = 不是 Airoha 或未挂 debugfs）
+#     soc        AN7581 / AN7583 ...（取自 device-tree compatible）
+#     num_ppe    PPE 实例数（config 里 ppeN_table_cfg 的个数）
+#     capacity   流表总容量 = num_ppe * 8192 + 16384
+#     npu        NPU 是否已 attach（0/1）
+#     bound      BND（已绑定）流数
+#     unbound    UNB（未绑定）流数
+#     fin        FIN（老化中）流数
+#     used       bound + unbound + fin
+#     packets    硬件计数包数合计（需 CONFIG_NET_AIROHA_FLOW_STATS 且 NPU 已挂载）
+#     bytes      硬件计数字节合计（同上，否则恒为 0）
+#     types      各加速类型的流数量，例如 {"IPv4 5T":3,"L2B":1}
+#
+# 用法：
+#   gwrt-ppe-stats            # JSON
+#   gwrt-ppe-stats --text     # 人读格式，调试用
+#
+# 环境变量 GWRT_PPE_DIR 可覆盖 debugfs 目录（仅用于测试）。
+set -u
+
+dir="${GWRT_PPE_DIR:-/sys/kernel/debug/ppe}"
+cfg="$dir/config"
+entries="$dir/entries"
+
+if [ ! -r "$cfg" ]; then
+	printf '{"available":0}\n'
+	exit 0
+fi
+
+# --- SoC 名称 --------------------------------------------------------------
+soc=""
+if [ -r /proc/device-tree/compatible ]; then
+	soc=$(tr '\0' '\n' < /proc/device-tree/compatible 2>/dev/null |
+		sed -n 's/^airoha,\(an[0-9][0-9]*\).*/\1/p' |
+		sed -n '1p' | tr 'a-z' 'A-Z')
+fi
+[ -n "$soc" ] || soc=$(sed -n 's/^\([a-z]*\)an\([0-9][0-9]*\).*/AN\2/p' /tmp/sysinfo/board_name 2>/dev/null | sed -n '1p')
+
+# --- PPE 实例数 / 容量 -----------------------------------------------------
+num_ppe=$(grep -c '^ppe[0-9][0-9]*_table_cfg:' "$cfg" 2>/dev/null || true)
+case "$num_ppe" in ''|*[!0-9]*) num_ppe=1 ;; esac
+[ "$num_ppe" -ge 1 ] || num_ppe=1
+capacity=$((num_ppe * 8192 + 16384))
+
+# --- NPU ------------------------------------------------------------------
+npu=$(sed -n 's/^npu_attached:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$cfg" 2>/dev/null | sed -n '1p')
+case "$npu" in ''|*[!0-9]*) npu=0 ;; esac
+
+# --- 流表统计 --------------------------------------------------------------
+stats=$(awk '
+function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+{
+	line = $0
+	# type 字段（%7s）本身可能含空格（IPv4 5T），从第一个数据字段处截断
+	p = index(line, " orig=")
+	if (!p) p = index(line, " new=")
+	if (!p) p = index(line, " eth=")
+	head = (p > 0) ? substr(line, 1, p - 1) : line
+	if (split(head, f, /[ \t]+/) < 2) next
+	state = f[2]
+	type = head
+	sub(/^[^ \t]+[ \t]+[^ \t]+[ \t]+/, "", type)
+	type = trim(type)
+
+	if (state == "BND") bound++
+	else if (state == "UNB") unbound++
+	else if (state == "FIN") fin++
+	else next
+	used++
+
+	if (type != "") {
+		if (type in cnt) cnt[type]++
+		else { cnt[type] = 1; order[++ntypes] = type }
+	}
+	if (match(line, /packets=[0-9]+/))
+		packets += substr(line, RSTART + 8, RLENGTH - 8)
+	if (match(line, /bytes=[0-9]+/))
+		bytes += substr(line, RSTART + 6, RLENGTH - 6)
+}
+END {
+	printf "bound=%d\nunbound=%d\nfin=%d\nused=%d\n", bound, unbound, fin, used
+	printf "packets=%.0f\nbytes=%.0f\n", packets, bytes
+	types = ""
+	for (i = 1; i <= ntypes; i++) {
+		t = order[i]
+		gsub(/\\/, "\\\\", t)
+		gsub(/"/, "\\\"", t)
+		types = types (types == "" ? "" : ",") "\"" t "\":" cnt[t]
+	}
+	printf "types={%s}\n", types
+}
+' "$entries" 2>/dev/null)
+
+bound=0 unbound=0 fin=0 used=0 packets=0 bytes=0 types='{}'
+# 逐行取 key=value，避免 eval 把 types 里的双引号吃掉
+while IFS='=' read -r key value; do
+	case "$key" in
+		bound) bound="$value" ;;
+		unbound) unbound="$value" ;;
+		fin) fin="$value" ;;
+		used) used="$value" ;;
+		packets) packets="$value" ;;
+		bytes) bytes="$value" ;;
+		types) types="$value" ;;
+	esac
+done <<EOF
+$stats
+EOF
+
+if [ "${1:-}" = "--text" ]; then
+	printf 'soc:      %s\n' "${soc:-unknown}"
+	printf 'ppe:      %s (capacity %s)\n' "$num_ppe" "$capacity"
+	printf 'npu:      %s\n' "$npu"
+	printf 'bound:    %s\n' "$bound"
+	printf 'unbound:  %s\n' "$unbound"
+	printf 'fin:      %s\n' "$fin"
+	printf 'used:     %s\n' "$used"
+	printf 'packets:  %s\n' "$packets"
+	printf 'bytes:    %s\n' "$bytes"
+	printf 'types:    %s\n' "$types"
+	exit 0
+fi
+
+printf '{"available":1,"soc":"%s","num_ppe":%s,"capacity":%s,"npu":%s,"bound":%s,"unbound":%s,"fin":%s,"used":%s,"packets":%s,"bytes":%s,"types":%s}\n' \
+	"$soc" "$num_ppe" "$capacity" "$npu" "$bound" "$unbound" "$fin" "$used" "$packets" "$bytes" "$types"

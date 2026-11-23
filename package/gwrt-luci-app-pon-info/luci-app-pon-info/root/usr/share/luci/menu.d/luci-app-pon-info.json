@@ -1,0 +1,22 @@
+{
+	"admin/onu/pon-info": {
+		"title": "PON 信息记录",
+		"order": 30,
+		"action": {
+			"type": "view",
+			"path": "poninfo/log"
+		},
+		"depends": {
+			"acl": [ "luci-app-pon-info" ]
+		}
+	},
+	"admin/network/pon-info": {
+		"action": {
+			"type": "alias",
+			"path": "admin/onu/pon-info"
+		},
+		"depends": {
+			"acl": [ "luci-app-pon-info" ]
+		}
+	}
+}

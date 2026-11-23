@@ -1,0 +1,20 @@
+{
+ "luci-theme-gwrt-containers": {
+  "description": "View and manage GWRT container runtime settings",
+  "read": {
+   "uci": ["dockerd"],
+   "file": {
+    "/etc/containers/storage.conf": ["read"],
+    "/etc/config/dockerd": ["read"]
+   }
+  },
+  "write": {
+   "uci": ["dockerd"],
+   "file": {
+    "/etc/containers/storage.conf": ["write"],
+    "/etc/containers/registries.conf": ["write"],
+    "/etc/config/dockerd": ["write"]
+   }
+  }
+ }
+}

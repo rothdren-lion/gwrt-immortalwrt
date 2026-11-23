@@ -1,0 +1,490 @@
+#!/usr/bin/env ucode
+// SPDX-License-Identifier: GPL-2.0-or-later
+// luci-app-pon-info collector: 采集并记录 PON 的全部可读信息。
+// 用法: pon-info json | record | history [N] | clear | show
+'use strict';
+
+import { readfile, writefile, rename, popen, glob, mkdir } from 'fs';
+
+const STATE = '/etc/poninfo';
+const HISTORY = STATE + '/history.jsonl';
+const LATEST = STATE + '/latest.json';
+const CONFIG = '/etc/config/poninfo';
+const DEFAULTS = { enabled: 1, interval: 60, keepalive: 600, max_lines: 4000 };
+
+// PON 平台设备目录因 SoC 而异（Realtek RTL9617C 为 4f5500000.pon，
+// Airoha EN7581 等为其它地址），这里按名字发现，找不到就返回 null。
+function pon_device() {
+	let candidates = glob('/sys/bus/platform/devices/*.pon') ?? [];
+	for (let dir in candidates) {
+		if (readfile(dir + '/state') != null || readfile(dir + '/optical') != null)
+			return dir + '/';
+	}
+	for (let dir in glob('/sys/devices/platform/*.pon') ?? []) {
+		if (readfile(dir + '/state') != null || readfile(dir + '/optical') != null)
+			return dir + '/';
+	}
+	return null;
+}
+
+function value(path) {
+	if (path == null)
+		return null;
+	let text = readfile(path);
+	return text == null ? null : trim(text);
+}
+
+// "a=1 b=2" -> { a: '1', b: '2' }
+function numbers(text) {
+	if (text == null)
+		return null;
+	let out = {};
+	for (let token in split(trim(text), /\s+/)) {
+		if (!length(token))
+			continue;
+		let at = index(token, '=');
+		if (at > 0)
+			out[substr(token, 0, at)] = substr(token, at + 1);
+		else
+			out[token] = '';
+	}
+	return out;
+}
+
+function integer(text) {
+	return match(text ?? '', /^-?\d+$/) ? int(text) : null;
+}
+
+// 解析 /etc/config/* 里某个 section 的 option；不需要 uci 模块。
+function config_options(path, section, type) {
+	let text = readfile(path);
+	let out = {};
+	if (text == null)
+		return out;
+	let in_section = false;
+	for (let line in split(text, '\n')) {
+		line = trim(line);
+		let head = match(line, /^config\s+([A-Za-z0-9_-]+)/);
+		if (head) {
+			let named = match(line, /^config\s+\S+\s+"([^"]*)"/);
+			if (!named)
+				named = match(line, /^config\s+\S+\s+'([^']*)'/);
+			in_section = (type == null || head[1] == type) &&
+				     (section == null || (named && named[1] == section));
+			continue;
+		}
+		if (!in_section)
+			continue;
+		let opt = match(line, /^option\s+(\S+)\s+'([^']*)'/);
+		if (!opt)
+			opt = match(line, /^option\s+(\S+)\s+"([^"]*)"/);
+		if (opt)
+			out[opt[1]] = opt[2];
+	}
+	return out;
+}
+
+function present(map, key) {
+	return length(map[key] ?? '') > 0;
+}
+
+function pomap_option(pon, factory, key) {
+	return pon[key] ?? factory[key] ?? '';
+}
+
+function serial_ascii(hex) {
+	if (hex == null || !match(hex, /^[0-9a-fA-F]{16}$/))
+		return null;
+	let out = '';
+	for (let i = 0; i < 8; i += 2) {
+		let code = int(substr(hex, i, 2), 16);
+		out += (code >= 0x20 && code < 0x7f) ? chr(code) : '.';
+	}
+	return out + uc(substr(hex, 8));
+}
+
+function shell(command) {
+	let handle = popen(command, 'r');
+	if (!handle)
+		return null;
+	let output = handle.read('all');
+	handle.close();
+	return output;
+}
+
+// 从系统实时读取 SoC 信息，不写死具体型号/核数/频率。
+// SoC 代号取 device-tree compatible 的芯片名；核数数 cpuinfo 的 processor 条目；
+// 频率优先 cpufreq，缺失时取 OPP 表最高频点（大端 64-bit，低 4 字节有效）。
+function cpu_info() {
+	let soc = null;
+	let compatible = readfile('/proc/device-tree/compatible');
+	if (compatible != null) {
+		// compatible 是 NUL 分隔；ucode 的 split 对 \0 语义不可靠，逐字节拆。
+		let entries = [];
+		let current = '';
+		for (let i = 0; i < length(compatible); i++) {
+			let ch = substr(compatible, i, 1);
+			if (ord(ch) == 0) {
+				push(entries, current);
+				current = '';
+			} else {
+				current += ch;
+			}
+		}
+		for (let entry in entries) {
+			let m = match(entry, /^[a-z0-9._-]+,(rtl[0-9][a-z0-9]*|mt[0-9][a-z0-9]*|ipq[0-9][a-z0-9]*|en[0-9][a-z0-9]*)$/);
+			if (m != null) {
+				soc = m[1];
+				break;
+			}
+		}
+	}
+
+	let threads = 0;
+	let cpuinfo = readfile('/proc/cpuinfo');
+	if (cpuinfo != null) {
+		for (let line in split(cpuinfo, /\n/))
+			if (match(line, /^processor/))
+				threads++;
+	}
+
+	let freq_khz = null;
+	let raw = readfile('/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq');
+	if (raw != null)
+		freq_khz = integer(trim(raw));
+	if (freq_khz == null) {
+		let opp = readfile('/proc/device-tree/cpu@0/operating-points-v2/opp-hz');
+		if (opp != null && length(opp) >= 8) {
+			for (let i = 0; i + 7 < length(opp); i += 8) {
+				let hz = 0;
+				for (let j = i + 4; j < i + 8; j++)
+					hz = hz * 256 + ord(substr(opp, j, 1));
+				if (hz > 0 && (freq_khz == null || hz > freq_khz))
+					freq_khz = int(hz / 1000);
+			}
+		}
+	}
+
+	return { soc: soc, threads: threads, freq_khz: freq_khz };
+}
+
+function netdev(name) {
+	let base = '/sys/class/net/' + name + '/';
+	if (readfile(base + 'ifindex') == null)
+		return { device: name, present: false };
+	let stats = {};
+	for (let key in ['rx_bytes', 'tx_bytes', 'rx_packets', 'tx_packets',
+		'rx_errors', 'tx_errors', 'rx_dropped', 'tx_dropped'])
+		stats[key] = integer(value(base + 'statistics/' + key));
+	return {
+		device: name, present: true,
+		address: value(base + 'address'),
+		operstate: value(base + 'operstate'),
+		carrier: integer(value(base + 'carrier')),
+		mtu: integer(value(base + 'mtu')),
+		speed: value(base + 'speed'),
+		statistics: stats
+	};
+}
+
+function config_settings() {
+	let raw = config_options(CONFIG, 'settings', 'settings');
+	let out = {};
+	for (let key, def in DEFAULTS)
+		out[key] = integer(raw[key]) ?? def;
+	return out;
+}
+
+// 厂商自带的 PON 用户态工具（Airoha 光猫有 airoha-ponctl/airoha-pond），
+// 有就抓一份原始文本，没有就跳过。
+function vendor_tools() {
+	let out = {};
+	for (let tool in ['/usr/sbin/airoha-ponctl', '/usr/bin/airoha-ponctl',
+		'/usr/sbin/ponctl', '/usr/bin/ponctl', '/usr/sbin/airoha-pond']) {
+		if (readfile(tool) == null)
+			continue;
+		let name = tool;
+		out[name] = substr(shell(tool + ' status 2>&1') ?? '', 0, 4000);
+	}
+	return out;
+}
+
+function collect() {
+	let dir = pon_device();
+	let read = function(name) { return dir == null ? null : value(dir + name); };
+
+	// 不同 SoC 的 sysfs 文件名不完全一致，优先取本机存在的那些。
+	let files = {};
+	for (let name in ['state', 'optical', 'transceiver', 'ploam', 'ploam_default', 'fec',
+		'pm_counters', 'data_path', 'itu_paths', 'omci_msk', 'omci_broadcast', 'serdes',
+		'llid_table', 'epon_sla', 'epon_key', 'active_serial_number', 'onu_mac',
+		'data_mac', 'position', 'puc', 'pdc']) {
+		let text = read(name);
+		if (text != null)
+			files[name] = text;
+	}
+
+	let pon = config_options('/etc/config/pon', 'pon', 'pon');
+	let factory = config_options('/var/run/tyfza1-factory/pon_factory', 'pon', 'pon');
+	let wan = config_options('/etc/config/pon_wan', 'settings', 'pon_wan');
+
+	let identity = {
+		mode: pomap_option(pon, factory, 'mode'),
+		serial_number: pomap_option(pon, factory, 'serial_number'),
+		serial_number_hex: files.active_serial_number ?? null,
+		serial_number_active: null,
+		equipment_id: pomap_option(pon, factory, 'equipment_id'),
+		hardware_version: pomap_option(pon, factory, 'hardware_version'),
+		software_version: pomap_option(pon, factory, 'software_version'),
+		operator_id: pomap_option(pon, factory, 'operator_id'),
+		omcc_version: pomap_option(pon, factory, 'omcc_version'),
+		vendor_id: pomap_option(pon, factory, 'vendor_id'),
+		oam_model: pomap_option(pon, factory, 'oam_model'),
+		onu_mac: files.onu_mac ?? null,
+		data_mac: files.data_mac ?? null,
+		auth: {
+			loid: present(pon, 'loid') || present(factory, 'loid'),
+			loid_password: present(pon, 'loid_password') || present(factory, 'loid_password'),
+			ploam_password: present(pon, 'ploam_password') || present(factory, 'ploam_password'),
+			registration_id: present(pon, 'registration_id') || present(factory, 'registration_id'),
+			omci_psk: present(pon, 'omci_psk') || present(factory, 'omci_psk'),
+			enhanced_security_disabled: (pon.disable_enhanced_security ?? '0') == '1'
+		}
+	};
+	identity.serial_number_active = serial_ascii(identity.serial_number_hex);
+	if (identity.serial_number_active == null)
+		identity.serial_number_active = identity.serial_number;
+
+	let omci_runtime = numbers(value('/var/run/pon-omci')) ?? {};
+	for (let key in ['pid', 'rx', 'tx', 'invalid', 'paths', 'error', 'session', 'auth',
+		'process_start', 'updated_ms'])
+		if (omci_runtime[key] != null && integer(omci_runtime[key]) != null)
+			omci_runtime[key] = int(omci_runtime[key]);
+
+	return {
+		ts: time(),
+		backend: {
+			device: dir,
+			sysfs_available: dir != null,
+			vendor: vendor_tools()
+		},
+		device: {
+			board: value('/tmp/sysinfo/board_name'),
+			model: value('/tmp/sysinfo/model'),
+			release: value('/etc/openwrt_release'),
+			uptime: value('/proc/uptime'),
+			kernel: value('/proc/version'),
+			cpu: cpu_info()
+		},
+		config: {
+			pon_enabled: (pon.enabled ?? '1') == '1',
+			pon: pon,
+			pon_wan: wan
+		},
+		factory: factory,
+		identity: identity,
+		link: {
+			state: numbers(files.state),
+			optical: numbers(files.optical),
+			transceiver: numbers(files.transceiver),
+			ploam: numbers(files.ploam),
+			ploam_default: files.ploam_default ?? null,
+			fec: numbers(files.fec),
+			pm_counters: numbers(files.pm_counters),
+			data_path: numbers(files.data_path),
+			itu_paths: files.itu_paths ?? null,
+			omci_msk: files.omci_msk ?? null,
+			omci_broadcast: files.omci_broadcast ?? null,
+			serdes: numbers(files.serdes),
+			llid_table: files.llid_table ?? null,
+			epon_sla: files.epon_sla ?? null,
+			epon_key: files.epon_key ?? null,
+			position: files.position ?? null,
+			puc: files.puc ?? null,
+			pdc: files.pdc ?? null
+		},
+		omci: {
+			runtime: omci_runtime,
+			service: numbers(value('/var/run/pon-service')) ?? {},
+			service_error: value('/var/run/pon-service-error')
+		},
+		net: {
+			pon0: netdev('pon0'),
+			pon_omci: netdev('pon-omci')
+		},
+		log: shell("logread 2>/dev/null | grep -iE 'pon|omci' | tail -20")
+	};
+}
+
+// 历史快照：只保留会变化、也有诊断价值的字段。
+function snapshot(full) {
+	let t = full.link.transceiver ?? {};
+	let omci = full.omci.runtime ?? {};
+	let pon0 = (full.net.pon0 ?? {}).statistics ?? {};
+	let optical = full.link.optical ?? {};
+	let state = full.link.state ?? {};
+	let record = {
+		ts: full.ts,
+		sn: full.identity.serial_number_active,
+		mode: full.identity.mode,
+		family: state.family ?? null,
+		los: integer(optical.rx_los),
+		tx_fault: integer(optical.tx_fault),
+		module_absent: integer(optical.module_absent),
+		rx_raw: integer(t.rx_power_raw),
+		tx_raw: integer(t.tx_power_raw),
+		temp_raw: integer(t.temperature_raw),
+		volt_raw: integer(t.voltage_raw),
+		bias_raw: integer(t.bias_raw),
+		omci_session: omci.session ?? null,
+		omci_auth: omci.auth ?? null,
+		omci_paths: omci.paths ?? null,
+		omci_error: omci.error ?? null,
+		omci_rx: omci.rx ?? null,
+		omci_tx: omci.tx ?? null,
+		omci_invalid: omci.invalid ?? null,
+		pon_operstate: full.net.pon0.operstate ?? null,
+		omci_operstate: full.net.pon_omci.operstate ?? null,
+		pon_rx_bytes: pon0.rx_bytes ?? null,
+		pon_tx_bytes: pon0.tx_bytes ?? null,
+		pon_rx_packets: pon0.rx_packets ?? null,
+		pon_tx_packets: pon0.tx_packets ?? null,
+		service_error: integer(full.omci.service.error)
+	};
+	// 只有这些字段变化才算"状态变了"：光功率/温度/电压寄存器本身有量化抖动，
+	// 字节/报文计数则持续增长，都不能作为签名。
+	let parts = [];
+	for (let key in ['sn', 'mode', 'family', 'los', 'tx_fault', 'module_absent',
+		'omci_session', 'omci_auth', 'omci_paths', 'omci_error',
+		'pon_operstate', 'omci_operstate', 'service_error'])
+		push(parts, key + '=' + (record[key] ?? ''));
+	record.sig = join(',', parts);
+	return record;
+}
+
+function history_lines() {
+	let text = readfile(HISTORY);
+	let out = [];
+	if (text == null)
+		return out;
+	for (let line in split(text, '\n')) {
+		line = trim(line);
+		if (!length(line))
+			continue;
+		try { push(out, json(line)); }
+		catch (e) { }
+	}
+	return out;
+}
+
+// 状态目录可能还不存在（服务未启用时页面手动采样），先确保它在。
+// mkdir 在目录已存在时返回 null 且不报错，因此无需先探测。
+function ensure_state_dir() {
+	mkdir(STATE);
+}
+
+function write_history(records) {
+	let text = '';
+	for (let record in records)
+		text += sprintf('%J', record) + '\n';
+	ensure_state_dir();
+	writefile(HISTORY + '.new', text);
+	rename(HISTORY + '.new', HISTORY);
+}
+
+function record() {
+	ensure_state_dir();
+	let full = collect();
+	let current = snapshot(full);
+	let settings = config_settings();
+	let records = history_lines();
+	let before = length(records);
+	let last = before ? records[before - 1] : null;
+	let appended = false;
+
+	if (last == null || last.sig != current.sig ||
+	    current.ts - (last.ts ?? 0) >= settings.keepalive) {
+		push(records, current);
+		appended = true;
+	}
+
+	if (length(records) > settings.max_lines) {
+		let keep = [];
+		for (let i = length(records) - settings.max_lines; i < length(records); i++)
+			push(keep, records[i]);
+		records = keep;
+	}
+
+	if (appended || length(records) != before)
+		write_history(records);
+
+	writefile(LATEST + '.new', sprintf('%J', full));
+	rename(LATEST + '.new', LATEST);
+	return { appended: appended, ts: current.ts, records: length(records) };
+}
+
+function history(limit) {
+	let records = history_lines();
+	let out = [];
+	let start = length(records) - limit;
+	if (start < 0)
+		start = 0;
+	for (let i = start; i < length(records); i++)
+		push(out, records[i]);
+	return out;
+}
+
+function clear_history() {
+	ensure_state_dir();
+	writefile(HISTORY, '');
+	return { cleared: true };
+}
+
+function show() {
+	let full = collect();
+	let i = full.identity, o = full.link.optical ?? {}, s = full.link.state ?? {};
+	let t = full.link.transceiver ?? {}, om = full.omci.runtime ?? {};
+	let b = full.backend;
+	let cpu = full.device.cpu ?? {};
+	let mhz = '?';
+	if (cpu.freq_khz != null) {
+		mhz = cpu.freq_khz >= 1000000
+			? sprintf('%.2f GHz', cpu.freq_khz / 1000000.0)
+			: sprintf('%d MHz', int(cpu.freq_khz / 1000));
+	}
+	print('设备      ' + (full.device.model ?? '?') + '  (' + (full.device.board ?? '?') + ')\n');
+	print('CPU       ' + ((cpu.soc ?? '?') + '*' + (cpu.threads ?? '?')) + '   ' + mhz + '\n');
+	print('PON 后端  ' + (b.device ?? '未发现 PON 平台设备') + '\n');
+	print('协议      ' + (i.mode ?? '?') + '   状态族 ' + (s.family ?? '?') + '\n');
+	print('SN        配置 ' + (i.serial_number ?? '-') + '   生效 ' + (i.serial_number_active ?? '-') + '   hex ' + (i.serial_number_hex ?? '-') + '\n');
+	print('型号      ' + (i.equipment_id ?? '-') + '   硬件 ' + (i.hardware_version ?? '-') + '   软件 ' + (i.software_version ?? '-') + '\n');
+	print('ONU MAC   ' + (i.onu_mac ?? '-') + '   数据 MAC ' + (i.data_mac ?? '-') + '\n');
+	print('光口      los=' + (o.rx_los ?? '?') + ' tx_fault=' + (o.tx_fault ?? '?') + ' module_absent=' + (o.module_absent ?? '?') + '\n');
+	print('寄存器    temp=' + (t.temperature_raw ?? '?') + ' volt=' + (t.voltage_raw ?? '?') + ' bias=' + (t.bias_raw ?? '?') + ' tx=' + (t.tx_power_raw ?? '?') + ' rx=' + (t.rx_power_raw ?? '?') + '\n');
+	print('OMCI      pid=' + (om.pid ?? '?') + ' session=' + (om.session ?? '?') + ' auth=' + (om.auth ?? '?') + ' paths=' + (om.paths ?? '?') + ' error=' + (om.error ?? '?') + '\n');
+	print('认证      LOID=' + (i.auth.loid ? '有' : '无') + ' LOID密码=' + (i.auth.loid_password ? '有' : '无') + ' PLoAM=' + (i.auth.ploam_password ? '有' : '无') + ' RegID=' + (i.auth.registration_id ? '有' : '无') + ' PSK=' + (i.auth.omci_psk ? '有' : '无') + '\n');
+	print('接口      pon0=' + (full.net.pon0.operstate ?? '-') + ' pon-omci=' + (full.net.pon_omci.operstate ?? '-') + '\n');
+	print('历史      ' + length(history_lines()) + ' 条  ' + HISTORY + '\n');
+}
+
+let action = ARGV[0] ?? 'show';
+
+if (action == 'json') {
+	print(sprintf('%J', collect()), '\n');
+}
+else if (action == 'record') {
+	print(sprintf('%J', record()), '\n');
+}
+else if (action == 'history') {
+	print(sprintf('%J', history(integer(ARGV[1]) ?? 200)), '\n');
+}
+else if (action == 'clear') {
+	print(sprintf('%J', clear_history()), '\n');
+}
+else if (action == 'show') {
+	show();
+}
+else {
+	print('用法: pon-info json | record | history [N] | clear | show\n');
+	exit(1);
+}

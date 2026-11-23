@@ -1,0 +1,12 @@
+#!/bin/sh /etc/rc.common
+# S10 applies saved/default UCI settings before storage and optional services.
+START=25
+STOP=89
+
+start() {
+	/usr/libexec/gwrt-emmc-storage prepare
+}
+
+reload() {
+	start
+}

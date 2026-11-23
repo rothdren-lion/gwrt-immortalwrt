@@ -1,0 +1,3 @@
+#!/bin/sh
+# Compatibility placeholder; 89-gwrt-emmc-storage handles fixed eMMC devices.
+exit 0

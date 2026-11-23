@@ -1,0 +1,24 @@
+adguardhome	AdGuard Home	全网广告过滤 + 自建加密 DNS	adguardhome.png	docker.io/adguard/adguardhome:latest	http://<ip>:3000
+homeassistant	Home Assistant	智能家居控制中心	homeassistant.png	ghcr.io/home-assistant/home-assistant:stable	http://<ip>:8123
+jellyfin	Jellyfin	免费开源影音媒体服务器	jellyfin.png	docker.io/jellyfin/jellyfin:latest	http://<ip>:8096
+qbittorrent	qBittorrent	BT/磁力下载工具	qbittorrent.png	docker.io/linuxserver/qbittorrent:latest	http://<ip>:8181
+uptimekuma	Uptime Kuma	服务在线拨测监控面板	uptimekuma.png	docker.io/louislam/uptime-kuma:1	http://<ip>:3001
+vaultwarden	Vaultwarden	自建密码管理器（Bitwarden 兼容）	vaultwarden.png	docker.io/vaultwarden/server:latest	http://<ip>:8222
+mosquitto	Mosquitto	轻量级 MQTT 消息服务器	mosquitto.png	docker.io/eclipse-mosquitto:2	
+redis	Redis	内存键值数据库 / 缓存	redis.png	docker.io/library/redis:7-alpine	
+mariadb	MariaDB	MySQL 兼容关系型数据库	mariadb.png	docker.io/library/mariadb:11	
+gitea	Gitea	轻量级自托管 Git 服务	gitea.png	docker.io/gitea/gitea:latest	http://<ip>:3300
+minio	MinIO	S3 兼容对象存储	minio.png	docker.io/minio/minio:latest	http://<ip>:9001
+nginx	Nginx	高性能 Web 服务器 / 反向代理	nginx.png	docker.io/library/nginx:alpine	http://<ip>:8080
+syncthing	Syncthing	多设备文件同步	syncthing.png	docker.io/syncthing/syncthing:latest	http://<ip>:8384
+ddnsgo	DDNS-GO	自动更新域名解析（支持 v6）	ddnsgo.png	docker.io/jeessy/ddns-go:latest	http://<ip>:9876
+alist	Alist	聚合网盘 / 文件列表程序	alist.png	docker.io/xhofe/alist:latest	http://<ip>:5244
+daed	Daed (大鹅)	eBPF 透明代理 / 分流	daed.png	docker.io/daeuniverse/daed:latest	http://<ip>:2023
+lucky	Lucky (大幸运)	DDNS / 反向代理 / 端口转发 / 穿透	lucky.png	docker.io/gdy666/lucky:latest	http://<ip>:16601
+openlist	OpenList	聚合网盘 / 文件列表（Alist 社区续作）	openlist.png	docker.io/openlistteam/openlist:latest	http://<ip>:5245
+ariang	Aria2 + AriaNg	离线下载，内置 AriaNg 管理界面	ariang.png	docker.io/p3terx/aria2-ariang:latest	http://<ip>:6880
+transmission	Transmission	简洁的 BT 下载器	transmission.png	docker.io/linuxserver/transmission:latest	http://<ip>:9091
+ittools	IT-Tools 开发工具集	开发者常用小工具合集（加密/转换/生成）	ittools.png	docker.io/corentinth/it-tools:latest	http://<ip>:8088
+clouddrive2	CloudDrive2	网盘挂载为本地磁盘	clouddrive2.png	docker.io/cloudnas/clouddrive2:latest	http://<ip>:19798
+xunlei	迅雷 NAS 版	迅雷远程下载（网页版）	xunlei.png	docker.io/cnk3x/xunlei:latest	http://<ip>:2345
+mtphotos	MT Photos 相册	AI 照片库 / 相册管理	mtphotos.png	docker.io/mtphotos/mt-photos:latest	http://<ip>:8063

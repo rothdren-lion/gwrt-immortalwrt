@@ -286,8 +286,8 @@ EXTRA_CN = [
 # ------------------------------------------------------- sec 白名单清单
 
 # 360 全家桶: 按注册域全量收(anti-AD curated)
-SEC360_ROOTS = ("360.cn", "360safe.com", "360safe.cn", "qhupdate.com",
-                "mayi360.cn", "ads360.cn", "360os.com")
+BLOCK360_ROOTS = ("360.cn", "360safe.com", "360safe.cn", "qhupdate.com",
+                  "mayi360.cn", "ads360.cn", "360os.com")
 
 SEC_TENCENT = ["guanjia.qq.com", "pcmgr.qq.com", "sec.qq.com", "aegis.qq.com"]
 
@@ -402,10 +402,9 @@ def main():
         sys.exit(f"cn 从 {prev_cn} 降到 {len(cn)} (跌幅 >30%), 拒绝覆盖。"
                  f"\n检查 anti-AD 来源完整性或 BRAND/excluded 规则。")
 
-    # ---- sec
-    # 注意: sec 是人工白名单清单(360 全家桶/腾讯管家/微软 Defender 与更新),
-    # 不能用 cn 的通用 EXCLUDE_LABEL 门禁——360 的 down./api./update. 等
-    # 正是要拦的域, 微软 update.microsoft.com 也是目标而非功能域。
+    # ---- 360 + sec
+    # 360 根域独立为整域分类；sec 保留腾讯管家/微软 Defender 与更新。
+    # sec 不能用 cn 的通用 EXCLUDE_LABEL 门禁，因为微软 update 域是目标。
     # 只做 MS_NEVER 与 PER_DOMAIN_DROP 级排除。
     def sec_ok(d):
         if d in MS_NEVER:
@@ -414,14 +413,16 @@ def main():
             return False
         return True
 
-    sec = [d for d in antiad if covered_by(d, SEC360_ROOTS) and sec_ok(d)]
-    sec += [d for d in SEC_TENCENT + SEC_MS_SEC + SEC_MS_UPD if sec_ok(d)]
+    qh360 = list(BLOCK360_ROOTS)
+    sec = [d for d in SEC_TENCENT + SEC_MS_SEC + SEC_MS_UPD if sec_ok(d)]
     sec = check_many(sorted(set(sec)), cache)
     sec = dedupe_suffix(sec)
     sec = [d for d in sec if d not in others and d not in set(cn)]
     print(f"  sec 最终: {len(sec)}")
 
-    prev_sec = len(cur.get("sec", []))
+    # 360 domains are intentionally moving into their own opt-out category;
+    # exclude them from the sec baseline so this split is not treated as loss.
+    prev_sec = sum(not covered_by(d, BLOCK360_ROOTS) for d in cur.get("sec", []))
     if prev_sec and len(sec) < prev_sec * 0.7:
         sys.exit(f"sec 从 {prev_sec} 降到 {len(sec)}, 拒绝覆盖。")
 
@@ -442,7 +443,7 @@ def main():
 
     hdr = f'''# =====================================================================
 # GWRT 国内广告域名库 (纯文本规则库 — 无数据库/SQLite)
-# 版本: 20261113-r2    分类条目: tv={len(tv)} tv-ext={len(tvext)} cn={len(cn)} sec={len(sec)} kill={len(kill)}
+# 版本: 20261115-r3    分类条目: tv={len(tv)} tv-ext={len(tvext)} cn={len(cn)} 360={len(qh360)} sec={len(sec)} kill={len(kill)}
 # 生成: package/gwrt-tv-adblock/build-ads-library.py (可重跑, tv/tv-ext 保留原样)
 # 来源: 六源合并(电视档) + anti-AD 品牌白名单标签抽取 + 人工验证清单
 #       阿里DNS存活验证剔除死域; 覆盖 360/百度/腾讯/字节/快手/网易/新浪微博/
@@ -455,26 +456,27 @@ def main():
 # 分类: tv     电视核心(开机广告/视频App广告SDK, 无副作用, 默认开)
 #       tv-ext 电视激进(商店/升级/语音/投屏, 有副作用, 默认关)
 #       cn     国内综合(百度/腾讯/字节等Web与APP广告、统计, 默认关)
-#       sec    安全软件与更新(360全家桶/腾讯管家/微软Defender与遥测/
-#              WindowsUpdate, 默认关, 有副作用: 360与Windows更新会失效)
+#       360    360全家桶注册域整域拦截(A/AAAA均NXDOMAIN, 默认开)
+#       sec    腾讯管家/微软Defender与遥测/WindowsUpdate, 默认关
 #       kill   必拦(无分类开关): hao123/2345 导航劫持全家桶, 总开关开即生效
 # ---------------------------------------------------------------------
 # 升级: LuCI 页面"更新规则库"按钮, 或 /usr/libexec/gwrt-tv-adblock update
 #       (需先在 LuCI 填库地址), 或直接替换本文件后执行
 #       /etc/init.d/gwrt-tv-adblock reload
 # 注意: 不要往里加裸根域(qq.com/baidu.com 等)或搜/pay/api 域, 会误伤;
-#       误拦用 LuCI 自定义放行(custom_allow)救回, 裸根和子域都有效
+#       误拦用 LuCI 自定义放行(custom_allow)救回, 必须覆盖拦截规则的域或父域
 # =====================================================================
 '''
     body = []
     body += block("tv", tv, "# 各品牌开机广告域 + 视频App广告SDK + 乐播广告子域 + 广告追踪")
     body += block("tv-ext", tvext, "# 应用商店/系统升级/语音助手/投屏服务/GITV认证/P2P节点(有副作用)")
     body += block("cn", cn, "# 国内综合广告: 百度/腾讯/字节等广告SDK/统计/广告联盟/手机厂商广告")
-    body += block("sec", sec, "# 安全软件与更新: 360全家桶/腾讯管家风控/微软Defender云与遥测/WindowsUpdate(有副作用)")
+    body += block("360", qh360, "# 360 全家桶注册域: 根域与所有子域均拦截, 含 360 官网")
+    body += block("sec", sec, "# 安全软件与更新: 腾讯管家风控/微软Defender云与遥测/WindowsUpdate(有副作用)")
     body += block("kill", kill, "# 必拦(无分类开关): hao123/2345 导航劫持全家桶")
 
     LIB.write_text(hdr + "\n".join(body) + "\n")
-    total = len(tv) + len(tvext) + len(cn) + len(sec) + len(kill)
+    total = len(tv) + len(tvext) + len(cn) + len(qh360) + len(sec) + len(kill)
     print(f"\n写出: {LIB}  合计 {total} 域名")
     print("校验: dnsmasq --test 请另跑 (见 WORKLOG)")
 

@@ -1,0 +1,35 @@
+name: GWRT AN758x build
+# 运行名统一为「机型-时间-第几次」，例如 an758x-261120-02。
+# 传了 version 就用它（YYMMDD-NN），没传时退化成 an758x-run<序号>。
+run-name: ${{ format('an758x-{0}', inputs.version || format('run{0}', github.run_number)) }}
+
+# AN758x / AN7583 光猫（Airoha EN758x 系列，全部 ONT profile，DEVICE=all）固件构建。
+# 复用 gwrt-build.yml 的完整流水线（feeds / 配置生成 gwrt-mk-an7581-config.sh /
+# 源码预检 / 编译 / 镜像收集），device 固定为 an758x，本文件只做入口，
+# 让 AN758x 序列在 Actions 列表里单独显示、单独管理。
+# 并发串行由 gwrt-build.yml 自身的 concurrency（gwrt-build-an758x）保证。
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (YYMMDD-NN), empty = today-01'
+        required: false
+        default: ''
+      release:
+        description: 'Publish images to a GitHub Release'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    uses: ./.github/workflows/gwrt-build.yml
+    with:
+      device: an758x
+      version: ${{ inputs.version }}
+      images: flashable
+      release: ${{ inputs.release }}

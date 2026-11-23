@@ -1,0 +1,205 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Apply the PON WAN service VLAN.
+#
+# The PON device (pon0) is a plain netdev and not a DSA switch, so the service
+# VLAN has to be created as a netifd 802.1q device.  netifd then names the
+# resulting link "<uplink>.<vid>" (for example pon0.41) and the WAN interface
+# is bound to that name.
+#
+# The WAN interface keeps its configured name, so the default firewall zone
+# "wan" keeps owning it and the service gets masquerading and forwarding
+# without any extra rule.
+
+. /lib/functions.sh
+
+ACTION="${1:-apply}"
+CONFIG="pon_wan"
+DEVICE_SECTION="pon_wan_vlan"
+
+ENABLED=0
+UPLINK="pon0"
+VLAN=""
+IFACE="wan"
+PROTO="dhcp"
+IPADDR=""
+NETMASK="255.255.255.0"
+GATEWAY=""
+DNS=""
+PPPOE_USER=""
+PPPOE_PASS=""
+
+fail() {
+	logger -t pon-wan "$*"
+	echo "pon-wan: $*" >&2
+	exit 1
+}
+
+validate_ifname() {
+	local name="$1"
+
+	[ -n "$name" ] || return 1
+	[ "${#name}" -le 15 ] || return 1
+
+	case "$name" in
+		*[!A-Za-z0-9_.:-]*) return 1 ;;
+	esac
+
+	return 0
+}
+
+validate_vlan() {
+	local vid="$1"
+
+	case "$vid" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+
+	[ "$vid" -ge 1 ] && [ "$vid" -le 4094 ]
+}
+
+validate_proto() {
+	case "$1" in
+		dhcp|pppoe|static|none) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+load_config() {
+	config_load "$CONFIG"
+
+	config_get_bool ENABLED settings enabled 0
+	config_get UPLINK settings uplink pon0
+	config_get VLAN settings vlan
+	config_get IFACE settings iface wan
+	config_get PROTO settings proto dhcp
+	config_get IPADDR settings ipaddr
+	config_get NETMASK settings netmask 255.255.255.0
+	config_get GATEWAY settings gateway
+	config_get DNS settings dns
+	config_get PPPOE_USER settings pppoe_username
+	config_get PPPOE_PASS settings pppoe_password
+}
+
+validate_config() {
+	validate_ifname "$UPLINK" || fail "Invalid PON device name"
+	validate_ifname "$IFACE" || fail "Invalid interface name"
+	validate_proto "$PROTO" || fail "Invalid protocol"
+
+	[ "$ENABLED" -eq 1 ] || return 0
+
+	validate_vlan "$VLAN" || fail "The service VLAN ID must be between 1 and 4094"
+
+	if [ "$PROTO" = "static" ]; then
+		[ -n "$IPADDR" ] || fail "A static address is required"
+	fi
+}
+
+write_network() {
+	uci -q delete "network.${DEVICE_SECTION}"
+
+	if [ "$ENABLED" -eq 1 ]; then
+		# The 802.1q device is the netifd way of creating pon0.<vid>.
+		uci set "network.${DEVICE_SECTION}=device"
+		uci set "network.${DEVICE_SECTION}.type=8021q"
+		uci set "network.${DEVICE_SECTION}.ifname=${UPLINK}"
+		uci set "network.${DEVICE_SECTION}.vid=${VLAN}"
+		uci set "network.${DEVICE_SECTION}.name=${UPLINK}.${VLAN}"
+
+		uci set "network.${IFACE}=interface"
+		uci set "network.${IFACE}.device=${UPLINK}.${VLAN}"
+		uci set "network.${IFACE}.proto=${PROTO}"
+		uci -q delete "network.${IFACE}.ifname"
+
+		case "$PROTO" in
+		static)
+			uci set "network.${IFACE}.ipaddr=${IPADDR}"
+			uci set "network.${IFACE}.netmask=${NETMASK}"
+			[ -n "$GATEWAY" ] && uci set "network.${IFACE}.gateway=${GATEWAY}"
+			[ -n "$DNS" ] && uci add_list "network.${IFACE}.dns=${DNS}"
+			;;
+		pppoe)
+			[ -n "$PPPOE_USER" ] && uci set "network.${IFACE}.username=${PPPOE_USER}"
+			[ -n "$PPPOE_PASS" ] && uci set "network.${IFACE}.password=${PPPOE_PASS}"
+			;;
+		esac
+	else
+		# Restore the plain PON uplink if this interface was previously
+		# bound to a service VLAN device, but never create an interface
+		# that the default network configuration did not define.
+		if uci -q get "network.${IFACE}" >/dev/null; then
+			uci set "network.${IFACE}.device=${UPLINK}"
+			uci -q delete "network.${IFACE}.ifname"
+		fi
+	fi
+
+	uci commit network || fail "Cannot save the network configuration"
+}
+
+find_wan_zone() {
+	local section
+
+	for section in $(uci -q show firewall | sed -n "s/^firewall\.\([^.=]*\)=zone$/\1/p"); do
+		[ "$(uci -q get "firewall.${section}.name")" = "wan" ] && {
+			echo "$section"
+			return 0
+		}
+	done
+
+	return 1
+}
+
+detach_from_other_zones() {
+	local section zone
+
+	for section in $(uci -q show firewall | sed -n "s/^firewall\.\([^.=]*\)=zone$/\1/p"); do
+		[ "$section" = "$1" ] && continue
+
+		zone="$(uci -q get "firewall.${section}.network")"
+		case " $zone " in
+			*" $IFACE "*)
+				uci -q del_list "firewall.${section}.network=${IFACE}"
+				;;
+		esac
+	done
+}
+
+write_firewall() {
+	local zone
+
+	if ! zone="$(find_wan_zone)"; then
+		zone="$(uci -q add firewall zone)" || fail "Cannot create the wan zone"
+		uci set "firewall.${zone}.name=wan"
+		uci set "firewall.${zone}.input=REJECT"
+		uci set "firewall.${zone}.output=ACCEPT"
+		uci set "firewall.${zone}.forward=REJECT"
+		uci set "firewall.${zone}.masq=1"
+		uci set "firewall.${zone}.mtu_fix=1"
+	fi
+
+	detach_from_other_zones "$zone"
+
+	case " $(uci -q get "firewall.${zone}.network") " in
+		*" $IFACE "*) ;;
+		*) uci add_list "firewall.${zone}.network=${IFACE}" ;;
+	esac
+
+	uci commit firewall || fail "Cannot save the firewall configuration"
+}
+
+reload_runtime() {
+	[ "$ACTION" = "boot" ] && return 0
+
+	ubus call network reload >/dev/null 2>&1
+	/etc/init.d/firewall reload >/dev/null 2>&1
+}
+
+load_config
+validate_config
+write_network
+write_firewall
+reload_runtime
+
+logger -t pon-wan "PON WAN service applied (enabled=${ENABLED} uplink=${UPLINK} vlan=${VLAN:-none} iface=${IFACE} proto=${PROTO})"
+exit 0

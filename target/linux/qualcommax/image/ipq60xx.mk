@@ -112,11 +112,52 @@ define Device/jdcloud_re-cs-02
 	DEVICE_MODEL := RE-CS-02
 	SOC := ipq6010
 	BLOCKSIZE := 64k
-	KERNEL_SIZE := 6144k
+	KERNEL_SIZE := 12288k
 	DEVICE_DTS_CONFIG := config@cp03-c3
-	DEVICE_PACKAGES := ath11k-firmware-qcn9074 ipq-wifi-jdcloud_re-cs-02 kmod-ath11k-pci
+	# CS-02 is a three-radio board: the IPQ6018 integrated 2.4G + 5G (AHB)
+	# plus a PCIe QCN9074 for 5.2G. The two stacks need different firmware
+	# and different bus drivers:
+	#   -ath11k-firmware-ipq6018            drop the upstream firmware
+	#   ath11k-firmware-ipq6018-ddwrt      use the DD-WRT build (GWRT norm;
+	#                                     the upstream blob leaves the
+	#                                     radios dead - see BUILD-NOTES)
+	#   -ath11k-firmware-qcn9074            drop the upstream QCN9074 firmware
+	#   ath11k-firmware-qcn9074-ddwrt      DD-WRT build for the PCIe radio
+	#   ipq-wifi-jdcloud_re-cs-02          board-2.bin for BOTH radios
+	#                                     (board-jdcloud_re-cs-02.ipq6018
+	#                                      and .qcn9074)
+	#   kmod-ath11k-pci                    PCIe bus driver for the QCN9074
+	#   luci-app-athena-led                LED dot-matrix screen (AX6600
+	#                                     "Athena"): the athena-led daemon
+	#                                     drives the TM1628A panel over
+	#                                     GPIO 69/70/73/74, the physical
+	#                                     button is GPIO 71 (the "screen"
+	#                                     key in the CS-02 DTS)
+	# kmod-ath11k-ahb comes from the board-wide DEFAULT_PACKAGES.
+	DEVICE_PACKAGES := -ath11k-firmware-ipq6018 ath11k-firmware-ipq6018-ddwrt -ath11k-firmware-qcn9074 ath11k-firmware-qcn9074-ddwrt ipq-wifi-jdcloud_re-cs-02 kmod-ath11k-pci luci-app-athena-led \
+		-kmod-qca-nss-dp -kmod-qca-nss-ecm -kmod-qca-nss-drv -kmod-qca-nss-drv-bridge-mgr kmod-qca-edma kmod-qca-ppe
+	IMAGES += factory.bin
+	IMAGE/factory.bin := append-kernel | pad-to $$$$(KERNEL_SIZE) | append-rootfs | append-metadata
 endef
 TARGET_DEVICES += jdcloud_re-cs-02
+
+define Device/jdcloud_re-cs-02-gwrt2
+	$(call Device/FitImage)
+	DEVICE_VENDOR := JDCloud
+	DEVICE_MODEL := RE-CS-02-GWRT2
+	SOC := ipq6010
+	BLOCKSIZE := 64k
+	KERNEL_SIZE := 12288k
+	DEVICE_DTS_CONFIG := config@cp03-c3
+	# Same hardware as RE-CS-02, different board id. The radio stack and the
+	# LED screen driver must match the plain CS-02 exactly - see the comment
+	# there.
+	DEVICE_PACKAGES := -ath11k-firmware-ipq6018 ath11k-firmware-ipq6018-ddwrt -ath11k-firmware-qcn9074 ath11k-firmware-qcn9074-ddwrt ipq-wifi-jdcloud_re-cs-02 kmod-ath11k-pci luci-app-athena-led \
+		-kmod-qca-nss-dp -kmod-qca-nss-ecm -kmod-qca-nss-drv -kmod-qca-nss-drv-bridge-mgr kmod-qca-edma kmod-qca-ppe
+	IMAGES += factory.bin
+	IMAGE/factory.bin := append-kernel | pad-to $$$$(KERNEL_SIZE) | append-rootfs | append-metadata
+endef
+TARGET_DEVICES += jdcloud_re-cs-02-gwrt2
 
 define Device/jdcloud_re-cs-07
 	$(call Device/FitImage)
@@ -124,9 +165,15 @@ define Device/jdcloud_re-cs-07
 	DEVICE_MODEL := RE-CS-07
 	SOC := ipq6010
 	BLOCKSIZE := 64k
-	KERNEL_SIZE := 6144k
+	KERNEL_SIZE := 12288k
 	DEVICE_DTS_CONFIG := config@cp03-c4
-	DEVICE_PACKAGES := -ath11k-firmware-ipq6018 -kmod-ath11k-ahb -wpad-openssl
+	# CS-07 has no radio at all: ipq6010-re-cs-07.dts enables neither &wifi
+	# (the integrated IPQ6018 2.4G/5G) nor &pcie0 (a PCIe card). Strip the
+	# inherited wireless defaults from the board/subtarget package list.
+	DEVICE_PACKAGES := -ath11k-firmware-ipq6018 -kmod-ath11k-ahb -wpad-openssl \
+		-kmod-qca-nss-dp -kmod-qca-nss-ecm -kmod-qca-nss-drv -kmod-qca-nss-drv-bridge-mgr kmod-qca-edma kmod-qca-ppe
+	IMAGES += factory.bin
+	IMAGE/factory.bin := append-kernel | pad-to $$$$(KERNEL_SIZE) | append-rootfs | append-metadata
 endef
 TARGET_DEVICES += jdcloud_re-cs-07
 
@@ -136,9 +183,11 @@ define Device/jdcloud_re-ss-01
 	DEVICE_MODEL := RE-SS-01
 	SOC := ipq6000
 	BLOCKSIZE := 64k
-	KERNEL_SIZE := 6144k
+	KERNEL_SIZE := 12288k
 	DEVICE_DTS_CONFIG := config@cp03-c2
-	DEVICE_PACKAGES := ipq-wifi-jdcloud_re-ss-01
+	DEVICE_PACKAGES := ipq-wifi-jdcloud_re-ss-01 kmod-qca-nss-dp
+	IMAGES += factory.bin
+	IMAGE/factory.bin := append-kernel | pad-to $$$$(KERNEL_SIZE) | append-rootfs | append-metadata
 endef
 TARGET_DEVICES += jdcloud_re-ss-01
 
@@ -148,7 +197,7 @@ define Device/link_nn6000-v1
 	DEVICE_VENDOR := Link
 	DEVICE_MODEL := NN6000 v1
 	SOC := ipq6000
-	KERNEL_SIZE := 6144k
+	KERNEL_SIZE := 12288k
 	DEVICE_DTS_CONFIG := config@cp03-c1
 	DEVICE_PACKAGES := ipq-wifi-link_nn6000 kmod-fs-f2fs f2fs-tools
 	IMAGE/factory.bin := append-kernel | pad-to $$(KERNEL_SIZE) | append-rootfs | append-metadata
@@ -166,7 +215,7 @@ define Device/linksys_mr
 	DEVICE_VENDOR := Linksys
 	BLOCKSIZE := 128k
 	PAGESIZE := 2048
-	KERNEL_SIZE := 8192k
+	KERNEL_SIZE := 12288k
 	IMAGES += factory.bin
 	IMAGE/factory.bin := append-kernel | pad-to $$$$(KERNEL_SIZE) | append-ubi | linksys-image type=$$$$(DEVICE_MODEL)
 	DEVICE_PACKAGE := kmod-usb-ledtrig-usbport

@@ -1,0 +1,40 @@
+#!/bin/sh
+
+parse_response() {
+	LC_ALL=C awk '
+	BEGIN { name = 0; answer = 0; error = 0; state = "" }
+	{
+		lower = tolower($0)
+		if (lower ~ /nxdomain|non-existent domain/) {
+			state = "blocked"
+			exit
+		}
+		if (lower ~ /servfail|timed out|connection refused|no servers|refused/) error = 1
+		if ($0 ~ /^Name:[[:space:]]*/) name = 1
+		if (name && $0 ~ /^Address([[:space:]][0-9]+)?:[[:space:]]*/) answer = 1
+	}
+	END {
+		if (state != "") print state
+		else if (error) print "dns-error"
+		else if (answer) print "unblocked"
+		else if (name) print "no-record"
+		else print "unknown"
+	}'
+}
+
+if [ "$1" = "--parse" ]; then
+	parse_response
+	exit 0
+fi
+
+domain="$1"
+qtype="$(printf '%s' "$2" | tr 'a-z' 'A-Z')"
+case "$domain" in
+	""|*[!a-zA-Z0-9.-]*|.*|*.) echo unknown; exit 2 ;;
+esac
+case "$qtype" in
+	A|AAAA) ;;
+	*) echo unknown; exit 2 ;;
+esac
+
+nslookup "-type=$qtype" "$domain" 127.0.0.1 2>&1 | parse_response

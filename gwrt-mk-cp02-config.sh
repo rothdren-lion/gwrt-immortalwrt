@@ -40,6 +40,9 @@ CONFIG_PACKAGE_gwrt-device-defaults=y
 CONFIG_PACKAGE_gwrt-mesh-apmode=y
 CONFIG_PACKAGE_gwrt-mesh-led=y
 CONFIG_PACKAGE_gwrt-tv-adblock=y
+# 新版 wifiroam v5 覆盖层（私有目录，首启由 97 换上）+ DPI 旁路的内核队列模块
+CONFIG_PACKAGE_gwrt-wifiroam-v5=y
+CONFIG_PACKAGE_kmod-nfnetlink-queue=y
 CONFIG_PACKAGE_luci-app-gwrt-tvadblock=y
 CONFIG_PACKAGE_ucode-mod-socket=y
 CONFIG_PACKAGE_uhttpd=y

@@ -1,0 +1,166 @@
+#!/bin/sh
+# Bound mesh11sd pairing to a short boot/restart window. This prevents an
+# unpaired node from scanning and reporting Portal UNKNOWN indefinitely.
+
+set -u
+
+STATE_DIR="${GWRT_MESH_STATE_DIR:-/tmp/gwrt-mesh-window}"
+UCI_BIN="${GWRT_UCI_BIN:-uci}"
+IW_BIN="${GWRT_IW_BIN:-iw}"
+WIFI_BIN="${GWRT_WIFI_BIN:-/sbin/wifi}"
+MESH_INIT="${GWRT_MESH_INIT:-/etc/init.d/mesh11sd}"
+WINDOW_INIT="${GWRT_WINDOW_INIT:-/etc/init.d/gwrt-mesh-window}"
+UPTIME_FILE="${GWRT_UPTIME_FILE:-/proc/uptime}"
+WINDOW_SECONDS="${GWRT_MESH_WINDOW_SECONDS:-120}"
+POLL_SECONDS="${GWRT_MESH_POLL_SECONDS:-5}"
+LOCK_DIR="$STATE_DIR/lock"
+
+mkdir -p "$STATE_DIR"
+
+write_state() {
+	printf '%s\n' "$1" > "$STATE_DIR/state"
+}
+
+uptime_seconds() {
+	set -- $(cat "$UPTIME_FILE" 2>/dev/null || printf '0')
+	printf '%s\n' "${1%%.*}"
+}
+
+mesh_enabled() {
+	[ "$("$UCI_BIN" -q get mesh11sd.setup.enabled 2>/dev/null || true)" = "1" ]
+}
+
+mesh_sections() {
+	"$UCI_BIN" -q show wireless 2>/dev/null |
+		sed -n 's/^wireless\.\([^.=]*\)=wifi-iface$/\1/p'
+}
+
+mesh_ifaces() {
+	for section in $(mesh_sections); do
+		[ "$("$UCI_BIN" -q get "wireless.$section.mode" 2>/dev/null || true)" = "mesh" ] || continue
+		"$UCI_BIN" -q get "wireless.$section.ifname" 2>/dev/null || true
+	done | awk 'NF && !seen[$0]++'
+}
+
+has_established_peer() {
+	local ifname
+
+	for ifname in $(mesh_ifaces); do
+		if "$IW_BIN" dev "$ifname" station dump 2>/dev/null |
+			awk '/^Station / { station = 1 } /mesh plink: ESTAB/ { established = 1 } END { exit established ? 0 : 1 }'; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+set_mesh_interfaces_disabled() {
+	local wanted="$1" section current changed=0
+
+	for section in $(mesh_sections); do
+		[ "$("$UCI_BIN" -q get "wireless.$section.mode" 2>/dev/null || true)" = "mesh" ] || continue
+		current="$("$UCI_BIN" -q get "wireless.$section.disabled" 2>/dev/null || true)"
+		[ "$current" = "$wanted" ] && continue
+		"$UCI_BIN" set "wireless.$section.disabled=$wanted" || return 1
+		changed=1
+	done
+
+	[ "$changed" = "1" ] || return 0
+	"$UCI_BIN" commit wireless || return 1
+	"$WIFI_BIN" reload || return 1
+}
+
+pause_pairing() {
+	# Keep mesh11sd.setup.enabled untouched. A later system reboot or explicit
+	# restart can therefore retry pairing without re-entering credentials.
+	set_mesh_interfaces_disabled 1 || return 1
+	"$MESH_INIT" stop >/dev/null 2>&1 || true
+	rm -f "$STATE_DIR/deadline"
+	write_state paused
+}
+
+prepare_pairing() {
+	local now deadline
+
+	if ! mesh_enabled; then
+		rm -f "$STATE_DIR/deadline"
+		write_state disabled
+		return 0
+	fi
+
+	set_mesh_interfaces_disabled 0 || return 1
+	"$MESH_INIT" restart >/dev/null 2>&1 || return 1
+	now="$(uptime_seconds)"
+	deadline=$((now + WINDOW_SECONDS))
+	printf '%s\n' "$deadline" > "$STATE_DIR/deadline"
+	write_state pairing
+}
+
+watch_pairing() {
+	local now deadline state
+
+	if ! mesh_enabled; then
+		write_state disabled
+		return 0
+	fi
+
+	state="$(cat "$STATE_DIR/state" 2>/dev/null || true)"
+	case "$state" in
+	paused|paired|disabled)
+		return 0
+		;;
+esac
+
+	if [ -s "$STATE_DIR/deadline" ]; then
+		deadline="$(cat "$STATE_DIR/deadline")"
+	else
+		# The deadline is measured from OS boot, not from S99 service startup.
+		deadline="$WINDOW_SECONDS"
+		printf '%s\n' "$deadline" > "$STATE_DIR/deadline"
+		write_state pairing
+	fi
+
+	while :; do
+		if has_established_peer; then
+			write_state paired
+			return 0
+		fi
+
+		now="$(uptime_seconds)"
+		if [ "$now" -ge "$deadline" ]; then
+			pause_pairing
+			return $?
+		fi
+
+		sleep "$POLL_SECONDS"
+	done
+}
+
+with_lock() {
+	if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+		return 0
+	fi
+	trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT INT TERM
+	"$@"
+}
+
+case "${1:-}" in
+watch)
+	with_lock watch_pairing
+	;;
+prepare)
+	with_lock prepare_pairing
+	;;
+restart)
+	"$WINDOW_INIT" restart_pairing
+	;;
+status)
+	printf '{"state":"%s","deadline":"%s"}\n' \
+		"$(cat "$STATE_DIR/state" 2>/dev/null || printf 'idle')" \
+		"$(cat "$STATE_DIR/deadline" 2>/dev/null || printf '')"
+	;;
+*)
+	echo "usage: $0 {watch|prepare|restart|status}" >&2
+	exit 1
+	;;
+esac

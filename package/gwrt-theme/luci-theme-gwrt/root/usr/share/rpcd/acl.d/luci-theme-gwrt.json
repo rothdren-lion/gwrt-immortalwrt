@@ -1,0 +1,266 @@
+{
+ "luci-theme-gwrt": {
+  "description": "Grant access for luci-theme-gwrt dashboard",
+  "read": {
+   "uci": [
+    "dhcp",
+    "eqos",
+    "firewall",
+    "gwrt",
+    "network",
+    "system",
+    "wireless",
+    "pon",
+    "pon_wan"
+   ],
+   "file": {
+    "/usr/libexec/syslog-wrapper": [
+     "exec"
+    ],
+    "/usr/libexec/gwrt-ota status": [
+     "exec"
+    ],
+    "/usr/libexec/gwrt-ota check": [
+     "exec"
+    ],
+    "/usr/libexec/gwrt-conntrack": [
+     "exec"
+    ],
+    "/bin/cat /proc/stat": [
+     "exec"
+    ],
+    "/bin/cat /sys/kernel/debug/clk/clk_summary": [
+     "exec"
+    ],
+    "/bin/cat /sys/class/thermal/thermal_zone0/temp": [
+     "exec"
+    ],
+    "/sys/devices/soc0/machine": [
+     "read"
+    ],
+    "/etc/bench.log": [
+     "read"
+    ],
+    "/etc/coremark.sh": [
+     "read"
+    ],
+    "/proc/cpuinfo": [
+     "read"
+    ],
+    "/proc/net/nf_conntrack": [
+     "read"
+    ],
+    "/proc/net/dev": [
+     "read"
+    ],
+    "/sys/kernel/debug/qca-nss-drv/stats/ipv4": [
+     "read"
+    ],
+    "/sys/kernel/debug/qca-nss-drv/stats/ipv6": [
+     "read"
+    ],
+    "/sys/class/net/*/statistics/*": [
+     "read"
+    ],
+    "/sys/class/thermal/*/temp": [
+     "read"
+    ],
+    "/bin/df": [
+     "exec"
+    ],
+    "/usr/libexec/gwrt-wan6-address": [
+     "exec"
+    ],
+    "/proc/device-tree/compatible": [
+     "read"
+    ],
+    "/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq": [
+     "read"
+    ],
+    "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq": [
+     "read"
+    ],
+    "/sys/class/ieee80211/*/hwmon*/temp1_input": [
+     "read"
+    ],
+    "/sys/class/hwmon/*/temp1_input": [
+     "read"
+    ],
+    "/usr/libexec/gwrt-socinfo": [
+     "exec"
+    ],
+    "/usr/libexec/gwrt-clients-dump": [
+     "exec"
+    ],
+    "/usr/libexec/gwrt-navbar-status": [
+     "exec"
+    ],
+    "/usr/libexec/gwrt-accelinfo": [
+     "exec"
+    ],
+    "/usr/libexec/gwrt-ppe-stats": [
+     "exec"
+    ],
+    "/usr/libexec/gwrt-coremark status": [
+     "exec"
+    ],
+    "/usr/sbin/ponctl --device pon0 status --json": [
+     "exec"
+    ],
+    "/usr/libexec/gwrt-traffic-daily read": [
+     "exec"
+    ]
+   },
+   "ubus": {
+    "file": [
+     "read",
+     "exec",
+     "stat",
+     "list"
+    ],
+    "system": [
+     "info",
+     "board"
+    ],
+    "iwinfo": [
+     "info",
+     "assoclist",
+     "freqlist",
+     "countrylist",
+     "txpowerlist"
+    ],
+    "network.device": [
+     "status"
+    ],
+    "network.interface": [
+     "dump",
+     "status"
+    ],
+    "network.wireless": [
+     "status"
+    ],
+    "luci": [
+     "getCPUBench",
+     "getCPUUsage",
+     "getTempInfo",
+     "getOnlineUsers",
+     "getRealtimeStats",
+     "getConntrackList",
+     "getVersion",
+     "getUnixtime",
+     "getBuiltinEthernetPorts",
+     "getBoardJSON",
+     "getInitList",
+     "getNetworkDevices"
+    ],
+    "luci-rpc": [
+     "getNetworkDevices",
+     "getWirelessDevices",
+     "getDHCPLeases",
+     "getHostHints",
+     "getDUIDHints"
+    ],
+    "luci.bandix": [
+     "getStatus",
+     "getConnection",
+     "getDnsStats",
+     "getTopTalkers"
+    ],
+    "luci.bandix_plus": [
+     "getDevices",
+     "getStatus"
+    ],
+    "fwx": [
+     "common"
+    ],
+    "appfilter": [
+     "class_list",
+     "dev_list",
+     "get_all_users",
+     "app_list"
+    ],
+    "podmanmarket": [
+     "list"
+    ],
+    "uci": [
+     "get"
+    ],
+    "wifiroam": [
+     "status",
+     "peers",
+     "topology"
+    ],
+    "luci.pon-info": [
+     "status",
+     "record",
+     "clear"
+    ]
+   }
+  },
+  "write": {
+   "uci": [
+    "dhcp",
+    "eqos",
+    "firewall",
+    "gwrt",
+    "network",
+    "wireless",
+    "pon",
+    "pon_wan"
+   ],
+   "file": {
+    "/usr/libexec/gwrt-coremark start": [
+     "exec"
+    ],
+    "/usr/libexec/gwrt-lan-alias": [
+     "exec"
+    ],
+    "/usr/libexec/gwrt-ota apply": [
+     "exec"
+    ],
+    "/etc/init.d/eqos reload": [
+     "exec"
+    ],
+    "/etc/init.d/eqos stop": [
+     "exec"
+    ],
+    "/etc/init.d/firewall reload": [
+     "exec"
+    ],
+    "/usr/sbin/conntrack -D -s *": [
+     "exec"
+    ],
+    "/usr/sbin/conntrack -D -d *": [
+     "exec"
+    ],
+    "/etc/init.d/sysntpd restart": [
+     "exec"
+    ],
+    "/usr/libexec/pon-wan-apply apply": [
+     "exec"
+    ]
+   },
+   "ubus": {
+    "uci": [
+     "get",
+     "set",
+     "add",
+     "delete",
+     "commit",
+     "apply",
+     "reload_config"
+    ],
+    "file": [
+     "exec"
+    ],
+    "network.interface.*": [
+     "up"
+    ],
+    "network.wireless": [
+     "down",
+     "up"
+    ]
+   }
+  }
+ }
+}

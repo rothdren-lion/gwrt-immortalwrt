@@ -2,7 +2,7 @@
 # GWRT 广告拦截: 读取纯文本规则库(ads-library.txt), 按启用的分类生成
 # dnsmasq address= 规则, 以标记块写入 /etc/dnsmasq.conf
 #
-# 分类: tv(电视核心) tv-ext(电视激进) cn(国内综合) sec(安全软件与更新)
+# 分类: tv(电视核心) tv-ext(电视激进) cn(国内综合) 360(全家桶整域) sec(微软/腾讯)
 # 固定分类 kill(必拦): 无开关, 总开关开时始终生效 (hao123/2345 等)
 #
 # 为什么直写 /etc/dnsmasq.conf 而不用 uci conffile/confdir:
@@ -38,10 +38,10 @@ is_enabled() {
 	bool_on "$(uci -q get ${CFG}.config.enabled 2>/dev/null)" 1
 }
 
-# 分类开关; cat_tv 缺省视为开(对齐旧 core 默认), 其余缺省关
+# 分类开关; tv 和 360 缺省开, 其余缺省关
 cat_on() {
 	case "$1" in
-		cat_tv) bool_on "$(uci -q get ${CFG}.config.$1 2>/dev/null)" 1 ;;
+		cat_tv|cat_360) bool_on "$(uci -q get ${CFG}.config.$1 2>/dev/null)" 1 ;;
 		*) bool_on "$(uci -q get ${CFG}.config.$1 2>/dev/null)" 0 ;;
 	esac
 }
@@ -51,6 +51,7 @@ enabled_cats() {
 	cat_on cat_tv && out="tv"
 	cat_on cat_tv_ext && out="$out tv-ext"
 	cat_on cat_cn && out="$out cn"
+	cat_on cat_360 && out="$out 360"
 	cat_on cat_sec && out="$out sec"
 	echo $out
 }
@@ -66,6 +67,43 @@ use_library() {
 	else
 		echo ""
 	fi
+}
+
+has_360_roots() {
+	awk '
+	BEGIN { n = split("360.cn 360safe.com 360safe.cn qhupdate.com mayi360.cn ads360.cn 360os.com", roots, " ") }
+	$0 == "[360]" { in360 = 1; next }
+	/^\[/ { in360 = 0 }
+	in360 && $1 !~ /^#/ { for (i = 1; i <= n; i++) if ($1 == roots[i]) found[roots[i]] = 1 }
+	END { for (i = 1; i <= n; i++) if (!found[roots[i]]) exit 1 }
+	' "$1"
+}
+
+# 升级保留的旧 conffile 没有 [360] 分类，不能因此拒绝整份规则。
+# 只追加缺少的根域并保留原库备份，不覆盖用户的其它分类/自定义内容。
+migrate_360_library() {
+	local lib="$1" missing tmp
+	has_360_roots "$lib" && return 0
+	grep -q '^\[' "$lib" || return 1
+	missing=$(awk '
+	BEGIN { n = split("360.cn 360safe.com 360safe.cn qhupdate.com mayi360.cn ads360.cn 360os.com", roots, " ") }
+	$0 == "[360]" { in360 = 1; next }
+	/^\[/ { in360 = 0 }
+	in360 && $1 !~ /^#/ { for (i = 1; i <= n; i++) if ($1 == roots[i]) found[roots[i]] = 1 }
+	END { for (i = 1; i <= n; i++) if (!found[roots[i]]) print roots[i] }
+	' "$lib")
+	tmp="${LIB_ETC}.new.$$"
+	if ! { cat "$lib"; printf '\n[360]\n# 升级补全 360 根域；其它分类保留，开关由 cat_360 控制\n%s\n' "$missing"; } > "$tmp"; then
+		rm -f "$tmp"
+		return 1
+	fi
+	if ! has_360_roots "$tmp" || \
+	   { [ ! -e "${LIB_ETC}.before-360" ] && ! cp -p "$lib" "${LIB_ETC}.before-360"; } || \
+	   ! mv "$tmp" "$LIB_ETC"; then
+		rm -f "$tmp"
+		return 1
+	fi
+	logger -t gwrt-tv-adblock "保留旧库并补全 360 根域，原库备份 ${LIB_ETC}.before-360"
 }
 
 # 从库文件抽取启用分类的域名 → address=/d/ (大小写归一, 去重, 过滤畸形行)
@@ -184,6 +222,11 @@ apply_mode() {
 			logger -t gwrt-tv-adblock "规则库缺失, 保留原规则不变"
 			return 1
 		fi
+		if ! migrate_360_library "$lib"; then
+			logger -t gwrt-tv-adblock "规则库 360 兼容迁移失败($lib), 保留原规则不变"
+			return 1
+		fi
+		lib="$(use_library)"
 		# 放行清单参与规则生成: address= 优先于 server=, 必须在生成阶段排除
 		{
 			# kill 档无开关: 总开关开启即始终拦截
@@ -222,7 +265,7 @@ boot() {
 
 start() {
 	# 运行期手动/uci-defaults 启动: dnsmasq 已在运行则让它重读, 否则下次启动自然生效
-	apply_mode
+	apply_mode || return $?
 	pgrep dnsmasq >/dev/null 2>&1 && /etc/init.d/dnsmasq restart 2>/dev/null
 	return 0
 }
@@ -237,7 +280,7 @@ stop() {
 
 # 运行期切换/改自定义/更新库后: CLI 与 LuCI 调用
 reload() {
-	apply_mode
+	apply_mode || return $?
 	# 本服务不拥有 dnsmasq: 未运行时重启会把它拉起来
 	pgrep dnsmasq >/dev/null 2>&1 && /etc/init.d/dnsmasq restart 2>/dev/null
 	return 0

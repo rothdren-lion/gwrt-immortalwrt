@@ -1,0 +1,24 @@
+--- a/dae/runtime.go
++++ b/dae/runtime.go
+@@ -30,17 +30,17 @@
+ }
+ 
+ func GetRuntimeOverview(windowSec int, maxPoints int) (*RuntimeOverview, error) {
+-	activeTCPConnections := 0
+ 	ctl, err := ControlPlane()
++	var snapshot control.RuntimeStatsSnapshot
+ 	if err != nil {
+ 		if !errors.Is(err, ErrControlPlaneNotInit) {
+ 			return nil, err
+ 		}
++		snapshot = control.SnapshotRuntimeStats(0, control.DefaultUdpEndpointPool.Count(), windowSec, maxPoints)
+ 	} else {
+-		activeTCPConnections = ctl.ActiveTCPConnections()
++		// Forwarding records bytes on this control plane, including after reload.
++		snapshot = ctl.SnapshotRuntimeStats(windowSec, maxPoints)
+ 	}
+-
+-	snapshot := control.SnapshotRuntimeStats(activeTCPConnections, control.DefaultUdpEndpointPool.Count(), windowSec, maxPoints)
+ 
+ 	samples := make([]RuntimeTrafficSample, 0, len(snapshot.Samples))
+ 	for _, sample := range snapshot.Samples {

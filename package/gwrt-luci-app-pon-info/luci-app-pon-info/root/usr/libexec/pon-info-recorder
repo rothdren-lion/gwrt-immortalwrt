@@ -1,0 +1,13 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# luci-app-pon-info: 采样循环。仅在状态变化或到达 keepalive 时落盘（判定在 pon-info 内）。
+
+interval="${1:-60}"
+case "$interval" in
+	''|*[!0-9]*) interval=60 ;;
+esac
+
+while :; do
+	/usr/sbin/pon-info record >/dev/null 2>&1
+	sleep "$interval"
+done

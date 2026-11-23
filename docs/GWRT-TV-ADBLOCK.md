@@ -1,17 +1,51 @@
-# GWRT-TV-ADBLOCK — 国内广告拦截（电视 + 国内通用 + 安全软件, dnsmasq 域名层, 纯文本库）
+# GWRT-TV-ADBLOCK — 国内广告拦截（含独立 360 全家桶档, dnsmasq 域名层, 纯文本库）
 
-> 数据日期 2026-11-14（库版本 20261113-r2，包 2.2）；来源见文末；规则库为纯文本
+> 数据日期 2026-11-15（库版本 20261115-r3，包 2.2-r3）；来源见文末；规则库为纯文本
 > `/etc/gwrt-tv-adblock/ads-library.txt`（固件内模板在 `/usr/share`），
-> 分类由 `gwrt-tv-adblock.config.cat_tv / cat_tv_ext / cat_cn / cat_sec`
+> 分类由 `gwrt-tv-adblock.config.cat_tv / cat_tv_ext / cat_cn / cat_360 / cat_sec`
 > 开关控制；`kill` 为固定必拦档（无开关，总开关开即生效）。
 >
-> **误杀可救回**：`custom_allow` 会从规则生成阶段排除对应域（含其子域），
-> 并写 `server=/d/#` 走标准上游——裸根域和子域都能恢复。
+> **IPv4/IPv6 DNS 均覆盖**：无地址的 `address=/domain/` 对 A 与 AAAA 查询都返回 NXDOMAIN。
+> Mesh 子 AP 的客户端 DNS 由主 AP 处理，应在主 AP 配置规则；DoH/DoT、外部 DNS、DNS 缓存和直连 IP 不受本包控制。
+> 还必须检查 RA/DHCPv6 下发的 DNS：若运营商 IPv6 DNS 被中继给客户端，客户端可绕过本机规则。
+> 本包不会自动改变 RA/DHCPv6、中继模式或防火墙 DNS 转发策略。
+
+### 主 AP 上同时运行 daed
+
+daed/dae 会先接管客户端的 53 端口流量。仅在路由器回环地址查询成功，
+不能证明客户端已经使用 dnsmasq 的规则；仅添加 fw4 重定向也可能被它提前接管。
+参见 [dae 官方 DNS 文档](https://daeuniverse.org/dae/configuration/dns)。
+
+2026-11-15 已在用户授权的 `192.168.9.9` 主 AP 实测：将库内域名通过 daed
+DNS request 首条 `qname(suffix: ...)` 定向到 `tcp+udp://127.0.0.1:53`，
+其它域名保留原国内/国外 DNS 分流。这里使用全部分类的域名集合，由 dnsmasq
+按当前分类开关/白名单决定拦截。同步工具在管理员电脑运行，不增加路由器 Python 依赖：
+
+```sh
+python3 scripts/gwrt-sync-daed-adblock.py \
+  --ssh-target root@192.168.9.9 --state-dir /path/to/private-state \
+  --known-hosts /path/to/known_hosts --check
+```
+
+去掉 `--check` 才会应用，私有目录需为 0700；原 DNS 策略备份在该目录，
+添加 `--restore` 可恢复。工具使用 root SSH 读取 daed 的本机签名密钥，
+短时 API token 留在内存/SSH stdin 中，不输出密钥或订阅，也不修改用户账号。
+首次同步的私有目录必须保留用于回滚。
+
+**此工具为手动维护工具，不会在 LuCI 保存或库更新时自动运行。**
+新增自定义域名、替换规则库或切换 daed DNS 策略后，需再次同步；
+现有库的分类开关由 dnsmasq 动态评估，但 daed/终端已有的正向解析缓存会延迟生效。
+旧库迁移保留 sec 下的旧 360 条目，因此仅关 `cat_360` 不会同时关闭原 sec 条目。
+
+本次主 AP 另外持久配置了 LAN 的 TCP/UDP 53 端口 `family any` fw4 重定向，
+覆盖 daemon 未先接管的普通 IPv4/IPv6 DNS。该设备配置不由包自动下发；
+RA/DHCPv6/NDP relay 保持原样。真实客户端检查见
+[实机记录](WORKLOG-20261115-mainap-adblock-ipv6.md)。DoH/DoT、终端缓存和直连 IP 仍在边界之外。
 
 ## 1. 原理与边界
 
 通过 dnsmasq `address=/domain/`（不带 IP）让 A/AAAA 均返回 **NXDOMAIN**，
-局域网内所有使用本机 DNS 的设备（电视/盒子/手机）全部生效：
+局域网内所有使用本机 DNS 的设备（电视/盒子/手机）均生效，且 A/AAAA 两种查询类型都会被拦截：
 
 | 广告类型 | 拦截效果 |
 |---|---|
@@ -31,7 +65,7 @@
 ```
 package/gwrt-tv-adblock/
 ├── Makefile                              # 主包（init/CLI/规则库/uci-defaults）
-├── files/etc/gwrt-tv-adblock/ads-library.txt   # 纯文本规则库（tv/tv-ext/cn/sec/kill）
+├── files/etc/gwrt-tv-adblock/ads-library.txt   # 纯文本规则库（tv/tv-ext/cn/360/sec/kill）
 └── luci-app-gwrt-tvadblock/              # LuCI 开关页（网络 → 电视广告拦截）
 ```
 
@@ -39,20 +73,25 @@ package/gwrt-tv-adblock/
   每行一个域名，`#` 注释。活动库在 `/etc/gwrt-tv-adblock/ads-library.txt`
   （conffile，固件升级保留，可整体替换升级）；固件内模板在
   `/usr/share/gwrt-tv-adblock/`，/etc 缺失时 init 自愈恢复
+- 旧版保留库没有独立的 `[360]` 分类时，init 会备份到
+  `ads-library.txt.before-360`，仅追加缺少的七个根域，保留其它分类与自定义内容；
+  重复应用不会再追加。旧库的版本头注释保持原样，实际计数以页面/CLI 为准。
+  旧 `sec` 中的 360 子域也会保留，仍受原 `sec` 开关控制；更新为本版库后才完成分类拆分。
 - init：`/etc/init.d/gwrt-tv-adblock`（START=18，按启用的分类把
   `address=/d/` 以 `# --- gwrt-tv-adblock begin/end ---` 标记块写入
   `/etc/dnsmasq.conf`；该文件被 OpenWrt dnsmasq init 以 `--conf-file=`
   兜底加载，开机无需额外重启 dnsmasq）
 - CLI：`/usr/libexec/gwrt-tv-adblock status|on|off <分类>|core|extended|off|update|migrate`
 - 配置：`/etc/config/gwrt-tv-adblock` 的 `config.enabled`（总开关）、
-  `config.cat_tv` / `config.cat_tv_ext` / `config.cat_cn` / `config.cat_sec`
+  `config.cat_tv` / `config.cat_tv_ext` / `config.cat_cn` / `config.cat_360` / `config.cat_sec`
   （分类开关）、`config.library_url`（库更新地址）、
   `config.custom_block` / `config.custom_allow`（自定义拦截/放行）
 
 ```sh
 /usr/libexec/gwrt-tv-adblock status      # 库版本/分类计数/开关状态/实测拦截
 /usr/libexec/gwrt-tv-adblock on cn       # 打开国内综合档（或 off cn 关闭）
-/usr/libexec/gwrt-tv-adblock on sec      # 打开安全软件与更新档（360/微软等）
+/usr/libexec/gwrt-tv-adblock on 360      # 打开 360 根域与全部子域拦截
+/usr/libexec/gwrt-tv-adblock on sec      # 打开腾讯管家/微软安全与更新档
 /usr/libexec/gwrt-tv-adblock off         # 总关（分类配置保留；kill 一并停用）
 /usr/libexec/gwrt-tv-adblock core        # 旧三档兼容: = 总开+tv
 /usr/libexec/gwrt-tv-adblock extended    # 旧三档兼容: = 总开+tv+tv-ext
@@ -87,12 +126,23 @@ core（+extended）/ 自定义规则重写进 `/etc/dnsmasq.conf`，`stop()` 只
 > 2. 仍然写入 `server=/d/#`，`#` 表示"按标准上游解析"，不写死上游 IP，
 >    换网络/换 DNS 也不会失效。
 >
-> 因此 `custom_allow` 现在真的能救回误拦，包括裸根域（如 `hao123.com`）
-> 和任意子域（如 `www.hao123.com`）。
+> 因此 `custom_allow` 必须覆盖产生拦截的规则域名本身或其父域。若规则是
+> `hao123.com`，放行 `www.hao123.com` 无法覆盖更宽的 `address=/hao123.com/`；
+> 放行 `hao123.com` 才会移除该根域规则并恢复整棵域名树。LuCI 会显示此限制。
 
 > **验证陷阱**：busybox nslookup 对 NXDOMAIN/空应答也可能返回 0，
 > 判断是否拦截必须检查应答内容里有没有真实 Address
-> （CLI/页面已按此实现），不能只看返回码。
+> （CLI/页面按 NXDOMAIN、真实地址、无此类型记录、DNS 错误分别显示），不能只看返回码。
+
+开发验证使用实际 init 生成的规则，临时 dnsmasq 只监听 `127.0.0.1` 与 `::1`
+的随机高端口，不启动 DHCP/RA、不改系统解析器。覆盖七个根域、`www` 和多级子域，
+A/AAAA × IPv4/IPv6 传输 × UDP/TCP 共 168 次拦截查询，加 8 次正常地址对照；
+同时检查旧库迁移、白名单和加载失败时保留有效规则：
+
+```sh
+python3 scripts/tests/test-gwrt-tv-adblock-query.py
+python3 scripts/tests/test-gwrt-tv-adblock-runtime.py
+```
 
 > **uci 陷阱（部分固件）**：`del_list` 对不存在的条目也返回 0（不能当
 > 循环条件），且没有 `remove` 命令——所以旧 uci conffile 的清理是
@@ -105,7 +155,8 @@ core（+extended）/ 自定义规则重写进 `/etc/dnsmasq.conf`，`stop()` 只
 | tv（电视核心） | `cat_tv` | 218 | 各品牌开机广告域 + 视频 App 广告 SDK + 乐播广告子域 + 广告追踪 | 开 | 无 |
 | tv-ext（电视激进） | `cat_tv_ext` | 115 | 各品牌应用商店/系统升级/语音助手/投屏服务/GITV 认证/P2P 节点 | 关 | 对应功能失效 |
 | cn（国内综合） | `cat_cn` | 148 | 百度/腾讯(广点通GDT/优量汇)/字节(穿山甲)/快手/网易/新浪微博/友盟/华为/OPPO/vivo/小米手机等广告SDK与统计；主流广告联盟（mediav/tanx/domob/admaster/miaozhen 等整域） | 关 | 统计类拦截可能触发个别 App 风控提示，可白名单救回 |
-| sec（安全软件与更新） | `cat_sec` | 79 | 360 全家桶 53 条（卫士/杀毒/手机助手/驱动/更新器/推广/遥测，anti-AD 全量）；腾讯管家与风控 4 条（`guanjia.qq.com` `pcmgr.qq.com` `sec.qq.com` `aegis.qq.com`）；微软 Defender 云（`wdcp/wdcpalt/spynet2/spynetalt`）与遥测根域（`data.microsoft.com` `telemetry.microsoft.com` `watson.microsoft.com`，含 akadns 回退）；Windows Update 6 条（`windowsupdate.com` `update.microsoft.com` `delivery.mp.microsoft.com` 等） | 关 | **按设计**导致 360 组件、Windows/Office 更新失效 |
+| 360（360 全家桶整域） | `cat_360` | 7 | `360.cn` `360safe.com` `360safe.cn` `qhupdate.com` `mayi360.cn` `ads360.cn` `360os.com` 七个根域及所有子域，包括 `www.360.cn` | 开 | **按设计**会阻断 360 官网和旗下服务 |
+| sec（安全软件与更新） | `cat_sec` | 30 | 腾讯管家与风控（`guanjia.qq.com` `pcmgr.qq.com` `sec.qq.com` `aegis.qq.com`）；微软 Defender 云（`wdcp/wdcpalt/spynet2/spynetalt`）与遥测根域（`data.microsoft.com` `telemetry.microsoft.com` `watson.microsoft.com`，含 akadns 回退）；Windows Update（`windowsupdate.com` `update.microsoft.com` `delivery.mp.microsoft.com` 等） | 关 | **按设计**会导致相关组件和 Windows/Office 更新失效 |
 | kill（固定必拦） | 无 | 4 | `hao123.com` `2345.com` `2345.cc` `2345.cn` 导航劫持全家桶 | 恒开（随总开关） | 相关站点打不开（正是不想让它开） |
 
 cn 档刻意排除：搜/内容/云存储 CDN（bdstatic/qhres/gtimg/alipay 等）、
@@ -113,7 +164,7 @@ GRS/HTTPDNS 等功能域（`grs.*.hicloud.com`、`httpdns.ocloud`）、
 推送（gw*.push.mcp.weibo.cn）、裸根域、`api.*` 标签域；
 umeng 仅收 `umeng.co` 与 umengacs（对齐 anti-AD 的保守边界），
 `is/gecko/ic.snssdk.com` 这类字节配置/内容域不收。
-360 与腾讯风控域已从 cn 移入 sec（避免两类重复，语义归位）。
+360 全家桶已从 sec 拆分为独立默认开启的 `360` 分类；腾讯管家风控仍归 `sec`。
 
 sec 档刻意排除的微软功能域：`crl.microsoft.com`（证书吊销列表）、
 `teredo/win*.ipv6.microsoft.com`（IPv6 隧道）、`corp.sts/corpext.msitadfs`
@@ -159,9 +210,9 @@ nftset=/ad.hpplay.cn/4#inet#fw4#tvads
   hkamran80 smart-tv、CSDN/ZNDS/阿里云社区实机清单
 - 国内综合分类（cn）：anti-AD 20261111073634（privacy-protection-tools，
   10 万条 dnsmasq 格式）按品牌白名单标签抽取 + 上轮通用清单国内部分
-- 安全软件与更新（sec）：360 全家桶取 anti-AD 全量（`360.cn/360safe.com/
-  360safe.cn/qhupdate.com/mayi360.cn/ads360.cn/360os.com` 根域下全部条目）；
-  腾讯管家/风控为人工验证清单（guanjia/pcmgr/sec/aegis 存活验证）；
+- 360 整域分类：七个注册根域（`360.cn/360safe.com/360safe.cn/qhupdate.com/
+  mayi360.cn/ads360.cn/360os.com`）统一生成 `address=/root/`，覆盖根域及所有子域；
+- 安全软件与更新（sec）：腾讯管家/风控为人工验证清单（guanjia/pcmgr/sec/aegis 存活验证）；
   微软 Defender/遥测取 anti-AD curated 条目 + 人工根域收敛（data/telemetry/
   watson 根域覆盖全部子域，保留 akadns 回退目标）；Windows Update 为人工
   清单（anti-AD 不含，按微软官方更新端点整理）
@@ -169,7 +220,7 @@ nftset=/ad.hpplay.cn/4#inet#fw4#tvads
 - 处理门禁：品牌正则（白名单标签，只收广告/统计端点）→ 危险域过滤
   （裸根/CDN/功能域/推送）→ 后缀去重（父域覆盖子域）→ 与 tv 排重 →
   阿里 DNS(223.5.5.5) 存活验证（复用缓存）
-- 构建脚本：`/tmp/opencode/tv-adblock/build_cn_library.py`（含全部门禁；
+- 构建脚本：`package/gwrt-tv-adblock/build-ads-library.py`（含全部门禁；
   tv/tv-ext 从当前库文件读回保证幂等，输出 ads-library.txt + cn-final.txt）
 
 **升级规则库（三种方式，均不需改代码/刷固件）**：
@@ -184,45 +235,3 @@ nftset=/ad.hpplay.cn/4#inet#fw4#tvads
 库文件在 /etc（conffile），固件升级后仍保留；init 启动时若缺失会从
 固件模板自愈恢复。重新打包发版时复跑构建脚本覆盖
 `files/etc/gwrt-tv-adblock/ads-library.txt` 并 bump PKG_RELEASE。
-
-## 7. 重建规则库
-
-构建脚本随包保存：`package/gwrt-tv-adblock/build-ads-library.py`
-
-```sh
-cd package/gwrt-tv-adblock
-python3 build-ads-library.py      # 依赖 python3 + dig
-```
-
-为何要保存脚本：`/tmp` 会被清理，早期脚本只存在临时目录里（已丢失）。
-脚本本身**不进固件**（Makefile 只安装 `files/` 下的显式路径）。
-
-特性：
-- **幂等**：`tv` / `tv-ext` 从当前库读回原样保留，重跑不会打乱电视档
-- **安全闸**：anti-AD 来源不足 5 万条、或 `cn`/`sec` 数量骤降超 30%
-  时**拒绝写入**，避免来源截断把库缩水覆盖
-- **缓存**：anti-AD 清单与存活验证结果放 `.cache/`（已 gitignore）
-- 危险域门禁：裸根/CDN/功能域/`api.*` 标签过滤；微软侧硬排除
-  `crl.microsoft.com`、teredo/ipv6、corp.sts、`msftconnecttest.com`
-
-> anti-AD 站点限流严重（实测官网只能拉到 1.5 万/10 万条就断，且不支持
-> Range 续传）。**用 GitHub 源**，仓库内文件名是 `adblock-for-dnsmasq.conf`：
-> `curl -L -o .cache/antiad-dnsmasq.conf https://raw.githubusercontent.com/privacy-protection-tools/anti-AD/master/adblock-for-dnsmasq.conf`
-> 确认 `grep -c '^address=/'` ≥ 10 万再重跑脚本（脚本会自动按此顺序尝试两个源）。
-
-### 7.1 重建时的两个坑（已修）
-
-1. **死父域连带丢活子域**：`ads.oppomobile.com` 已 NXDOMAIN，但它下面
-   `adx/bdapi/ck/data/sms.ads.oppomobile.com` 实测都是活的（111.206.136.x，
-   OPPO 广告投放）。必须**先存活验证、再后缀去重**，否则父域一死连子域
-   一起丢。修剪除顺序后这 5 条保住。
-2. **sec 不能用 cn 的通用门禁**：360 的 `down.` / `api.` / `update.` 和微软
-   `update.microsoft.com` 正是要拦的目标，被 `EXCLUDE_LABEL` 一过全没了。
-   sec 只做 `MS_NEVER` + `PER_DOMAIN_DROP` 级排除。
-
-另：`kill` 档（hao123/2345）是用户强制指定项，**不受存活验证影响**——
-当前网络下 NXDOMAIN 也照样拦（拦一条 NXDOMAIN 无副作用，换环境可能就活了）。
-
-`EXTRA_CN` 列表保存了 anti-AD 新版源已删、但实测有效/需保留的域
-（上面 5 个 OPPO 子域 + `cpro.baidustatic.com` + `h.trace.qq.com` +
-`adstrategy.biz.weibo.com` + `ad.xiaomi.com`），保证重建不丢。

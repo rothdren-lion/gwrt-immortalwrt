@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+/dts-v1/;
+
+#include "an7581-fiberhome-hg5585f-ct-common.dtsi"
+
+/*
+ * HG5585F CT variant with the 2.5G port removed and the USB1 SerDes
+ * routed to the USB3 SuperSpeed lane, matching the HG5585F CU layout.
+ * The CT common DTS enables &eth_pcs/&gdm4 for the GPY211C 2.5G PHY,
+ * which claims the same SerDes lane as usb0's USB3 PHY. Disable both and
+ * use the internal GSW PHY1 as lan1 instead.
+ */
+&eth_pcs {
+	status = "disabled";
+};
+
+&gdm4 {
+	status = "disabled";
+};
+
+&gsw_port1 {
+	label = "lan1";
+	status = "okay";
+};
+
+&gsw_phy1 {
+	status = "okay";
+};
+
+/ {
+	model = "FiberHome HG5585F CT (USB3)";
+	compatible = "fiberhome,hg5585f-ct", "airoha,an7581", "airoha,en7581";
+};

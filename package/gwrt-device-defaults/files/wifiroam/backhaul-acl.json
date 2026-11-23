@@ -1,0 +1,7 @@
+{
+	"luci-app-wifiroam-mesh": {
+		"description": "View and configure local mesh backhaul timing",
+		"read": { "ubus": { "wifiroam": [ "mesh_policy" ] } },
+		"write": { "ubus": { "wifiroam": [ "set_mesh_policy" ] } }
+	}
+}

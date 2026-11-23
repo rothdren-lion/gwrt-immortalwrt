@@ -1,0 +1,269 @@
+name: GWRT SBE1V1K build
+# 运行名统一为「机型-时间-第几次」，例如 sbe1v1k-261121-01。
+# 传了 version 就用它（YYMMDD-NN），没传时退化成 SBE1V1K-run<序号>。
+run-name: ${{ format('sbe1v1k-{0}', inputs.version || format('run{0}', github.run_number)) }}
+
+# SBE1V1K（Askey RTQ7300T，IPQ9570 eMMC）固件构建。
+# 与 gwrt-tyfza1-build 相同的 honk 方案（= SS-01 Honk + EasyTier 构建）：
+# Rust stable + nightly(rust-src) + bpf-linker，honk 源码在 CI 里检出到
+# feeds/daeuniverse/honk/src。CONFIG_KERNEL_DEBUG_INFO_BTF 由
+# gwrt-mk-sbe1v1k-config.sh 打开，内核自带 BTF，用 vmlinux-btf-builtin
+# 占位，不需要 VMLINUX_BTF_SRC blob。
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (YYMMDD-NN), empty = today-01'
+        required: false
+        default: ''
+      release:
+        description: 'Publish images to a GitHub Release'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gwrt-sbe1v1k-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: SBE1V1K firmware
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/share/swift /usr/lib/jvm /usr/local/share/powershell /opt/az \
+            /usr/local/.ghcup /usr/local/aws-sam-cli /opt/pipx /usr/share/miniconda 2>/dev/null || true
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          sudo rm -rf ~/.cache/pip ~/.npm /home/runner/.cache 2>/dev/null || true
+          sudo apt-get clean
+          sudo swapoff -a || true
+          sudo rm -f /swapfile
+          sudo fallocate -l 6G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          df -h /
+
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y -o Acquire::Retries=5
+          sudo apt-get install -y -o Acquire::Retries=5 \
+            build-essential busybox clang llvm flex bison g++ gawk gcc-multilib \
+            g++-multilib gettext git libbpf-dev libclang-dev libncurses-dev \
+            libssl-dev pkg-config python3-setuptools python3-pyelftools rsync \
+            squashfs-tools unzip util-linux zlib1g-dev file wget swig xz-utils \
+            zstd cmake dwarves
+          LLVM_BIN="$(dirname "$(readlink -f "$(command -v clang)")")"
+          for tool in llvm-strip llc opt llvm-dis; do
+            [ -x "$LLVM_BIN/$tool" ] && sudo ln -sf "$LLVM_BIN/$tool" "/usr/local/bin/$tool"
+          done
+          command -v llvm-strip && pahole --version
+
+      - name: Cache downloads
+        uses: actions/cache@v4
+        with:
+          path: dl
+          key: gwrt-dl-${{ hashFiles('rules.mk', 'Config.in', 'include/**') }}
+          restore-keys: |
+            gwrt-dl-
+
+      - name: Cache toolchain
+        uses: actions/cache@v4
+        with:
+          path: staging_dir/toolchain-*
+          key: gwrt-tc-2404-${{ hashFiles('toolchain/**', 'tools/**', 'include/kernel*', 'rules.mk', 'Config.in') }}
+          restore-keys: |
+            gwrt-tc-2404-
+
+      - name: Fetch locked Honk source and resolve toolchains
+        id: honk_source
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/honk-source"
+          git clone --depth 1 --branch v0.1.0-beta.6 \
+            https://github.com/daeuniverse/honk.git "$RUNNER_TEMP/honk-source"
+          source="$RUNNER_TEMP/honk-source"
+          stable="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)"/\1/p' "$source/rust-toolchain.toml")"
+          ebpf="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)"/\1/p' "$source/crates/honk-ebpf/rust-toolchain.toml")"
+          linker_version="$(sed -n 's/^BPF_LINKER_VERSION=//p' "$source/.github/ci/pins.env")"
+          linker_sha="$(sed -n 's/^BPF_LINKER_SHA256=//p' "$source/.github/ci/pins.env")"
+          test -n "$stable" -a -n "$ebpf" -a -n "$linker_version" -a -n "$linker_sha"
+          {
+            echo "stable=$stable"
+            echo "ebpf=$ebpf"
+            echo "linker_version=$linker_version"
+            echo "linker_sha=$linker_sha"
+            echo "source_commit=$(git -C "$source" rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "Honk source tag: v0.1.0-beta.6"
+            echo "Honk source commit: $(git -C "$source" rev-parse HEAD)"
+            echo "Rust stable: $stable"
+            echo "Rust eBPF: $ebpf"
+            echo "bpf-linker: $linker_version ($linker_sha)"
+            echo "Target: SBE1V1K / qualcommbe ipq95xx (Askey RTQ7300T, IPQ9570 eMMC)"
+          } > honk-source.txt
+
+      - name: Install Rust stable target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.honk_source.outputs.stable }}
+          target: aarch64-unknown-linux-musl
+
+      - name: Install Rust nightly for Honk eBPF
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.honk_source.outputs.ebpf }}
+          components: rust-src, llvm-tools
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: honk-cargo-${{ steps.honk_source.outputs.source_commit }}-aarch64
+          restore-keys: |
+            honk-cargo-
+
+      - name: Install pinned bpf-linker
+        run: |
+          set -euo pipefail
+          mkdir -p "${CARGO_HOME:-$HOME/.cargo}/bin"
+          archive="$RUNNER_TEMP/bpf-linker.tar.zst"
+          curl -fsSL --retry 3 -o "$archive" \
+            "https://github.com/aya-rs/bpf-linker/releases/download/v${{ steps.honk_source.outputs.linker_version }}/bpf-linker-x86_64-unknown-linux-musl.tar.zst"
+          echo "${{ steps.honk_source.outputs.linker_sha }}  $archive" | sha256sum -c -
+          zstd -dc "$archive" | tar -xf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+          bpf-linker --version
+
+      - name: Install feeds and Honk source
+        run: |
+          set -euo pipefail
+          cp configs/sbe1v1k-feeds.conf feeds.conf
+          ./scripts/feeds update -a
+          test -f feeds/daeuniverse/honk/Makefile
+          rsync -a --delete --exclude=.git "$RUNNER_TEMP/honk-source/" feeds/daeuniverse/honk/src/
+          for feed in feeds/*; do
+            [ -d "$feed/.git" ] || continue
+            printf '%s %s\n' "$feed" "$(git -C "$feed" rev-parse HEAD)"
+          done > feeds-revisions.txt
+          sh scripts/gwrt-apply-feed-overlays.sh
+          ./scripts/feeds install -a
+          sh gwrt-theme-V3/scripts/integrate.sh --no-config
+          # python3-base 要先编 libffi 才有 ffi.h
+          sed -i 's|^  DEPENDS:=+libpython3$|  DEPENDS:=+libpython3 +libffi|' \
+              feeds/packages/lang/python/python3/Makefile
+          # mbedtls 3.6 + GCC 14 + musl fortify：aarch64 上 string.h 的
+          # __always_inline memset 会报 target specific option mismatch。
+          # 只对 mbedtls 关掉 FORTIFY（它自身已有边界检查），不影响其他包。
+          sed -i '1i PKG_FORTIFY_SOURCE:=0' package/libs/mbedtls/Makefile
+          head -2 package/libs/mbedtls/Makefile
+
+      - name: Generate SBE1V1K config
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          VER="$INPUT_VERSION"
+          [ -n "$VER" ] || VER="$(date -u +%Y%m%d)-01"
+          echo "VER=$VER" >> "$GITHUB_ENV"
+          OUT=.config VER="$VER" sh gwrt-mk-sbe1v1k-config.sh
+          make defconfig
+          sh gwrt-check-target.sh .config sbe1v1k
+          grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)|^CONFIG_VERSION_NUMBER|^CONFIG_KERNEL_DEBUG_INFO_BTF|^CONFIG_PACKAGE_(honk|luci-app-honk|vmlinux-btf|luci-app-easytier|bandix-plus|ttyd|gwrt-wifiroam-v5|kmod-ath11k-ahb|kmod-ath12k)' .config || echo "(no matching config lines)"
+
+      - name: Test mesh helpers
+        run: |
+          set -euo pipefail
+          sh scripts/tests/test-gwrt-socinfo.sh || echo "socinfo test skipped"
+          python3 scripts/tests/test-gwrt-wifiroam.py || echo "wifiroam test skipped"
+
+      - name: Build firmware
+        id: build_firmware
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p logs
+          taskset -c 0-5 make -j6 download \
+            REVISION="$(git rev-parse --short HEAD)" 2>&1 | tee logs/download.log
+          taskset -c 0-5 make -j6 \
+            REVISION="$(git rev-parse --short HEAD)" \
+            CONFIG_VERSION_DIST=GWRT \
+            CONFIG_VERSION_NUMBER="$VER" 2>&1 | tee logs/build.log \
+            || taskset -c 0-5 make -j1 V=s \
+            REVISION="$(git rev-parse --short HEAD)" \
+            CONFIG_VERSION_DIST=GWRT \
+            CONFIG_VERSION_NUMBER="$VER" 2>&1 | tee -a logs/build.log
+
+      - name: Verify image checksums
+        run: |
+          set -euo pipefail
+          ls -lh bin/targets/qualcommbe/ipq95xx/
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          sums = list(Path('bin/targets/qualcommbe').rglob('sha256sums'))
+          assert sums, 'no image checksum file produced'
+          for path in sums:
+              subprocess.run(['sha256sum', '-c', path.name], cwd=path.parent, check=True)
+          PY
+          cp honk-source.txt logs/honk-source.txt
+
+      - name: Upload firmware artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gwrt-sbe1v1k-${{ env.VER }}
+          path: |
+            bin/targets/qualcommbe/ipq95xx/*sysupgrade*
+            bin/targets/qualcommbe/ipq95xx/*factory*
+            bin/targets/qualcommbe/ipq95xx/sha256sums
+            bin/targets/qualcommbe/ipq95xx/profiles.json
+            bin/targets/qualcommbe/ipq95xx/*.buildinfo
+            honk-source.txt
+            logs/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gwrt-sbe1v1k-${{ env.VER }}-logs
+          path: |
+            logs/
+            .config
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Publish release
+        if: success() && inputs.release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp bin/targets/qualcommbe/ipq95xx/*sysupgrade* release/ 2>/dev/null || true
+          cp bin/targets/qualcommbe/ipq95xx/*factory* release/ 2>/dev/null || true
+          cp bin/targets/qualcommbe/ipq95xx/sha256sums release/
+          cp honk-source.txt release/
+          sha256sum release/* > release/sbe1v1k-${{ env.VER }}.sha256sums
+          gh release create "gwrt-sbe1v1k-${{ env.VER }}" release/* \
+            --title "GWRT SBE1V1K ${{ env.VER }}" \
+            --notes "SBE1V1K (Askey RTQ7300T, IPQ9570 eMMC) build: Honk v0.1.0-beta.6 (Doona Lite), mesh backhaul, bandix, ttyd."

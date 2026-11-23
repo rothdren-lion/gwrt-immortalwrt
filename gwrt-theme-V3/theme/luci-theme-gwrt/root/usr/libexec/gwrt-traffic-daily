@@ -1,0 +1,10 @@
+#!/bin/sh
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+umask 077
+case "$1" in
+	read) ;;
+	daemon) /usr/libexec/gwrt-runtime-dir >/dev/null || exit 1 ;;
+	*) exit 1 ;;
+esac
+exec /usr/bin/ucode /usr/share/gwrt/traffic-daily.uc "$1"

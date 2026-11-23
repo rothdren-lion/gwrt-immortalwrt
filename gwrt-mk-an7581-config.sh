@@ -22,7 +22,9 @@
 #   airoha-ponctl + airoha-pond，两边都会生效。
 #
 # 【体积预算 ~50MB】
-#   固件内：基础系统 + LuCI + 主题 + PON + npu/route-tool/easytier 面板 + zram。
+#   固件内：基础系统 + LuCI + 主题 + PON + npu/bandix/route-tool/easytier 面板 + zram。
+#   （261120 加回 bandix-plus：主题流量监控取样唯一源是 Bandix，光猫固件不带它
+#   首页流量卡就没有数据；aarch64 预编译二进制约 2.6MB 压缩包。）
 #   固件外（后期设备自行安装）：gecoosac(15.6MB)、openclash 面板(带 ruby)、
 #   openclash/easytier 本体、docker/podman、kmod-wireguard。
 #   注意：gwrt-theme-V3/manifest/config.fragment 里带 openclash/bandix/
@@ -115,13 +117,17 @@ for p in \
 	luci-i18n-pon-zh-cn \
 	luci-app-iptv \
 	luci-i18n-iptv-zh-cn \
-	luci-app-pon-wan ; do
+	luci-app-pon-wan \
+	luci-app-pon-info ; do
 	add_pkg "$p"
 done
 
 echo "[an7581] 插件面板（只要 LuCI，不要本体/内核扩展）:"
 for p in \
 	luci-app-airoha-npu \
+	luci-app-bandix-plus \
+	luci-i18n-bandix-plus-zh-cn \
+	bandix-plus \
 	luci-app-route-tool \
 	luci-app-easytier \
 	luci-i18n-easytier-zh-cn ; do
@@ -138,6 +144,16 @@ for p in \
 	fitblk ; do
 	add_pkg "$p"
 done
+
+echo "[an7581] NPU 插件数据源（/dev/mem + busybox devmem）:"
+# luci-app-airoha-npu 的 Frame Engine 段、CPU PLL 读取和直接超频都依赖
+# /sbin/devmem + /dev/mem。261022-01 首版两者都关着，插件状态详情整段无数据；
+# 261110-07 实机验证已开启，这里固化为默认（261119）。
+sed -i 's|^# CONFIG_KERNEL_DEVMEM is not set$|CONFIG_KERNEL_DEVMEM=y|' "$TOP/.config"
+grep -q '^CONFIG_KERNEL_DEVMEM=y$' "$TOP/.config" || echo 'CONFIG_KERNEL_DEVMEM=y' >>"$TOP/.config"
+sed -i 's|^# CONFIG_BUSYBOX_DEFAULT_DEVMEM is not set$|CONFIG_BUSYBOX_DEFAULT_DEVMEM=y|' "$TOP/.config"
+grep -q '^CONFIG_BUSYBOX_DEFAULT_DEVMEM=y$' "$TOP/.config" || echo 'CONFIG_BUSYBOX_DEFAULT_DEVMEM=y' >>"$TOP/.config"
+echo "  + CONFIG_KERNEL_DEVMEM / CONFIG_BUSYBOX_DEFAULT_DEVMEM"
 
 echo "[an7581] 网络与基础:"
 for p in \
@@ -192,8 +208,6 @@ for p in \
 	kmod-tun \
 	kmod-nft-tproxy \
 	kmod-inet-diag \
-	luci-app-bandix-plus \
-	bandix-plus \
 	coremark \
 	luci-app-ttyd \
 	ttyd \
@@ -234,7 +248,6 @@ OC_KEEP=""
 for p in \
 	openclash \
 	luci-app-openclash \
-	bandix-plus \
 	coremark \
 	luci-app-ttyd \
 	ttyd \

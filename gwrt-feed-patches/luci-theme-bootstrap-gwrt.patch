@@ -1,0 +1,37 @@
+diff --git a/themes/luci-theme-bootstrap/ucode/template/themes/bootstrap/header.ut b/themes/luci-theme-bootstrap/ucode/template/themes/bootstrap/header.ut
+index e23892bd45..b1f12e8f6a 100644
+--- a/themes/luci-theme-bootstrap/ucode/template/themes/bootstrap/header.ut
++++ b/themes/luci-theme-bootstrap/ucode/template/themes/bootstrap/header.ut
+@@ -51,6 +51,9 @@
+ 			<a class="brand" href="/">{{ striptags(boardinfo.hostname ?? '?') }}</a>
+ 			<ul class="nav" id="topmenu" style="display:none"></ul>
+ 			<div id="indicators" class="pull-right"></div>
++			<!-- GWRT: back-to-GWRT button on native ports 81/444 (hidden elsewhere) -->
++			<a id="gwrt-back-link" class="btn pull-right" style="display:none;margin-right:.5em" href="#">GWRT</a>
++			<script>try{(function(){var p=location.port||(location.protocol==='https:'?'443':'80');if(p==='81'||p==='444'){var b=document.getElementById('gwrt-back-link');if(!b)return;var secure=(p==='444');var target=(secure?'https':'http')+'://'+location.hostname+(secure?'':'')+location.pathname+location.search+location.hash;b.setAttribute('href',target);b.style.display='';}})();}catch(e){}</script>
+ 		</header>
+ 
+ 		<div id="maincontent" class="container">
+diff --git a/themes/luci-theme-bootstrap/ucode/template/themes/bootstrap/sysauth.ut b/themes/luci-theme-bootstrap/ucode/template/themes/bootstrap/sysauth.ut
+index 210dadc4a6..be12928cbe 100644
+--- a/themes/luci-theme-bootstrap/ucode/template/themes/bootstrap/sysauth.ut
++++ b/themes/luci-theme-bootstrap/ucode/template/themes/bootstrap/sysauth.ut
+@@ -6,6 +6,11 @@
+ {% include('header', { blank_page: true }) %}
+ 
+ <section hidden>
++	<!-- GWRT: login-time UI switcher on native ports 81/444 - [登录 GWRT 界面][登录原生界面] -->
++	<div id="gwrt-ui-switch" style="display:none;margin-bottom:1.2em;white-space:nowrap">
++		<a id="gwrt-ui-switch-gwrt" class="btn" href="#">登录 GWRT 界面</a>
++		<a id="gwrt-ui-switch-native" class="btn" href="#" style="margin-left:.4em;opacity:.55">登录原生界面</a>
++	</div>
+ 	<form method="post" class="cbi-map">
+ 		<div class="cbi-section">
+ 			<div class="cbi-section-node">
+@@ -81,4 +86,6 @@
+ 	</script>
+ </div>
+ 
++<script>try{(function(){var p=location.port||(location.protocol==='https:'?'443':'80');if(p!=='81'&&p!=='444')return;var box=document.getElementById('gwrt-ui-switch');if(!box)return;var base=(p==='444'?'https':'http')+'://'+location.hostname;var tail=location.pathname+location.search+location.hash;document.getElementById('gwrt-ui-switch-gwrt').setAttribute('href',base+tail);document.getElementById('gwrt-ui-switch-native').setAttribute('href',base+':'+p+tail);box.style.display='';})();}catch(e){}</script>
++
+ {% include('footer', { blank_page: true }) %}

@@ -1,5 +1,5 @@
 REQUIRE_IMAGE_METADATA=1
-RAMFS_COPY_BIN='fitblk fit_check_sign'
+RAMFS_COPY_BIN='dumpimage fitblk fit_check_sign'
 
 remove_oem_ubi_rootfs() {
 	local mtdnum
@@ -44,6 +44,11 @@ platform_do_upgrade() {
 		CI_ROOTPART="rootfs"
 		emmc_do_upgrade "$1"
 		;;
+	gl.inet,gl-be9300)
+		CI_KERNPART="0:HLOS"
+		CI_ROOTPART="rootfs"
+		glinet_emmc_do_upgrade "$1" || return 1
+		;;
 	xiaomi,be6500|\
 	xiaomi,be3600-pro-wired-*)
 		nand_do_upgrade "$1"
@@ -69,6 +74,9 @@ platform_check_image() {
 	xiaomi,be6500)
 		return 0
 		;;
+	gl.inet,gl-be9300)
+		glinet_emmc_check_image "$1"
+		;;
 	*)
 		echo "Sysupgrade is not supported on your board yet."
 		return 1
@@ -79,6 +87,7 @@ platform_check_image() {
 platform_copy_config() {
 	case "$(board_name)" in
 	ubnt,u7-pro-xgs|\
+	gl.inet,gl-be9300|\
 	jdcloud,re-cs-06|\
 	jdcloud,re-cs-08)
 		emmc_copy_config

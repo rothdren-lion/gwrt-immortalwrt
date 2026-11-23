@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <title>GWRT Control</title>
+  <link rel="stylesheet" href="/style.css?v=17.17">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="主导航">
+      <div class="brand">
+        <span class="brand-mark">G</span>
+        <span>
+          <strong>GWRT</strong>
+          <small>CONTROL PLANE</small>
+        </span>
+      </div>
+      <div class="account-menu" id="account-menu">
+        <button class="account-button" id="profile-button" type="button" aria-expanded="false" aria-controls="profile-menu" hidden>
+          <span class="account-avatar" id="user-avatar" aria-hidden="true">G</span>
+          <span class="account-copy"><strong id="profile-name">账户</strong><small>打开账户菜单</small></span>
+          <svg class="account-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+        </button>
+        <div class="profile-menu" id="profile-menu" hidden>
+          <div class="profile-menu-user"><span class="profile-menu-label">当前账户</span><strong id="profile-menu-name">-</strong></div>
+          <button class="profile-menu-item" type="button" data-account-action="change-password"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/></svg>修改密码</button>
+          <button class="profile-menu-item" type="button" data-account-action="check-update"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="3.5"/></svg>检查更新</button>
+          <button class="profile-menu-item" type="button" data-account-action="app-login-code"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 8h2v2H8zM14 8h2M8 14h2M14 13v3M16 14h-2"/></svg>生成 App 登录码</button>
+          <button class="profile-menu-item" id="theme-toggle" type="button" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/><circle cx="12" cy="12" r="4"/></svg><span id="theme-toggle-label">浅色模式</span></button>
+
+          <button class="profile-menu-item profile-menu-danger" id="logout-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5H5v14h5M14 8l4 4-4 4M8 12h10"/></svg>退出登录</button>
+        </div>
+      </div>
+      <nav class="nav-list">
+        <button class="nav-item active" type="button" data-nav="overview">
+          <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m3 10 9-7 9 7M5 9v12h14V9M9 21v-6h6v6"/></svg></span>总览
+        </button>
+        <button class="nav-item" type="button" data-nav="devices">
+          <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16M15 4v16"/></svg></span>设备
+        </button>
+      </nav>
+      <div class="sidebar-footer">
+        <span class="status-dot"></span>
+        <span id="connection-label">未连接</span>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">REMOTE OPERATIONS</p>
+          <h1>GWRT总台</h1>
+        </div>
+        <div class="topbar-actions" aria-hidden="true"></div>
+      </header>
+
+      <section class="login-view" id="login-view">
+        <div class="login-bg" aria-hidden="true">
+          <svg class="login-bg-svg" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" preserveAspectRatio="xMidYMid slice">
+            <defs>
+              <pattern id="bg-grid" width="52" height="52" patternUnits="userSpaceOnUse">
+                <path d="M52 0H0V52" fill="none" stroke="rgba(59,130,246,0.07)" stroke-width="1"/>
+              </pattern>
+              <radialGradient id="orb-a" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stop-color="#3b82f6" stop-opacity=".28"/>
+                <stop offset="100%" stop-color="#3b82f6" stop-opacity="0"/>
+              </radialGradient>
+              <radialGradient id="orb-b" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stop-color="#06b6d4" stop-opacity=".20"/>
+                <stop offset="100%" stop-color="#06b6d4" stop-opacity="0"/>
+              </radialGradient>
+            </defs>
+            <rect width="100%" height="100%" fill="url(#bg-grid)"/>
+            <g fill="url(#orb-a)"><circle cx="12%" cy="18%" r="26%"/></g>
+            <g fill="url(#orb-b)"><circle cx="88%" cy="78%" r="30%"/></g>
+            <g stroke="rgba(59,130,246,.30)" stroke-width="1.4" fill="none" opacity=".8">
+              <path d="M6% 78% L18% 52% L38% 60% L52% 38% L70% 50% L86% 26%"/>
+              <path d="M18% 52% L26% 82% L52% 76% L52% 38%"/>
+              <path d="M70% 50% L78% 74% L86% 26%"/>
+            </g>
+            <g fill="#3b82f6" opacity=".55">
+              <circle cx="6%" cy="78%" r="3"/><circle cx="18%" cy="52%" r="2.4"/>
+              <circle cx="38%" cy="60%" r="2"/><circle cx="52%" cy="38%" r="3.4"/>
+              <circle cx="70%" cy="50%" r="2.4"/><circle cx="86%" cy="26%" r="2.6"/>
+              <circle cx="26%" cy="82%" r="2"/><circle cx="52%" cy="76%" r="2"/><circle cx="78%" cy="74%" r="2.2"/>
+            </g>
+            <g fill="#06b6d4" opacity=".35">
+              <circle cx="10%" cy="30%" r="2"/><circle cx="82%" cy="12%" r="2.2"/><circle cx="66%" cy="86%" r="2"/>
+            </g>
+          </svg>
+          <div class="login-watermark">GWRT<br>CONTROL<br>PLANE</div>
+        </div>
+        <div class="auth-shell">
+          <div class="auth-story">
+            <div class="auth-story-mark">G</div>
+            <p class="eyebrow">GWRT / CONTROL PLANE</p>
+            <h2>把每台路由器，<br><em>放进你的掌控范围。</em></h2>
+            <p class="auth-story-copy">一个账号管理属于你的 GWRT 设备。状态、终端、容器与 AppFilter，都在同一个清晰的工作台里。</p>
+            <div class="auth-feature-list">
+              <div class="auth-feature"><b>01</b><span>账号隔离，每个用户只看自己的设备</span></div>
+              <div class="auth-feature"><b>02</b><span>Agent 出站连接，手机流量也能访问</span></div>
+              <div class="auth-feature"><b>03</b><span>WAN / LAN 变更保持安全边界</span></div>
+            </div>
+          </div>
+          <div class="auth-card">
+            <div class="auth-card-head">
+              <div class="auth-mark">G</div>
+              <div><strong>GWRT Control</strong><span>Router operations workspace</span></div>
+            </div>
+            <div class="auth-tabs" role="tablist" aria-label="账户操作">
+              <button class="auth-tab active" type="button" data-auth-mode="login" role="tab" aria-selected="true">登录</button>
+              <button class="auth-tab" type="button" data-auth-mode="register" role="tab" aria-selected="false">注册账号</button>
+            </div>
+            <div class="auth-heading">
+              <p class="panel-kicker">SECURE ACCESS</p>
+              <h2 id="auth-title">欢迎回来</h2>
+              <p class="panel-copy" id="auth-description">登录后进入你的设备工作台。</p>
+            </div>
+            <form id="login-form" class="form-stack auth-form is-active" data-auth-form="login">
+              <label>用户名<input name="username" autocomplete="username" required></label>
+              <label>密码<input name="password" type="password" autocomplete="current-password" required></label>
+              <div class="captcha-row">
+                <span class="captcha-box" id="login-captcha" title="看不清？点击刷新"></span>
+                <input class="captcha-input" name="captcha" placeholder="验证码" maxlength="4" autocomplete="off" required aria-label="验证码">
+                <button class="captcha-refresh" type="button" data-captcha-refresh title="换一张" aria-label="换一张验证码"><svg viewBox="0 0 24 24"><path d="M4 10a8 8 0 0 1 14-2M20 14a8 8 0 0 1-14 2"/><path d="M18 4v4h-4M6 20v-4h4"/></svg></button>
+                <input type="hidden" name="captcha_id">
+              </div>
+              <button class="button button-primary button-wide" type="submit">进入控制台</button>
+            </form>
+            <form id="register-form" class="form-stack auth-form" data-auth-form="register" hidden>
+              <label>用户名<input name="username" autocomplete="username" minlength="3" maxlength="64" required></label>
+              <label>密码<input name="password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required></label>
+              <label>确认密码<input name="password_confirm" type="password" autocomplete="new-password" minlength="8" maxlength="128" required></label>
+              <div class="captcha-row">
+                <span class="captcha-box" id="register-captcha" title="看不清？点击刷新"></span>
+                <input class="captcha-input" name="captcha" placeholder="验证码" maxlength="4" autocomplete="off" required aria-label="验证码">
+                <button class="captcha-refresh" type="button" data-captcha-refresh title="换一张" aria-label="换一张验证码"><svg viewBox="0 0 24 24"><path d="M4 10a8 8 0 0 1 14-2M20 14a8 8 0 0 1-14 2"/><path d="M18 4v4h-4M6 20v-4h4"/></svg></button>
+                <input type="hidden" name="captcha_id">
+              </div>
+              <button class="button button-primary button-wide" type="submit">创建账号</button>
+            </form>
+            <p class="form-error" id="auth-error" role="alert"></p>
+            <p class="auth-footnote">注册后即可绑定自己的设备；设备不会出现在其他账号中。</p>
+          </div>
+        </div>
+      </section>
+
+            <section class="dashboard-view" id="dashboard-view" hidden>
+        <section class="overview-view" id="overview-view">
+          <section class="overview-summary" aria-label="总看台">
+            <button class="add-device-hero" id="bind-pair-button" type="button">
+              <span class="add-device-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M8 8h3v3H8zM13 13h3v3h-3z"/></svg></span>
+              <span class="add-device-copy"><strong>添加设备</strong><small id="pair-action-hint">自动发现当前网络路由器，或扫描路由器上的绑定二维码</small></span>
+              <b class="add-device-arrow" aria-hidden="true">＋</b>
+            </button>
+            <p class="pair-status" id="pair-status" role="status" aria-live="polite">点击「添加设备」自动发现当前网络的 GWRT 路由器，确认后绑定；也可以扫码添加。</p>
+            <div class="overview-chips" aria-label="设备汇总">
+              <span class="chip">绑定设备<b id="metric-total">0</b></span>
+              <span class="chip chip-online">在线<b id="metric-online">0</b></span>
+              <span class="chip chip-offline">离线<b id="metric-offline">0</b></span>
+              <span class="chip">容器<b id="metric-containers">0</b></span>
+              <span class="chip">在线终端<b id="metric-clients">0</b></span>
+            </div>
+            <div class="fleet-head"><div><p class="eyebrow">FLEET</p><h2>设备</h2></div><button class="button button-quiet" id="refresh-button" type="button">刷新</button></div>
+            <div class="fleet-overview" id="fleet-overview"></div>
+          </section>
+        </section>
+
+        <section class="device-view" id="device-view" hidden>
+          <header class="device-topbar">
+            <button class="device-back" id="device-back" type="button" aria-label="返回总览"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+            <div class="device-topbar-copy">
+              <p class="eyebrow">DEVICE</p>
+              <button class="device-name-edit" id="device-name-edit" type="button" title="修改显示名称"><h2 id="device-view-name">设备</h2><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4ZM13.5 6.5l4 4"/></svg></button>
+            </div>
+            <span class="online-badge" id="device-view-status">OFFLINE</span>
+            <span class="readonly-badge" id="device-readonly-badge" hidden>仅查看</span>
+            <span class="device-index" id="device-index"></span>
+          </header>
+          <div class="device-scroll" id="device-scroll">
+            <div id="device-info-card"></div>
+            <div id="device-tab-content"></div>
+          </div>
+          <nav class="device-nav" id="device-nav" aria-label="设备导航">
+            <button type="button" data-dtab="mesh"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="18" r="2"/><path d="m11 7-5 9m7-9 5 9M7 18h10"/></svg><span>Mesh</span></button>
+            <button class="active" type="button" data-dtab="system"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h6M7 16h4"/></svg><span>系统</span></button>
+            <button type="button" data-dtab="clients"><svg viewBox="0 0 24 24"><circle cx="8" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 19c.6-3 2.3-4.5 5-4.5s4.4 1.5 5 4.5M14 15c3.5-.1 5.4 1.2 6 4"/></svg><span>终端</span></button>
+            <button type="button" data-dtab="topology"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="18" r="2"/><path d="M8 6h4a4 4 0 0 1 4 4v6"/></svg><span>网络</span></button>
+            <button type="button" data-dtab="plugins"><svg viewBox="0 0 24 24"><path d="M4 9h16l-1 10H5L4 9ZM6 9l1-4h10l1 4M9 13h6"/></svg><span>插件</span></button>
+            <button type="button" data-dtab="terminal"><svg viewBox="0 0 24 24"><path d="M5 7l5 5-5 5M12 18h7"/></svg><span>指令</span></button>
+            <button type="button" data-dtab="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg><span>设置</span></button>
+          </nav>
+        </section>
+      </section>
+    </main>
+  </div>
+  <dialog id="unbind-dialog" class="limit-dialog">
+    <form method="dialog" id="unbind-form">
+      <p class="eyebrow">UNBIND DEVICE</p>
+      <h2 id="unbind-title">解绑设备</h2>
+      <p class="editor-note" id="unbind-copy">解绑后设备会从当前账号移除，重新绑定需要回到路由器本地自动发现或扫码。</p>
+      <div class="dialog-actions"><button class="button button-quiet" value="cancel" type="button" data-unbind-cancel>取消</button><button class="button button-danger" value="default" type="submit">确认解绑</button></div>
+    </form>
+  </dialog>
+  <dialog id="pair-confirm-dialog" class="limit-dialog">
+    <form method="dialog" id="pair-confirm-form">
+      <p class="eyebrow">ADD DEVICE</p>
+      <h2 id="pair-confirm-title">确认绑定设备</h2>
+      <p class="editor-note" id="pair-confirm-copy">设备信息</p>
+      <div class="dialog-actions"><button class="button button-quiet" value="cancel" type="button" data-pair-cancel>取消</button><button class="button button-primary" value="default" type="submit">确认绑定</button></div>
+    </form>
+  </dialog>
+  <dialog id="reboot-dialog" class="limit-dialog">
+    <form method="dialog" id="reboot-form">
+      <p class="eyebrow">REBOOT DEVICE</p>
+      <h2 id="reboot-title">重启路由器</h2>
+      <p class="editor-note" id="reboot-copy">确认重启该路由器？重启会断开网络约 1 分钟。</p>
+      <p class="editor-note" id="reboot-countdown"></p>
+      <div class="dialog-actions"><button class="button button-quiet" value="cancel" type="button" data-reboot-cancel>取消</button><button class="button button-danger" id="reboot-confirm" type="submit" disabled>确认重启</button></div>
+    </form>
+  </dialog>
+  <dialog id="limit-dialog" class="limit-dialog">
+    <form method="dialog" id="limit-form">
+      <p class="eyebrow">CLIENT POLICY</p>
+      <h2>设置终端限速</h2>
+      <p class="editor-note">单位 Kbps；填 0 表示不限制。设置完成后会自动关闭窗口。</p>
+      <div class="form-grid"><label>下行<input id="limit-down" type="number" min="0" max="100000000" required></label><label>上行<input id="limit-up" type="number" min="0" max="100000000" required></label></div>
+      <div class="dialog-actions"><button class="button button-quiet" value="cancel" type="button" onclick="this.closest('dialog').close()">取消</button><button class="button button-primary" value="default" type="submit">应用限速</button></div>
+    </form>
+  </dialog>
+  <dialog id="edit-dialog" class="edit-dialog" aria-labelledby="edit-title">
+    <form method="dialog" id="edit-form">
+      <div class="dialog-head"><div><p class="eyebrow" id="edit-kicker">EDIT</p><h2 id="edit-title">编辑设置</h2></div><button class="dialog-close" type="button" aria-label="关闭编辑窗口" data-dialog-close>×</button></div>
+      <div class="dialog-fields" id="edit-fields"></div>
+      <p class="editor-note" id="edit-help"></p>
+      <div class="dialog-actions"><button class="button button-quiet" type="button" data-dialog-close>取消</button><button class="button button-primary" type="submit">保存设置</button></div>
+    </form>
+  </dialog>
+  <dialog id="app-update-dialog" class="update-dialog" aria-labelledby="update-title">
+    <form method="dialog" id="app-update-form">
+      <p class="eyebrow">APP UPDATE</p>
+      <h2 id="update-title">发现新版本</h2>
+      <p class="editor-note" id="update-copy">GWRT Control 有新的 Android 版本可用。</p>
+      <div class="update-notes" id="update-notes"></div>
+      <div class="dialog-actions"><button class="button button-quiet" type="button" data-update-later>稍后提醒</button><button class="button button-primary" type="button" id="update-download">下载并安装</button></div>
+    </form>
+  </dialog>
+  <dialog id="password-dialog" class="edit-dialog" aria-labelledby="password-title">
+    <form method="dialog" id="password-form">
+      <div class="dialog-head"><div><p class="eyebrow">ACCOUNT SECURITY</p><h2 id="password-title">修改密码</h2></div><button class="dialog-close" type="button" aria-label="关闭" data-dialog-close>×</button></div>
+      <div class="dialog-fields">
+        <label>原密码<input name="old_password" type="password" autocomplete="current-password" required></label>
+        <label>新密码<input name="new_password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required></label>
+        <label>确认新密码<input name="new_password_confirm" type="password" autocomplete="new-password" minlength="8" maxlength="128" required></label>
+      </div>
+      <p class="editor-note">修改后请用新密码登录；App 与网页使用同一密码。</p>
+      <div class="dialog-actions"><button class="button button-quiet" type="button" data-dialog-close>取消</button><button class="button button-primary" type="submit">保存新密码</button></div>
+    </form>
+  </dialog>
+  <dialog id="app-login-code-dialog" class="login-code-dialog" aria-labelledby="app-login-code-title">
+    <form method="dialog">
+      <p class="eyebrow">APP ACCESS</p>
+      <h2 id="app-login-code-title">App 一次性登录码</h2>
+      <p class="editor-note">此码仅使用一次，有效期 2 分钟。</p>
+      <strong class="one-time-code" id="app-login-code">--------</strong>
+      <p class="code-expiry" id="app-login-code-expiry"></p>
+      <div class="dialog-actions"><button class="button button-primary" type="submit">关闭</button></div>
+    </form>
+  </dialog>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <footer class="app-footer"><span id="footer-version">GWRT Control</span></footer>
+  <script src="/app.js?v=17.17" defer></script>
+</body>
+</html>

@@ -1,0 +1,56 @@
+#!/bin/sh
+# 指示灯默认值：只给「一个 LED 段都没有」的机型补上最小可用配置
+#
+# 背景：JDCloud RE-CS-08 的 DTS 有 green:status / red:status / blue:status /
+# green:wan，但 qualcommbe 目标没有 base-files/etc/board.d/01_leds，/etc/config/system
+# 里没有任何 led 段，于是上电后所有指示灯都是灭的，看不出设备到底在不在跑。
+#
+# 规则：
+#   · 设备已经有任何 system led 段（board.d 生成或用户自己配过）-> 完全不动
+#   · 每个灯只有 /sys/class/leds/<name> 真的存在才写，其它机型不会多出段
+#   · 绿=正常运行，红=留给故障，蓝=不动（gwrt-mesh-led 用它表示 mesh 状态）
+#   · 重复执行不产生重复的 led 段
+
+# 已经有 LED 配置就退出（空判断会漏掉，所以要显式比较）
+[ "$(uci -q show system 2>/dev/null | grep -c '=led$')" = "0" ] || exit 0
+
+changed=0
+
+# set_led <sysfs 名> [key=value ...]
+set_led() {
+	led="$1"
+	shift
+	[ -e "/sys/class/leds/$led" ] || return 0
+	uci -q add system led >/dev/null 2>&1 || return 0
+	uci -q set "system.@led[-1].name=$led"
+	uci -q set "system.@led[-1].sysfs=$led"
+	while [ "$#" -gt 0 ]; do
+		uci -q set "system.@led[-1].$1"
+		shift
+	done
+	changed=1
+	return 0
+}
+
+set_led green:status "trigger=default-on"
+set_led green:wan "trigger=netdev" "dev=wan" "mode=link tx rx"
+set_led red:status "trigger=none"
+set_led blue:status "trigger=none"
+
+if [ "$changed" = "1" ]; then
+	uci -q commit system
+	logger -t gwrt-led "created default LED sections for present LEDs"
+fi
+
+# 立即生效：优先走 led 服务（它会读 /etc/config/system 写 trigger），
+# 没有该脚本时直接写 sysfs 兜底。
+if [ -x /etc/init.d/led ]; then
+	/etc/init.d/led restart >/dev/null 2>&1
+else
+	echo default-on > /sys/class/leds/green:status/trigger 2>/dev/null
+	echo "link tx rx" > /sys/class/leds/green:wan/mode 2>/dev/null
+	echo wan > /sys/class/leds/green:wan/device_name 2>/dev/null
+	echo netdev > /sys/class/leds/green:wan/trigger 2>/dev/null
+fi
+
+exit 0

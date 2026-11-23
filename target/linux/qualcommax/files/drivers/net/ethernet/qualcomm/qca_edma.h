@@ -11,6 +11,7 @@
 #include <linux/if_vlan.h>
 #include <linux/netdevice.h>
 #include <linux/platform_device.h>
+#include <linux/soc/qcom/qca_ppe.h>
 #include <net/page_pool/helpers.h>
 
 #define EDMA_HW_RESET_ID "edma_rst"
@@ -179,7 +180,7 @@
 #define EDMA_MAX_MTU (EDMA_MAX_FRAME_SIZE - ETH_HLEN - ETH_FCS_LEN - \
 		      (2 * VLAN_HLEN))
 #define EDMA_TX_PREHDR_SIZE (sizeof(struct edma_tx_preheader))
-#define EDMA_TX_RING_SIZE 128
+#define EDMA_TX_RING_SIZE 1024
 #define EDMA_RX_RING_SIZE 2048
 /* The bounds a frame is described to the engine within: at most this many
  * buffers, and no buffer below this size before the last. The queue stops
@@ -189,6 +190,13 @@
 #define EDMA_TX_MAX_SEGS 32
 #define EDMA_TX_MIN_SEG 16
 #define EDMA_TX_RING_THRESH (EDMA_TX_MAX_SEGS + 1)
+
+/* A ring index wraps by masking, so a ring is a power of two. The size
+ * registers are sixteen bits wide, but a fill ring pins a page per entry and
+ * the ceiling below is that, not the field.
+ */
+#define EDMA_MIN_RING_SIZE 64
+#define EDMA_MAX_RING_SIZE 8192
 
 /* Descriptor accessors */
 #define EDMA_GET_DESC(R, i, type) (&(((type *)((R)->desc))[i]))
@@ -273,6 +281,9 @@ struct edma_stats {
 	u64 tx_desc_error;
 	u64 tx_unnamed_frame;
 	u64 misc_error;
+	u64 rx_ppe_csum_drop;
+	u64 tx_pending_reopen;
+	u64 rx_pending_reopen;
 };
 
 struct edma_soc_data {
@@ -292,11 +303,14 @@ struct edma_ring {
 	void *desc;
 	dma_addr_t dma;
 	u16 count;
+	/* TX producer is owned by the CPU, serialized by tx_lock. */
+	u16 prod_idx;
 	struct sk_buff **skb_store;
 	struct page **page_store;
 };
 
 struct edma_priv {
+	struct qca_ppe_wifi_inject_ops wifi_inject_ops;
 	const struct edma_soc_data *soc;
 	struct napi_struct tx_napi;
 	struct napi_struct rx_napi;
@@ -307,6 +321,8 @@ struct edma_priv {
 	struct page_pool *page_pool;
 	u32 rx_buffer_size;
 	u8 rx_page_order;
+	u16 tx_ring_size;
+	u16 rx_ring_size;
 
 	/* The frame a run of completions belongs to, named by the first of
 	 * them and released on the last.

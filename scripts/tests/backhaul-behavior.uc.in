@@ -1,0 +1,207 @@
+import * as fs from "fs";
+import * as uci from "uci";
+import * as socket from "socket";
+import * as mesh from "./mesh-state.uc";
+import * as meshRadio from "./mesh-radio.uc";
+import * as front from "./mesh-fronthaul.uc";
+import { sha256 } from "digest";
+
+const TEST = "@FIXTURE@";
+fs.mkdir(TEST + "/state");
+fs.mkdir(TEST + "/run");
+fs.writefile(TEST + "/controller", "");
+fs.writefile(TEST + "/run/phase", "wireless 12 198.51.100.2\n");
+fs.writefile(TEST + "/wireless", "config wifi-device 'radio0'\n option band '5g'\n option channel '36'\nconfig wifi-device 'radio1'\n option band '2g'\n option channel '1'\nconfig wifi-iface 'local'\n option mode 'ap'\n option device 'radio0'\n option ssid 'original'\n option encryption 'psk2'\n option key 'router-password'\n");
+fs.writefile(TEST + "/wifiroam", "config backhaul 'backhaul'\n option config_ver '0'\n");
+fs.writefile(TEST + "/gwrt", "config mesh_apmode 'mesh_apmode'\n");
+
+function check(ok, message) {
+	if (!ok) { printf("FAIL: %s\n", message); exit(1); }
+}
+function conf(pkg, sec, opt) {
+	return uci.cursor(TEST, TEST + "/state").get(pkg, sec, opt);
+}
+const BACKHAUL_SECTION = "wifiroam_bh";
+let reloads = 0;
+let state = {};
+let ubusc = { call: function() {} };
+let uloop = { process: function() { reloads++; } };
+function log() {}
+/* PRODUCTION:apply_backhaul_local */
+
+let bh = { enabled: true, ssid: "test-backhaul", key: "test-password", band: "2g", config_ver: 1 };
+check(apply_backhaul_local(bh, "cap").ok, "CAP provisions its backhaul on activation");
+check(conf("wireless", BACKHAUL_SECTION, "network") == "lan" &&
+      conf("wireless", BACKHAUL_SECTION, "wds") == "0" &&
+      conf("wireless", BACKHAUL_SECTION, "hidden") == "1", "CAP uses hidden 3-address AP");
+check(conf("wireless", BACKHAUL_SECTION + "2", "device") == "radio1", "CAP enables both available bands");
+check(conf("wifiroam", "backhaul", "channel") == "36" &&
+      conf("wifiroam", "backhaul", "channel2g") == "1", "publish the CAP channels");
+check(reloads == 1, "first CAP backhaul change reloads");
+apply_backhaul_local(bh, "cap");
+check(reloads == 1, "identical CAP backhaul does not reload");
+
+let before = mesh.wirelessVersion();
+bh.config_ver = 2;
+check(apply_backhaul_local(bh, "sap").ok, "a satellite stores backhaul credentials");
+check(reloads == 1 && mesh.wirelessVersion() == before &&
+      conf("wifiroam", "backhaul", "config_ver") == "2", "only the AP controller can modify the satellite STA");
+let change = [{ band: "5g", ssid: "CAP SSID", key: "", encryption: "none" }];
+check(front.sync(change, "sap").changed == 3, "synchronise the source SSID/security");
+check(conf("wireless", "local", "ssid") == "CAP SSID" &&
+      conf("wireless", "local", "key") == null, "open CAP SSID drops old password");
+check(index(fs.readfile(TEST + "/wireless"), "CAP SSID") < 0, "do not commit the CAP profile on the satellite");
+check(front.sync(change, "sap").changed == 0, "identical SSID push is a no-op");
+check(length(front.settings()) == 1, "hidden backhaul APs never exported as a front-haul");
+bh.enabled = false;
+check(apply_backhaul_local(bh, "cap").ok &&
+      conf("wireless", BACKHAUL_SECTION, "mode") == null &&
+      conf("wireless", BACKHAUL_SECTION + "2", "mode") == null, "disabling CAP backhaul closes both radios");
+
+let policy = mesh.getPolicy();
+check(policy.mode == "wireless" && policy.ip == "198.51.100.2" &&
+      policy.search_seconds == 120 && policy.router_seconds == 60, "read current link and default timing");
+check(mesh.readPhase().reason == null && mesh.readPhase().band == null, "accept the previous phase format");
+fs.writefile(TEST + "/run/phase", "search 17 - cable_lost -\n");
+check(mesh.getPolicy().ip == null, "an inactive phase has no management IP");
+check(!mesh.setPolicy({ search_seconds: 14, router_seconds: 60 }).ok &&
+      !mesh.setPolicy({ search_seconds: 20, router_seconds: 60.5 }).ok, "reject invalid delays");
+check(mesh.setPolicy({ search_seconds: 90, router_seconds: 30 }).ok, "save configurable timing");
+policy = mesh.getPolicy();
+check(policy.search_seconds == 90 && policy.router_seconds == 30, "timing survives a new cursor");
+
+let rx = socket.create(socket.AF_INET, socket.SOCK_DGRAM | socket.SOCK_NONBLOCK, 0);
+let tx = socket.create(socket.AF_INET, socket.SOCK_DGRAM, 0);
+check(mesh.enableIngress(rx) && rx.bind("127.0.0.1:0"), "enable IP_PKTINFO on the actual UDP socket");
+let peer = rx.sockname();
+let cfg = { role: "sap", cap_ip: "127.0.0.1", token: "fixture-token" };
+let sig = mesh.pairingHash(cfg.token);
+let payload = sprintf("%.J", { role: "cap", thash: sig });
+check(tx.send(payload, 0, peer) == length(payload), "send fixture packet over loopback");
+let pkt = mesh.receive(rx);
+check(pkt?.data == payload && pkt.address?.address == cfg.cap_ip, "receive real data and address");
+let msg = json(pkt.data);
+check(!mesh.observeCap(pkt, msg, { ...cfg, cap_ip: "198.51.100.1" }, sig), "reject wrong source");
+check(!mesh.observeCap(pkt, { ...msg, thash: "wrong" }, cfg, sig), "reject wrong pairing ID");
+check(!mesh.observeCap({ data: pkt.data, address: pkt.address }, msg, cfg, sig), "reject missing ingress data");
+check(mesh.observeCap(pkt, msg, cfg, sig), "record the real ingress interface");
+let idx = trim(fs.readfile("/sys/class/net/lo/ifindex"));
+let obs = split(trim(fs.readfile(TEST + "/run/cap." + idx)), " ");
+check(obs[1] == "127.0.0.1" && obs[2] == sig, "observation stores source, token fingerprint and actual ifindex");
+rx.close();
+tx.close();
+printf("PASS: CAP/SAP backhaul, front-haul, timing and real UDP ingress\n");
+
+// Drive the actual accept/auth/report/topology handlers in each daemon. Only
+// ubus framing and unrelated client/roaming functions are stubbed.
+let tcp_srv = socket.create(socket.AF_INET, socket.SOCK_STREAM | socket.SOCK_NONBLOCK, 0);
+check(tcp_srv.bind("127.0.0.1:0") && tcp_srv.listen(2), "listen on an isolated test port");
+let channel, conn_close;
+let libubus = {
+	open_channel: function(sock, onMessage, onClose) {
+		channel = {
+			msg: onMessage, close: onClose,
+			request: function(req) { this.hello = req.data; },
+			disconnect: function() {},
+		};
+		return channel;
+	},
+};
+function macnorm(mac) { return replace(lc(mac ?? ""), /:/g, ""); }
+function maccolon(mac) { return mac; }
+function randhex() { return "fixture-nonce"; }
+function push_event() {}
+function detect_uplink() { return { type: "wireless" }; }
+function self_uptime() { return 123; }
+function wifi_ifaces() { return []; }
+function ap_nr_public() { return []; }
+function device_group_refresh() {}
+function bss_public() { return []; }
+function local_clients() { return {}; }
+function compute_owner() { return {}; }
+function parse_leases() { return {}; }
+function parse_neigh() { return {}; }
+function current_roam_cfg() { return { config_ver: 1 }; }
+function current_backhaul_cfg() { return { config_ver: 1 }; }
+function roam_sig() { return "fixture-roam-signature"; }
+function guest_cfg() { return { ver: 1 }; }
+function wifi_push_spec() { return []; }
+function ap_overview() { return []; }
+function client_names() { return {}; }
+function push_offload_to() {}
+function owner_events() {}
+function diff_events() {}
+/* PRODUCTION:self_info */
+/* PRODUCTION:conn_close */
+/* PRODUCTION:srv_rx */
+/* PRODUCTION:srv_accept */
+/* PRODUCTION:build_topology */
+
+const SAP_MAC = "02:00:00:00:00:02";
+const SAP_ID = macnorm(SAP_MAC);
+let cap = { mac: "02:00:00:00:00:01", ip: "127.0.0.1", name: "CAP" };
+state = { cfg: { role: "sap", token: "fixture-token" }, aliases: { map: {}, ver: 1 },
+          self: { mac: SAP_MAC, ip: "203.0.113.99", name: "SAP" }, peers: {} };
+fs.writefile(TEST + "/run/phase", "wireless 18 127.0.0.2 cable_lost 5g\n");
+let report = self_info();
+check(report.backhaul?.mode == "wireless" && report.backhaul.reason == "cable_lost" &&
+      report.backhaul.band == "5g", "satellite reports link, switch reason and frequency");
+state.self = cap;
+state.cfg.role = "cap";
+state.peers[SAP_ID] = { ip: "203.0.113.123" }; // discovery address alone is insufficient
+check(build_topology().nodes[1].backhaul == null, "no management link before authentication");
+function open_peer(addr) {
+	let client = socket.create(socket.AF_INET, socket.SOCK_STREAM, 0);
+	check(client.bind(addr + ":0") && client.connect(tcp_srv.sockname()), "connect fake satellite");
+	srv_accept();
+	return client;
+}
+function message(ch, type, args) {
+	let response;
+	ch.msg({ type, args, reply: function(r) { response = r; } });
+	return response;
+}
+function authenticate(ch) {
+	let digest = sha256(state.cfg.token + ":" + ch.hello.nonce);
+	check(message(ch, "auth", {
+		mac: SAP_MAC, digest, alias_ver: 1, roam_ver: 1, backhaul_ver: 1, guest_ver: 1,
+	})?.ok, "authenticate the real TCP peer");
+}
+function report_peer(ch, info) {
+	return message(ch, "report_status", {
+		info, alias_ver: 1, roam_ver: 1, backhaul_ver: 1, guest_ver: 1,
+	});
+}
+let first = open_peer("127.0.0.2");
+let original = channel;
+report_peer(original, report);
+check(build_topology().nodes[1].backhaul == null, "ignore unauthenticated status");
+authenticate(original);
+check(build_topology().nodes[1].backhaul == null, "wait for the current connection's status");
+check(report_peer(original, report)?.ok, "accept wireless status");
+let link = build_topology().nodes[1].backhaul;
+check(link?.management_ip == "127.0.0.2" && link.mode == "wireless" &&
+      link.reason == "cable_lost" && link.band == "5g", "topology uses the accepted socket's IPv4, not reported IP");
+
+let second = open_peer("127.0.0.3");
+authenticate(channel);
+check(build_topology().nodes[1].backhaul == null, "discard stale status after handoff");
+check(report_peer(channel, { ...report, backhaul: { mode: "wired", reason: "wired_priority", band: "5g" } })?.ok,
+      "accept wired status from the replacement connection");
+report_peer(original, report);
+link = build_topology().nodes[1].backhaul;
+check(link?.management_ip == "127.0.0.3" && link.mode == "wired" &&
+      link.reason == "wired_priority" && link.band == null, "maintain the new address despite an old report");
+original.close();
+first.close();
+check(build_topology().nodes[1].backhaul?.management_ip == "127.0.0.3", "closing old TCP does not hide the new link");
+state.peers[SAP_ID].conn.reported_at = clock(true)[0] - 31;
+state.peers[SAP_ID].last_seen = time(); // even if discovery keeps working
+check(build_topology().nodes[1].backhaul == null, "expired status does not keep the link clickable");
+check(report_peer(channel, { ...report, backhaul: null })?.ok &&
+      build_topology().nodes[1].backhaul?.management_ip == "127.0.0.3", "legacy satellites can use the authenticated address");
+channel.close();
+second.close();
+tcp_srv.close();
+check(build_topology().nodes[1].backhaul == null, "closing the active connection removes the management link");
+printf("PASS: authenticated satellite management, both link modes, address handoff and offline state\n");

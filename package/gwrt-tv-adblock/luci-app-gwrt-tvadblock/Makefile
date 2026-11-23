@@ -9,7 +9,7 @@ LUCI_PKGARCH:=all
 LUCI_DEPENDS:=+gwrt-tv-adblock +luci-compat
 PKG_NAME:=luci-app-gwrt-tvadblock
 PKG_VERSION:=1.0
-PKG_RELEASE:=1
+PKG_RELEASE:=3
 
 include $(TOPDIR)/feeds/luci/luci.mk
 

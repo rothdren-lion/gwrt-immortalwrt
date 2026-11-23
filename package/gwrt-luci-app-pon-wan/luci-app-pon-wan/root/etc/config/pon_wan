@@ -1,0 +1,16 @@
+config pon_wan 'settings'
+	option enabled '0'
+	# PON device that carries the service traffic.
+	option uplink 'pon0'
+	# Operator LAN ID / service VLAN ID carried over the PON device.
+	option vlan ''
+	# Network interface bound to the VLAN device.
+	option iface 'wan'
+	# dhcp, pppoe, static or none
+	option proto 'dhcp'
+	option ipaddr ''
+	option netmask '255.255.255.0'
+	option gateway ''
+	option dns ''
+	option pppoe_username ''
+	option pppoe_password ''

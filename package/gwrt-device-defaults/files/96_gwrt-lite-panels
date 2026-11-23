@@ -1,0 +1,54 @@
+#!/bin/sh
+# TYFZA1 光猫：轻量面板的简单默认配置。
+#
+# 只在对应包已安装时生效（先看 /etc/config），所以同一份脚本可以给
+# 不带这些面板的机型复用。重复执行安全：只写明确的值，不删除已有节点。
+#
+#   poninfo     PON 信息记录：开机采集，60 秒一次
+#   ttyd        网页终端：开，仅 LAN，7681
+#   bandix_plus 流量统计：开，统计 br-lan，8787
+#   honk        eBPF 代理：保留配置但不自动启动（没加节点就启动会劫持流量）
+#   easytier    组网：面板保留，服务不自动启动
+
+# PON 信息记录插件：默认开记录，参数与插件自带默认一致。
+if [ -f /etc/config/poninfo ]; then
+	uci -q set poninfo.settings.enabled='1'
+	uci -q set poninfo.settings.interval='60'
+	uci -q set poninfo.settings.keepalive='600'
+	uci -q set poninfo.settings.max_lines='4000'
+	uci -q commit poninfo
+fi
+
+# 网页终端：默认只在 LAN 上听 7681，走 /bin/login 登录。
+if [ -f /etc/config/ttyd ] && [ -x /usr/bin/ttyd ]; then
+	uci -q set ttyd.@ttyd[0].enable='1'
+	uci -q set ttyd.@ttyd[0].interface='@lan'
+	uci -q set ttyd.@ttyd[0].port='7681'
+	uci -q set ttyd.@ttyd[0].command='/bin/login'
+	uci -q commit ttyd
+	[ -x /etc/init.d/ttyd ] && /etc/init.d/ttyd enable >/dev/null 2>&1
+fi
+
+# 流量统计：只补缺失的键，不覆盖用户改动（与包自带 99-bandix-plus-defaults 同风格）。
+if [ -f /etc/config/bandix_plus ]; then
+	uci -q get bandix_plus.general >/dev/null 2>&1 || uci -q set bandix_plus.general='bandix_plus'
+	uci -q get bandix_plus.general.enable_traffic >/dev/null 2>&1 || uci -q set bandix_plus.general.enable_traffic='1'
+	uci -q get bandix_plus.general.port >/dev/null 2>&1 || uci -q set bandix_plus.general.port='8787'
+	uci -q commit bandix_plus
+	[ -x /etc/init.d/bandix-plus ] && /etc/init.d/bandix-plus enable >/dev/null 2>&1
+fi
+
+# honk：没配过 enabled 才写 0，用户自己开过就不动。
+if [ -f /etc/config/honk ] && [ -z "$(uci -q get honk.config.enabled)" ]; then
+	uci -q set honk.config.enabled='0'
+	uci -q commit honk
+fi
+
+# easytier：同上，面板在，服务默认不启动。
+if [ -f /etc/config/easytier ] && [ -z "$(uci -q get easytier.@easytier[0].enabled)" ]; then
+	uci -q set easytier.@easytier[0].enabled='0'
+	uci -q commit easytier
+fi
+
+rm -rf /tmp/luci-indexcache /tmp/luci-modulecache
+exit 0

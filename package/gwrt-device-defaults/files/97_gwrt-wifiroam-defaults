@@ -1,0 +1,217 @@
+#!/bin/sh
+# Install the selected wifiroam overlay, then apply missing defaults once.
+# Saved Mesh roles, credentials, roaming lists and disabled state take priority.
+SRC=/usr/share/gwrt/wifiroam
+V5=/usr/share/gwrt/wifiroam-v5
+VIEW=/www/luci-static/resources/view/wifiroam
+BOARD="$(cat /tmp/sysinfo/board_name 2>/dev/null)"
+
+if [ "$BOARD" = 'jdcloud,re-ss-01' ]; then
+	if [ "${GWRT_SS01_FIRSTBOOT_WORKER:-0}" != 1 ]; then
+		printf '%s\n' "$$" > /tmp/gwrt-ss01-uci-defaults.pid
+		exit 1
+	fi
+	[ -f /etc/config/wifiroam ] && [ -d /usr/share/wifiroam ] && \
+		[ -x /etc/init.d/wifiroam ] && [ -x /etc/init.d/gwrt-wifiroam-autopair ] && \
+		[ -d "$VIEW" ] && [ -f /usr/share/luci/menu.d/luci-app-wifiroam.json ] || exit 1
+	for f in wifiroamd.uc topology.js clients.js pairing.js settings.js menu.json \
+		mesh-state.uc mesh-radio.uc mesh-fronthaul.uc backhaul.js backhaul-acl.json \
+		topologyBackhaul.js wifiroam.css; do
+		[ -f "$SRC/$f" ] || exit 1
+	done
+	# 95 is the readiness barrier; keep the same check when 97 is retried alone.
+	has_2g=0
+	has_5g=0
+	for iface in $(uci -q show wireless | sed -n 's/^wireless\.\([^.]*\)=wifi-iface$/\1/p'); do
+		[ "$(uci -q get "wireless.$iface.mode")" = ap ] || continue
+		case "$iface" in wifiroam_bh*) continue ;; esac
+		[ -n "$(uci -q get "wireless.$iface.ssid")" ] || continue
+		radio="$(uci -q get "wireless.$iface.device")"
+		case "$(uci -q get "wireless.$radio.band")" in
+			2g) has_2g=1 ;;
+			5g) has_5g=1 ;;
+		esac
+	done
+	[ "$has_2g" = 1 ] && [ "$has_5g" = 1 ] || exit 1
+fi
+
+# A failed preset install remains pending. Installing it on the next boot
+# would overwrite this overlay, so keep this step pending on every board too.
+[ ! -f /etc/uci-defaults/96_gwrt-preset-apk ] || exit 1
+
+copy_changed() {
+	[ -f "$1" ] || return 0
+	cmp -s "$1" "$2" && return 0
+	local tmp
+	tmp="$2.gwrt-new"
+	mkdir -p "${2%/*}" && cp -f "$1" "$tmp" && mv -f "$tmp" "$2" || {
+		rm -f "$tmp"
+		return 1
+	}
+}
+
+# Select the final overlay before copying; never install the old daemon only
+# to replace and restart it again with v5 during the same first boot.
+DAEMON="$SRC/wifiroamd.uc"
+[ ! -f "$V5/wifiroamd.uc" ] || DAEMON="$V5/wifiroamd.uc"
+if [ -d /usr/share/wifiroam ]; then
+	copy_changed "$DAEMON" /usr/share/wifiroam/wifiroamd.uc || exit 1
+fi
+if [ -d "$VIEW" ]; then
+	[ -f "$SRC/topologyBackhaul.js" ] || exit 1
+	copy_changed "$SRC/topologyBackhaul.js" /www/luci-static/resources/wifiroam/topologyBackhaul.js || exit 1
+	for f in topology.js clients.js pairing.js settings.js advanced.js backhaul.js; do
+		file="$SRC/$f"
+		[ ! -f "$V5/views/$f" ] || file="$V5/views/$f"
+		copy_changed "$file" "$VIEW/$f" || exit 1
+	done
+fi
+menu="$SRC/menu.json"
+[ ! -f "$V5/menu.json" ] || menu="$V5/menu.json"
+copy_changed "$menu" /usr/share/luci/menu.d/luci-app-wifiroam.json || exit 1
+if [ -f "$V5/wifiroamd.uc" ]; then
+	if [ -d "$V5/res" ]; then
+		mkdir -p /www/luci-static/resources/wifiroam && \
+			cp -rf "$V5/res/." /www/luci-static/resources/wifiroam/ || exit 1
+	fi
+	copy_changed "$V5/acl.json" /usr/share/rpcd/acl.d/luci-app-wifiroam.json || exit 1
+	copy_changed "$V5/wifiroam.zh-cn.lmo" /usr/lib/lua/luci/i18n/wifiroam.zh-cn.lmo || exit 1
+else
+	copy_changed "$SRC/wifiroam.css" /www/luci-static/resources/wifiroam/wifiroam.css || exit 1
+fi
+copy_changed "$SRC/backhaul-acl.json" /usr/share/rpcd/acl.d/luci-app-wifiroam-mesh.json || exit 1
+rm -f /www/luci-static/resources/wifiroam/donate-qr.png \
+	"$VIEW/donate.js" /tmp/luci-indexcache /tmp/luci-indexcache.*.json || exit 1
+
+set_missing() {
+	uci -q get "$1" >/dev/null 2>&1 && return 0
+	uci -q set "$1=$2"
+}
+
+if [ -f /etc/config/wifiroam ]; then
+	# The bundled APK defaults backhaul to disabled with a different SSID.
+	# Recognize only its byte-for-byte untouched config; do not infer factory
+	# state from a saved role, an empty password, or an enabled/disabled flag.
+	pristine=0
+	cmp -s /etc/config/wifiroam "$SRC/default-config" && pristine=1
+	if [ "$pristine" = 1 ]; then
+		uci -q set wifiroam.backhaul.enabled=1 && \
+			uci -q set wifiroam.backhaul.ssid=mesh-gwrt && \
+			uci -q set wifiroam.backhaul.key=Abc123abc8888 || exit 1
+	fi
+	# APK-installed configs contain extra sections (alias_sync, etc.) and so
+	# never match the bundled default byte-for-byte.  Treat a backhaul that is
+	# still disabled with no key the same as pristine, otherwise fresh devices
+	# keep the APK's disabled/wifiroam-bh defaults and never start searching
+	# for peers.  An existing key or an explicitly enabled backhaul is kept.
+	bh_enabled="$(uci -q get wifiroam.backhaul.enabled 2>/dev/null)"
+	bh_key="$(uci -q get wifiroam.backhaul.key 2>/dev/null)"
+	if [ "$bh_enabled" = 0 ] && [ -z "$bh_key" ]; then
+		uci -q set wifiroam.backhaul.enabled=1 && \
+			uci -q set wifiroam.backhaul.ssid=mesh-gwrt && \
+			uci -q set wifiroam.backhaul.key=Abc123abc8888 || exit 1
+	fi
+	# Existing configured devices must not be reset to unconfigured on upgrade.
+	set_missing wifiroam.core.enabled 1 || exit 1
+	set_missing wifiroam.core.role unconfigured || exit 1
+	set_missing wifiroam.backhaul.enabled 1 || exit 1
+	set_missing wifiroam.backhaul.ssid mesh-gwrt || exit 1
+	set_missing wifiroam.backhaul.key Abc123abc8888 || exit 1
+
+	# Retain the established 3-addr compatibility migration for GWRT-created
+	# backhaul sections only. Custom STA sections and credentials stay intact.
+	wireless_changed=0
+	for sec in wifiroam_bh wifiroam_bh2; do
+		if [ "$(uci -q get wireless.$sec.wds)" = 1 ]; then
+			uci -q set "wireless.$sec.wds=0" || exit 1
+			wireless_changed=1
+		fi
+	done
+	[ "$wireless_changed" = 0 ] || uci -q commit wireless || exit 1
+
+	# Naming only fills an empty Mesh name; never change a user hostname.
+	if [ -z "$(uci -q get wifiroam.core.name)" ]; then
+		mnl=""
+		for dev in eth0 wan lan1 br-lan; do
+			mac="$(cat "/sys/class/net/$dev/address" 2>/dev/null | tr -d ':' | tr 'a-f' 'A-F')"
+			case "$mac" in ''|000000000000|FFFFFFFFFFFF|*[!0-9A-F]*) continue ;; esac
+			[ "${#mac}" = 12 ] && { mnl="$mac"; break; }
+		done
+		if [ -n "$mnl" ]; then
+			sfx="$(printf '%s' "$mnl" | tail -c 4)"
+			uci -q set "wifiroam.core.name=GWRT-$sfx" || exit 1
+			if [ "$(uci -q get system.@system[0].hostname)" = GWRT ]; then
+				uci -q set "system.@system[0].hostname=GWRT-$sfx" && uci -q commit system || exit 1
+			fi
+		fi
+	fi
+
+	# Seed a new roaming group only. Keep a saved list (including empty lists)
+	# and existing cap/sap configuration intact when upgrading or retrying.
+	role="$(uci -q get wifiroam.core.role)"
+	if [ "$role" = unconfigured ] && ! uci -q get wifiroam.roam.ssids >/dev/null 2>&1; then
+		bh_ssid="$(uci -q get wifiroam.backhaul.ssid)"
+		set --
+		for iface in $(uci -q show wireless | sed -n 's/^wireless\.\([^.]*\)=wifi-iface$/\1/p'); do
+			[ "$(uci -q get "wireless.$iface.mode")" = ap ] || continue
+			case "$iface" in wifiroam_bh*) continue ;; esac
+			ssid="$(uci -q get "wireless.$iface.ssid")"
+			[ -n "$ssid" ] && [ "$ssid" != "$bh_ssid" ] || continue
+			duplicate=0
+			for selected in "$@"; do
+				[ "$selected" = "$ssid" ] && { duplicate=1; break; }
+			done
+			[ "$duplicate" = 0 ] || continue
+			set -- "$@" "$ssid"
+		done
+		# Write the group flag before the list: a failed flag write must not leave
+		# a staged list that looks like an already-completed group on retry.
+		if [ "$#" != 0 ]; then
+			if [ "$pristine" = 1 ]; then
+				uci -q set wifiroam.roam.enabled=1 || exit 1
+			else
+				set_missing wifiroam.roam.enabled 1 || exit 1
+			fi
+		fi
+		# A failed list write is reverted so the next invocation retries it all.
+		for ssid in "$@"; do
+			uci -q add_list "wifiroam.roam.ssids=$ssid" || {
+				uci -q revert wifiroam.roam.ssids
+				exit 1
+			}
+		done
+	fi
+	uci -q commit wifiroam || exit 1
+
+	# S10boot precedes normal service startup. Only restart an active daemon;
+	# SS-01's deferred worker must also start a not-yet-running enabled daemon.
+	if [ -x /etc/init.d/wifiroam ]; then
+		if [ "$(uci -q get wifiroam.core.enabled)" = 1 ]; then
+			if [ "$BOARD" = 'jdcloud,re-ss-01' ]; then
+				/etc/init.d/wifiroam enable >/dev/null 2>&1 || exit 1
+			fi
+			if /etc/init.d/wifiroam running >/dev/null 2>&1; then
+				/etc/init.d/wifiroam restart >/dev/null 2>&1 || exit 1
+			elif [ "$BOARD" = 'jdcloud,re-ss-01' ]; then
+				/etc/init.d/wifiroam start >/dev/null 2>&1 || exit 1
+			fi
+		fi
+	fi
+fi
+
+# ACL changes need a reload only if rpcd is already running.
+if [ -x /etc/init.d/rpcd ] && \
+   /etc/init.d/rpcd running >/dev/null 2>&1; then
+	/etc/init.d/rpcd reload >/dev/null 2>&1 || exit 1
+fi
+
+if [ -x /etc/init.d/gwrt-wifiroam-autopair ] && \
+   [ "$(uci -q get wifiroam.core.enabled)" = 1 ]; then
+	/etc/init.d/gwrt-wifiroam-autopair enable >/dev/null 2>&1 || exit 1
+	if [ "$BOARD" = 'jdcloud,re-ss-01' ] && \
+	   [ "$(uci -q get wifiroam.core.enabled)" = 1 ] && \
+	   ! /etc/init.d/gwrt-wifiroam-autopair running >/dev/null 2>&1; then
+		/etc/init.d/gwrt-wifiroam-autopair start >/dev/null 2>&1 || exit 1
+	fi
+fi
+exit 0

@@ -1,0 +1,80 @@
+#!/bin/sh
+# GWRT paired satellite backhaul controller
+RUNDIR=/var/run/gwrt-mesh-apmode
+LIB=/usr/share/gwrt/mesh-apmode
+umask 077
+mkdir -p "$RUNDIR" || exit 1
+. "$LIB/policy.sh"
+. "$LIB/links.sh"
+. "$LIB/wifi.sh"
+. "$LIB/network.sh"
+. "$LIB/migration.sh"
+. "$LIB/ft.sh"
+
+. "$LIB/controller.sh"
+
+status() {
+	local active since addr reason band
+	[ -r "$RUNDIR/phase" ] && read -r active since addr reason band <"$RUNDIR/phase" || active=idle
+	case "$active" in wired|wireless|search|wired_pending|recover) echo apmode=1 ;; *) echo apmode=0 ;; esac
+	if pairing; then echo paired=1; else echo paired=0; fi
+	printf 'mode=%s\nmanagement_ip=%s\nswitch_reason=%s\nbackhaul_band=%s\n' \
+		"$active" "${addr#-}" "${reason#-}" "${band#-}"
+	printf 'search_seconds=%s\nrouter_seconds=%s\n' "$(setting_seconds search_seconds 120)" "$(setting_seconds router_seconds 60)"
+}
+
+lock() { flock -x 9; }
+unlock() { flock -u 9; }
+
+prepare() {
+	wired_epoch=0; wifi_epoch=0; wired_retry=0; last_pair=
+	legacy_migrate || return 1
+	wandev="$(wan_dev_name)"
+	brsec="$(brlan_dev_section)"
+	end_session
+}
+
+case "$1" in
+	status) status ;;
+	on|off)
+		if [ "$1" = on ]; then enabled=1; else enabled=0; fi
+		uci -q get gwrt.mesh_apmode >/dev/null || uci -q set gwrt.mesh_apmode=mesh_apmode
+		uci -q set "gwrt.mesh_apmode.enabled=$enabled" && uci -q commit gwrt || exit 1
+		if [ "$1" = on ]; then
+			service gwrt-mesh-apmode enable
+			service gwrt-mesh-apmode start || exit 1
+		else
+			# Serialize with an active tick, then stop procd outside its lock.
+			(
+				lock || exit 1
+				if ! ubus -t 3 call wifiroam set_role '{"role":"unconfigured"}' >/dev/null 2>&1; then
+					uci -q set wifiroam.core.role=unconfigured
+					uci -q delete wifiroam.core.token
+					uci -q delete wifiroam.core.cap_ip
+					uci -q commit wifiroam || exit 1
+				fi
+				prepare
+			) 9>"$RUNDIR/lock" || exit 1
+			service gwrt-mesh-apmode stop
+		fi
+		echo "apmode=$1" ;;
+	restore)
+		(
+			lock && prepare
+		) 9>"$RUNDIR/lock" ;;
+	apply)
+		# The procd loop owns transitions; repeated apply calls are idempotent.
+		mesh_wanted && pairing && service gwrt-mesh-apmode start ;;
+	'')
+		exec 9>"$RUNDIR/lock"
+		lock || exit 1
+		prepare || exit 1
+		unlock
+		while :; do
+			lock || exit 1
+			step
+			unlock
+			sleep 2
+		done ;;
+	*) echo "usage: $0 [apply|restore|status|on|off]" >&2; exit 2 ;;
+esac

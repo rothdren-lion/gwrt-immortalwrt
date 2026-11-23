@@ -1,0 +1,9 @@
+#!/bin/sh
+# WPS / MESH 键：一键配对
+#
+# /etc/rc.button/wps 在按键「释放」时执行 /etc/rc.wps/*（可执行即运行）。
+# 主AP：立即配对发现的未配置 AP；子AP：没连上主AP时回到未配置状态。
+[ "$ACTION" = "released" ] || exit 0
+[ -x /usr/libexec/gwrt-mesh-pair ] || exit 0
+/usr/libexec/gwrt-mesh-pair
+exit 0

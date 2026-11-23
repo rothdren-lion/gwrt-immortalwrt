@@ -37,6 +37,13 @@ mediatek_setup_interfaces()
 	acer,predator-w6d)
 		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 game" eth1
 		;;
+	clx,s20p)
+		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4 lan5 lan6" eth1
+		;;
+	clx,s20l|\
+	clx,s20m)
+		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" wan
+		;;
 	acer,predator-w6x-stock|\
 	acer,predator-w6x-ubootmod)
 		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" eth1
@@ -139,6 +146,10 @@ mediatek_setup_interfaces()
 	comfast,cf-wa933|\
 	comfast,cf-wa933-128m)
 		ucidef_set_interfaces_lan_wan "lan1 lan2" eth1
+		;;
+	xingloo,ax3000|\
+	comfast,cf-wr630ax)
+		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3" eth1
 		;;
 	cudy,ap3000wall-v1)
 		ucidef_set_interface_lan "lan1 lan2 lan3 lan4 lan5"
@@ -380,9 +391,26 @@ mediatek_setup_macs()
 		label_mac=$lan_mac
 		;;
 	qihoo,360t7)
-		lan_mac=$(mtd_get_mac_ascii factory lanMac)
-		wan_mac=$(macaddr_add "$lan_mac" 1)
-		label_mac=$wan_mac
+		# The non-UBI 360T7 DTS labels this partition "Factory". A lowercase
+		# lookup returned an empty MAC, and macaddr_add turned that into ":".
+		lan_mac=$(mtd_get_mac_ascii Factory lanMac)
+		case "$lan_mac" in
+			[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F])
+				first_octet=$((0x${lan_mac%%:*}))
+				if [ $((first_octet & 1)) -eq 0 ] &&
+				   [ "$lan_mac" != "00:00:00:00:00:00" ]; then
+					wan_mac=$(macaddr_add "$lan_mac" 1)
+					label_mac=$wan_mac
+				else
+					echo "invalid Qihoo 360T7 factory LAN MAC '$lan_mac'; keeping kernel addresses" >&2
+					lan_mac=""
+				fi
+				;;
+			*)
+				echo "missing or invalid Qihoo 360T7 factory LAN MAC; keeping kernel addresses" >&2
+				lan_mac=""
+				;;
+		esac
 		;;
 	tplink,eap683-lr|\
 	tplink,f65-v1)

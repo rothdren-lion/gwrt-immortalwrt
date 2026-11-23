@@ -1,0 +1,63 @@
+
+config gwrt 'usb_lan'
+	option enabled '0'
+	option auto_bridge '1'
+
+config gwrt 'theme'
+	option mode 'dark'
+	option port_81 '/luci-static/bootstrap'
+	option port_444 '/luci-static/bootstrap'
+
+config he 'he'
+	option enabled '1'
+	option enable_2g '0'
+
+config ota 'ota'
+	option enabled '1'
+	option channel 'stable'
+	option manifest_base_url 'https://raw.githubusercontent.com/rothdren-lion/gwrt-ota/main/gwrt-ota/stable'
+
+config device
+	option mac '1a:5a:1a:46:40:a0'
+	option brand 'fnos'
+	option name 'Sony-TV'
+	option type 'ap'
+
+config device
+	option mac 'b0:41:1d:f7:e9:d3'
+	option brand 'sony'
+	option type 'tablet'
+	option name 'TP-link'
+
+config device
+	option mac '48:3f:da:18:d6:a9'
+	option brand 'freebsd'
+	option type 'iot'
+	option name 'GWRT-AP-1F'
+
+config device
+	option mac '94:f8:27:c2:b1:f5'
+	option brand 'xiaomi'
+	option type 'iot'
+	option name 'chuangmi_camera_1F-cok'
+
+config device
+	option mac '74:c2:46:9f:5a:2a'
+	option name 'Kinder5'
+
+config device
+	option mac 'a4:f0:0f:69:db:cc'
+	option name 'ESP32-BSM'
+
+config device
+	option mac '30:c9:1b:b7:86:a7'
+	option name 'Mi-Watch'
+
+config device
+	option mac '00:11:22:33:44:55'
+	option name 'GECOOSAC-3FF'
+
+config device
+	option mac 'ec:d6:8a:0b:d3:e4'
+	option name 'Ubuntu'
+

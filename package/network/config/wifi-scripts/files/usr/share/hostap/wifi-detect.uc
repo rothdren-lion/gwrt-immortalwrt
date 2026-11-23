@@ -209,19 +209,21 @@ function wiphy_detect() {
 					(freq) => !freq.disabled
 				);
 
+				radio_band.channels = map(freq_match, (freq) => freq_to_channel(freq.freq));
 				let freq = freq_match[0];
 				if (freq)
 					radio_band.default_channel = freq_to_channel(freq.freq);
 			}
 
+			band_info.channels = [];
 			for (let freq in band.freqs) {
 				if (freq.disabled)
 					continue;
 				let chan = freq_to_channel(freq.freq);
 				if (!chan)
 					continue;
-				band_info.default_channel = chan;
-				break;
+				push(band_info.channels, chan);
+				band_info.default_channel ??= chan;
 			}
 
 			if (band_name == "2G")

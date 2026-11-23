@@ -1,0 +1,13 @@
+{
+	"luci-app-oaf": {
+		"description": "Manage OpenAppFilter through the fwx API",
+		"read": {
+			"uci": [ "fwx", "fwx_record", "appfilter", "appfilter_whitelist", "macfilter", "macfilter_whitelist", "mac_blacklist", "user_info" ]
+		},
+		"write": {
+			"ubus": {
+				"fwx": [ "common" ]
+			}
+		}
+	}
+}

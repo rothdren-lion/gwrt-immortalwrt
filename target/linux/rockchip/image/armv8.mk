@@ -121,6 +121,15 @@ define Device/armsom_sige7
 endef
 TARGET_DEVICES += armsom_sige7
 
+define Device/bdy_g98
+  $(Device/rk3588)
+  DEVICE_VENDOR := BDY
+  DEVICE_MODEL := G98
+  DEVICE_DTS := rk3588-bdy-g98
+  DEVICE_PACKAGES := kmod-r8169
+endef
+TARGET_DEVICES += bdy_g98
+
 define Device/cyber_cyber3588-aib
   $(Device/rk3588)
   DEVICE_VENDOR := Cyber

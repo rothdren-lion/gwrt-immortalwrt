@@ -1,0 +1,46 @@
+#!/bin/sh
+# wifiroam 配对/同步端口放行（fw4 / nftables）
+#
+# 为什么需要：mesh 子机常常是「WAN 口」接到主路由的 LAN（本机还是普通路由/未配置），
+# 这时主路由发来的 UDP 50607（发现广播）和 TCP 50608（配对/同步）落在 wan 区域，
+# 被防火墙默认 REJECT → 主路由点「配对」没反应，本机也不会弹确认。
+#
+# 只放行这两个端口，并且限制源地址为私网（mesh 只会在内网里用）：
+#   50607/udp  发现（HELLO 广播）
+#   50608/tcp  配对 + 配置同步
+#
+# 手动关闭：uci delete firewall.@rule[-1]  （删掉 Allow-wifiroam-* 两条）
+
+[ -f /etc/config/firewall ] || exit 0
+
+# 旧版本只加过一条 Allow-wifiroam（src=* 全开），先清掉
+uci -q show firewall | grep -q "Allow-wifiroam" && {
+	i=0
+	while [ "$i" -lt 40 ]; do
+		name="$(uci -q get "firewall.@rule[$i].name")"
+		case "$name" in
+			Allow-wifiroam|Allow-wifiroam-*)
+				uci -q delete "firewall.@rule[$i]" && continue ;;
+		esac
+		i=$((i + 1))
+	done
+}
+
+add_rule() { # $1 = 后缀, $2 = proto, $3 = 端口
+	uci -q add firewall rule >/dev/null
+	uci -q set firewall.@rule[-1].name="Allow-wifiroam-$1"
+	uci -q set firewall.@rule[-1].src='*'
+	uci -q set firewall.@rule[-1].proto="$2"
+	uci -q set firewall.@rule[-1].dest_port="$3"
+	uci -q set firewall.@rule[-1].family='ipv4'
+	uci -q set firewall.@rule[-1].target='ACCEPT'
+	# 不限制来源网段：主路由可能是任意网段（192.168.x / 10.x / 172.x / 100.64.x ...）
+	# 安全性由 wifiroam 自己的 nonce + token 校验保证
+}
+
+add_rule udp udp 50607
+add_rule tcp tcp 50608
+uci -q commit firewall
+/etc/init.d/firewall reload >/dev/null 2>&1
+
+exit 0

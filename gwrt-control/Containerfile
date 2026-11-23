@@ -1,0 +1,8 @@
+ARG BASE=localhost/gwrt-control:17.16
+FROM ${BASE}
+COPY --chmod=0644 server.py /app/server.py
+COPY --chmod=0644 static/app.js /app/static/app.js
+COPY --chmod=0644 static/index.html /app/static/index.html
+COPY --chmod=0644 static/style.css /app/static/style.css
+COPY static/updates/agent/ /app/static/updates/agent/
+COPY --chown=gwrt:gwrt BUILD_TIME /app/BUILD_TIME

@@ -329,23 +329,31 @@
 };
 
 /*
- * ath11k Wi-Fi consumes too large memory spaces and too few spaces are
- * available for users. To prevent OOM when using LuCI or other softwares,
- * disable Wi-Fi related peripherals at the moment.
+ * GWRT mesh AP: Wi-Fi radios enabled (upstream keeps them disabled for
+ * lack of a CMCC-PZ-L8 board file / OOM caution). Board data comes from
+ * package/firmware/pz-l8-wifi-board (stock BDF as board.bin fallback);
+ * calibration/MAC from art via 11-ath11k-caldata (cmcc,pz-l8 case).
+ * If the box OOMs with LuCI + both radios, revisit fw-memory-mode / BDF.
  */
 &q6v5_wcss {
-	status = "disabled";
+	status = "okay";
 };
 
 &wifi {
 	// IPQ5018
 	qcom,rproc = <&q6_wcss_pd1>;
 	qcom,ath11k-calibration-variant = "CMCC-PZ-L8";
-	qcom,ath11k-fw-memory-mode = <1>;
+	/* mode 2: 与 mode 1 同样 8 vdevs/128 peers，但关闭 coldboot 校准，
+	 * 显著省内存——本机 DRAM 仅 256M，双射频 mode 1 实测开机吃掉 157M/184M，
+	 * available 归零导致 OOM（上游因此默认禁用 WiFi）。允许则不改。 */
+	qcom,ath11k-fw-memory-mode = <2>;
 	qcom,bdf-addr = <0x4c400000>;
 
 	ieee80211-freq-limit = <2400000 2483000>;
 
+	/* EXPERIMENT 2026-10-29: 关闭 2.4G 射频，验证 64 位双射频是否
+	 * 真的吃不下 256M DRAM（实测双频开机 slab 113M / 184M）。
+	 * 若关闭后 slab 减半则为 inherent 限制；否则另有 bug。 */
 	status = "disabled";
 };
 
@@ -354,11 +362,11 @@
 	qcom,rproc = <&q6_wcss_pd2>;
 	qcom,userpd-subsys-name = "q6v5_wcss_userpd2";
 	qcom,ath11k-calibration-variant = "CMCC-PZ-L8";
-	qcom,ath11k-fw-memory-mode = <1>;
+	qcom,ath11k-fw-memory-mode = <2>;
 	qcom,bdf-addr = <0x4d100000>;
 	qcom,m3-dump-addr = <0x4df00000>;
 
 	ieee80211-freq-limit = <5150000 5730000>;
 
-	status = "disabled";
+	status = "okay";
 };

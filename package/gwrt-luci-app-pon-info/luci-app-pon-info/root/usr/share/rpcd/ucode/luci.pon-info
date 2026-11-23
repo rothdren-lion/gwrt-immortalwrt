@@ -1,0 +1,52 @@
+#!/usr/bin/env ucode
+// SPDX-License-Identifier: GPL-2.0-or-later
+// luci-app-pon-info ubus bridge: luci.pon-info
+'use strict';
+
+import { popen } from 'fs';
+
+function run(args) {
+	let handle = popen('/usr/sbin/pon-info ' + args + ' 2>/dev/null', 'r');
+	if (!handle)
+		return { error: 'collector unavailable' };
+	let output = trim(handle.read('all') ?? '');
+	handle.close();
+	if (!length(output))
+		return { error: 'collector produced no output' };
+	try {
+		return json(output);
+	}
+	catch (e) {
+		return { error: 'collector output is not JSON: ' + e.message };
+	}
+}
+
+const HISTORY_LIMIT = 500;
+
+return {
+	'luci.pon-info': {
+		status: {
+			call: function() {
+				return run('json');
+			}
+		},
+		history: {
+			call: function() {
+				let out = run('history ' + HISTORY_LIMIT);
+				if (type(out) != 'array')
+					return out;
+				return { records: out };
+			}
+		},
+		record: {
+			call: function() {
+				return run('record');
+			}
+		},
+		clear: {
+			call: function() {
+				return run('clear');
+			}
+		}
+	}
+};

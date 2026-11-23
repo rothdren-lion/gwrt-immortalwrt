@@ -1,0 +1,175 @@
+#!/bin/sh
+# Read-only, bounded telemetry for the GWRT navigation bar.
+# Do not accept targets or commands from the browser: all probes below are
+# fixed so this helper remains safe to expose through rpcd file.exec.
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+umask 077
+
+json_escape() {
+	printf '%s' "$1" | awk 'BEGIN { ORS="" } { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/\t/, "\\t"); gsub(/\r/, "\\r"); print }'
+}
+
+run_timeout() {
+	if [ -x /usr/bin/timeout ]; then
+		/usr/bin/timeout "$@"
+	elif [ -x /bin/timeout ]; then
+		/bin/timeout "$@"
+	else
+		shift
+		"$@"
+	fi
+}
+
+uptime=$(awk '{printf "%d", $1; exit}' /proc/uptime 2>/dev/null || printf '0')
+sampled=$(date +%s 2>/dev/null || printf '0')
+
+# A process directory count is available on every supported GWRT target.
+process_count=0
+for proc in /proc/[0-9]*; do
+	[ -d "$proc" ] || continue
+	process_count=$((process_count + 1))
+done
+
+load1=$(awk '{print $1; exit}' /proc/loadavg 2>/dev/null || true)
+case "$load1" in
+	''|*[!0-9.]*|*.*.*) load1=null ;;
+esac
+
+# Prefer ps with a CPU column. BusyBox builds without that formatter are
+# handled by parsing one batch from top, when available.
+top_lines=''
+if command -v ps >/dev/null 2>&1; then
+	ps_raw=$(ps -eo pid,pcpu,comm 2>/dev/null || true)
+	top_lines=$(printf '%s\n' "$ps_raw" | awk '
+		NR == 1 { next }
+		$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+([.][0-9]+)?$/ {
+			printf "%s\t%.2f\n", $1, $2
+			found=1
+		}
+		END { if (!found) exit 1 }
+	' 2>/dev/null || true)
+fi
+
+if [ -z "$top_lines" ] && command -v top >/dev/null 2>&1; then
+	top_raw=$(run_timeout 4 top -b -n 2 -d 1 2>/dev/null || true)
+	top_lines=$(printf '%s\n' "$top_raw" | awk '
+		function lower(v) { return tolower(v) }
+		!header {
+			for (i=1; i<=NF; i++) {
+				v=lower($i)
+				if (v == "pid") pi=i
+				if (v == "%cpu" || v == "cpu%" || v == "cpu") ci=i
+				if (v == "command" || v == "comm" || v == "name") ni=i
+			}
+			if (pi && ci) { header=1; next }
+		}
+		header && $pi ~ /^[0-9]+$/ {
+			# BusyBox top reports CPU as e.g. 5%; procps reports 5.
+			cpu=$ci
+			sub(/%$/, "", cpu)
+			if (cpu !~ /^[0-9]+([.][0-9]+)?$/) next
+			cpus[$pi]=cpu
+			found=1
+		}
+		END { if (!found) exit 1; for (pid in cpus) printf "%s\t%.2f\n", pid, cpus[pid] }
+	' 2>/dev/null || true)
+fi
+
+if [ -n "$top_lines" ]; then
+	# BusyBox sort builds vary in their support for numeric key options.
+	# Pick the largest CPU values numerically before filtering exited/helper
+	# processes; the cap avoids an expensive full sort on busy routers.
+	top_lines=$(printf '%s\n' "$top_lines" | awk '
+		$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+([.][0-9]+)?$/ { pid[++n]=$1; cpu[n]=$2+0 }
+		END {
+			for (i=1; i<=n && i<=32; i++) {
+				best=0
+				for (j=1; j<=n; j++) if (!used[j] && (!best || cpu[j]>cpu[best])) best=j
+				if (!best) break
+				used[best]=1
+				printf "%s\t%.2f\n", pid[best], cpu[best]
+			}
+		}
+	' 2>/dev/null)
+fi
+
+top_json='['
+top_first=1
+top_count=0
+while IFS="$(printf '\t')" read -r pid cpu; do
+	case "$pid:$cpu" in
+		[0-9]*:[0-9]*|[0-9]*:[0-9]*.*) ;;
+		*) continue ;;
+	esac
+	# Read only comm: top's COMMAND column can contain private arguments.
+	name=$(cat "/proc/$pid/comm" 2>/dev/null) || continue
+	case "$name" in ps|top|timeout|busybox|gwrt-navbar-sta*|awk|sort|head) continue ;; esac
+	[ -n "$name" ] || continue
+	name_json=$(json_escape "$name")
+	if [ "$top_first" -eq 1 ]; then
+		top_first=0
+	else
+		top_json="$top_json,"
+	fi
+	top_json="$top_json{\"pid\":\"$pid\",\"name\":\"$name_json\",\"cpu\":$cpu}"
+	top_count=$((top_count + 1))
+	[ "$top_count" -lt 3 ] || break
+done <<EOF
+$top_lines
+EOF
+top_json="$top_json]"
+
+# Local resolver health. The answer must contain both a name and an address;
+# the server address alone is not considered a successful DNS answer.
+dns_target='example.com'
+dns_ok=null
+nslookup=''
+for candidate in /usr/bin/nslookup /bin/nslookup /usr/sbin/nslookup; do
+	if [ -x "$candidate" ]; then nslookup="$candidate"; break; fi
+done
+if [ -n "$nslookup" ]; then
+	dns_output=$(run_timeout 5 "$nslookup" "$dns_target" 127.0.0.1 2>/dev/null || true)
+	if printf '%s\n' "$dns_output" | grep -Eiq '(^|[[:space:]])Name[[:space:]]*:' \
+		&& printf '%s\n' "$dns_output" | grep -Eiq '(^|[[:space:]])Address[^:]*:[[:space:]]*[0-9a-f:.]+'; then
+		dns_ok=true
+	else
+		dns_ok=false
+	fi
+fi
+
+# Fixed HTTP connectivity check, with an ICMP fallback when no fetch client is
+# installed. A missing probe binary is reported as unknown rather than failed.
+external_target='http://connectivitycheck.gstatic.com/generate_204'
+external_ok=null
+external_method=null
+fetcher=''
+for candidate in /usr/bin/uclient-fetch /bin/uclient-fetch /usr/bin/wget /bin/wget; do
+	if [ -x "$candidate" ]; then fetcher="$candidate"; break; fi
+done
+if [ -n "$fetcher" ]; then
+	if run_timeout 5 "$fetcher" -q -O /dev/null "$external_target" >/dev/null 2>&1; then
+		external_ok=true
+		external_method='http'
+	else
+		external_ok=false
+		external_method='http'
+	fi
+fi
+if [ "$external_ok" != true ] && command -v ping >/dev/null 2>&1; then
+	if run_timeout 4 ping -c 1 -W 1 1.1.1.1 >/dev/null 2>&1; then
+		external_ok=true
+		external_method='icmp'
+	elif [ "$external_ok" = null ]; then
+		external_ok=false
+		external_method='icmp'
+	fi
+fi
+external_method_json=null
+if [ "$external_method" != null ] && [ -n "$external_method" ]; then
+	external_method_json="\"$(json_escape "$external_method")\""
+fi
+
+printf '{"version":1,"sampled":%s,"uptime":%s,"process_count":%s,"load1":%s,"top_processes":%s,"dns":{"ok":%s,"target":"%s","method":"local"},"external":{"ok":%s,"target":"%s","method":%s}}\n' \
+	"$sampled" "$uptime" "$process_count" "$load1" "$top_json" "$dns_ok" "$(json_escape "$dns_target")" \
+	"$external_ok" "$(json_escape "$external_target")" "$external_method_json"

@@ -1,0 +1,646 @@
+[
+  {
+    "id": "adguardhome",
+    "name": "AdGuard Home",
+    "desc": "全网广告过滤 + 自建加密 DNS",
+    "icon": "adguardhome.png",
+    "image": "docker.io/adguard/adguardhome:latest",
+    "web": "http://<ip>:3000",
+    "ports": [
+      {
+        "h": 3000,
+        "c": 3000,
+        "proto": "tcp"
+      },
+      {
+        "h": 5353,
+        "c": 53,
+        "proto": "tcp"
+      },
+      {
+        "h": 5353,
+        "c": 53,
+        "proto": "udp"
+      }
+    ],
+    "volumes": [
+      "work:/opt/adguardhome/work",
+      "conf:/opt/adguardhome/conf"
+    ],
+    "env": [],
+    "extra": [],
+    "pre": []
+  },
+  {
+    "id": "homeassistant",
+    "name": "Home Assistant",
+    "desc": "智能家居控制中心",
+    "icon": "homeassistant.png",
+    "image": "ghcr.io/home-assistant/home-assistant:stable",
+    "web": "http://<ip>:8123",
+    "ports": [],
+    "volumes": [
+      "config:/config"
+    ],
+    "env": [],
+    "extra": [
+      "--network",
+      "host",
+      "--privileged"
+    ],
+    "pre": []
+  },
+  {
+    "id": "jellyfin",
+    "name": "Jellyfin",
+    "desc": "免费开源影音媒体服务器",
+    "icon": "jellyfin.png",
+    "image": "docker.io/jellyfin/jellyfin:latest",
+    "web": "http://<ip>:8096",
+    "ports": [
+      {
+        "h": 8096,
+        "c": 8096,
+        "proto": "tcp"
+      },
+      {
+        "h": 8920,
+        "c": 8920,
+        "proto": "tcp"
+      },
+      {
+        "h": 7359,
+        "c": 7359,
+        "proto": "udp"
+      },
+      {
+        "h": 1900,
+        "c": 1900,
+        "proto": "udp"
+      }
+    ],
+    "volumes": [
+      "config:/config",
+      "cache:/cache"
+    ],
+    "env": [],
+    "extra": [],
+    "pre": []
+  },
+  {
+    "id": "qbittorrent",
+    "name": "qBittorrent",
+    "desc": "BT/磁力下载工具",
+    "icon": "qbittorrent.png",
+    "image": "docker.io/linuxserver/qbittorrent:latest",
+    "web": "http://<ip>:8181",
+    "ports": [
+      {
+        "h": 8181,
+        "c": 8080,
+        "proto": "tcp"
+      },
+      {
+        "h": 6881,
+        "c": 6881,
+        "proto": "tcp"
+      },
+      {
+        "h": 6881,
+        "c": 6881,
+        "proto": "udp"
+      }
+    ],
+    "volumes": [
+      "config:/config",
+      "downloads:/downloads"
+    ],
+    "env": [
+      "PUID=0",
+      "PGID=0",
+      "WEBUI_PORT=8080",
+      "TZ=Asia/Shanghai"
+    ],
+    "extra": [],
+    "pre": []
+  },
+  {
+    "id": "uptimekuma",
+    "name": "Uptime Kuma",
+    "desc": "服务在线拨测监控面板",
+    "icon": "uptimekuma.png",
+    "image": "docker.io/louislam/uptime-kuma:1",
+    "web": "http://<ip>:3001",
+    "ports": [
+      {
+        "h": 3001,
+        "c": 3001,
+        "proto": "tcp"
+      }
+    ],
+    "volumes": [
+      "data:/app/data"
+    ],
+    "env": [],
+    "extra": [],
+    "pre": []
+  },
+  {
+    "id": "vaultwarden",
+    "name": "Vaultwarden",
+    "desc": "自建密码管理器（Bitwarden 兼容）",
+    "icon": "vaultwarden.png",
+    "image": "docker.io/vaultwarden/server:latest",
+    "web": "http://<ip>:8222",
+    "ports": [
+      {
+        "h": 8222,
+        "c": 80,
+        "proto": "tcp"
+      },
+      {
+        "h": 3012,
+        "c": 3012,
+        "proto": "tcp"
+      }
+    ],
+    "volumes": [
+      "data:/data"
+    ],
+    "env": [],
+    "extra": [],
+    "pre": []
+  },
+  {
+    "id": "mosquitto",
+    "name": "Mosquitto",
+    "desc": "轻量级 MQTT 消息服务器",
+    "icon": "mosquitto.png",
+    "image": "docker.io/eclipse-mosquitto:2",
+    "web": "",
+    "ports": [
+      {
+        "h": 1883,
+        "c": 1883,
+        "proto": "tcp"
+      }
+    ],
+    "volumes": [
+      "config:/mosquitto/config",
+      "data:/mosquitto/data",
+      "log:/mosquitto/log"
+    ],
+    "env": [],
+    "extra": [],
+    "pre": [
+      "mkdir -p \"$DATA/config\"",
+      "[ -f \"$DATA/config/mosquitto.conf\" ] || echo \"listener 1883\" > \"$DATA/config/mosquitto.conf\"",
+      "[ -f \"$DATA/config/mosquitto.conf\" ] || echo \"allow_anonymous true\" >> \"$DATA/config/mosquitto.conf\"",
+      "[ -f \"$DATA/config/mosquitto.conf\" ] || echo \"persistence true\" >> \"$DATA/config/mosquitto.conf\"",
+      "[ -f \"$DATA/config/mosquitto.conf\" ] || echo \"persistence_location /mosquitto/data/\" >> \"$DATA/config/mosquitto.conf\"",
+      "[ -f \"$DATA/config/mosquitto.conf\" ] || echo \"log_dest file /mosquitto/log/mosquitto.log\" >> \"$DATA/config/mosquitto.conf\""
+    ]
+  },
+  {
+    "id": "redis",
+    "name": "Redis",
+    "desc": "内存键值数据库 / 缓存",
+    "icon": "redis.png",
+    "image": "docker.io/library/redis:7-alpine",
+    "web": "",
+    "ports": [
+      {
+        "h": 6379,
+        "c": 6379,
+        "proto": "tcp"
+      }
+    ],
+    "volumes": [
+      "data:/data"
+    ],
+    "env": [],
+    "extra": [],
+    "pre": [],
+    "cmd_after_image": true,
+    "cmd": [
+      "--appendonly",
+      "yes"
+    ]
+  },
+  {
+    "id": "mariadb",
+    "name": "MariaDB",
+    "desc": "MySQL 兼容关系型数据库",
+    "icon": "mariadb.png",
+    "image": "docker.io/library/mariadb:11",
+    "web": "",
+    "ports": [
+      {
+        "h": 3306,
+        "c": 3306,
+        "proto": "tcp"
+      }
+    ],
+    "volumes": [
+      "data:/var/lib/mysql"
+    ],
+    "env": [
+      "MARIADB_ROOT_PASSWORD=podman-market-change-me",
+      "TZ=Asia/Shanghai"
+    ],
+    "extra": [],
+    "pre": []
+  },
+  {
+    "id": "gitea",
+    "name": "Gitea",
+    "desc": "轻量级自托管 Git 服务",
+    "icon": "gitea.png",
+    "image": "docker.io/gitea/gitea:latest",
+    "web": "http://<ip>:3300",
+    "ports": [
+      {
+        "h": 3300,
+        "c": 3000,
+        "proto": "tcp"
+      },
+      {
+        "h": 3222,
+        "c": 22,
+        "proto": "tcp"
+      }
+    ],
+    "volumes": [
+      "data:/data"
+    ],
+    "env": [
+      "USER_UID=0",
+      "USER_GID=0",
+      "TZ=Asia/Shanghai"
+    ],
+    "extra": [],
+    "pre": []
+  },
+  {
+    "id": "minio",
+    "name": "MinIO",
+    "desc": "S3 兼容对象存储",
+    "icon": "minio.png",
+    "image": "docker.io/minio/minio:latest",
+    "web": "http://<ip>:9001",
+    "ports": [
+      {
+        "h": 9000,
+        "c": 9000,
+        "proto": "tcp"
+      },
+      {
+        "h": 9001,
+        "c": 9001,
+        "proto": "tcp"
+      }
+    ],
+    "volumes": [
+      "data:/data"
+    ],
+    "env": [
+      "MINIO_ROOT_USER=admin",
+      "MINIO_ROOT_PASSWORD=podman-market-change-me"
+    ],
+    "extra": [],
+    "pre": [],
+    "cmd_after_image": true,
+    "cmd": [
+      "server",
+      "/data",
+      "--console-address",
+      ":9001"
+    ]
+  },
+  {
+    "id": "nginx",
+    "name": "Nginx",
+    "desc": "高性能 Web 服务器 / 反向代理",
+    "icon": "nginx.png",
+    "image": "docker.io/library/nginx:alpine",
+    "web": "http://<ip>:8080",
+    "ports": [
+      {
+        "h": 8080,
+        "c": 80,
+        "proto": "tcp"
+      }
+    ],
+    "volumes": [
+      "html:/usr/share/nginx/html",
+      "conf.d:/etc/nginx/conf.d"
+    ],
+    "env": [],
+    "extra": [],
+    "pre": [
+      "mkdir -p \"$DATA/html\" \"$DATA/conf.d\"",
+      "[ -f \"$DATA/html/index.html\" ] || echo \"<h1>Podman Market Nginx</h1>\" > \"$DATA/html/index.html\"",
+      "[ -f \"$DATA/conf.d/default.conf\" ] || echo \"server { listen 80; root /usr/share/nginx/html; }\" > \"$DATA/conf.d/default.conf\""
+    ]
+  },
+  {
+    "id": "syncthing",
+    "name": "Syncthing",
+    "desc": "多设备文件同步",
+    "icon": "syncthing.png",
+    "image": "docker.io/syncthing/syncthing:latest",
+    "web": "http://<ip>:8384",
+    "ports": [
+      {
+        "h": 8384,
+        "c": 8384,
+        "proto": "tcp"
+      },
+      {
+        "h": 22000,
+        "c": 22000,
+        "proto": "tcp"
+      },
+      {
+        "h": 22000,
+        "c": 22000,
+        "proto": "udp"
+      },
+      {
+        "h": 21027,
+        "c": 21027,
+        "proto": "udp"
+      }
+    ],
+    "volumes": [
+      "data:/var/syncthing"
+    ],
+    "env": [
+      "PUID=0",
+      "PGID=0",
+      "TZ=Asia/Shanghai"
+    ],
+    "extra": [],
+    "pre": []
+  },
+  {
+    "id": "ddnsgo",
+    "name": "DDNS-GO",
+    "desc": "自动更新域名解析（支持 v6）",
+    "icon": "ddnsgo.png",
+    "image": "docker.io/jeessy/ddns-go:latest",
+    "web": "http://<ip>:9876",
+    "ports": [],
+    "volumes": [
+      "data:/root"
+    ],
+    "env": [],
+    "extra": [
+      "--network",
+      "host"
+    ],
+    "pre": []
+  },
+  {
+    "id": "alist",
+    "name": "Alist",
+    "desc": "聚合网盘 / 文件列表程序",
+    "icon": "alist.png",
+    "image": "docker.io/xhofe/alist:latest",
+    "web": "http://<ip>:5244",
+    "ports": [
+      {
+        "h": 5244,
+        "c": 5244,
+        "proto": "tcp"
+      }
+    ],
+    "volumes": [
+      "data:/opt/alist/data"
+    ],
+    "env": [
+      "TZ=Asia/Shanghai"
+    ],
+    "extra": [],
+    "pre": []
+  },
+  {
+    "id": "daed",
+    "name": "Daed (大鹅)",
+    "desc": "eBPF 透明代理 / 分流",
+    "icon": "daed.png",
+    "image": "docker.io/daeuniverse/daed:latest",
+    "web": "http://<ip>:2023",
+    "ports": [],
+    "volumes": [
+      "config:/etc/daed"
+    ],
+    "env": [],
+    "extra": [
+      "--network",
+      "host",
+      "--privileged"
+    ],
+    "pre": []
+  },
+  {
+    "id": "lucky",
+    "name": "Lucky (大幸运)",
+    "desc": "DDNS / 反向代理 / 端口转发 / 穿透",
+    "icon": "lucky.png",
+    "image": "docker.io/gdy666/lucky:latest",
+    "web": "http://<ip>:16601",
+    "ports": [],
+    "volumes": [
+      "data:/opt/lucky"
+    ],
+    "env": [],
+    "extra": [
+      "--network",
+      "host"
+    ],
+    "pre": []
+  },
+  {
+    "id": "openlist",
+    "name": "OpenList",
+    "desc": "聚合网盘 / 文件列表（Alist 社区续作）",
+    "icon": "openlist.png",
+    "image": "docker.io/openlistteam/openlist:latest",
+    "web": "http://<ip>:5245",
+    "ports": [
+      {
+        "h": 5245,
+        "c": 5244,
+        "proto": "tcp"
+      }
+    ],
+    "volumes": [
+      "data:/opt/openlist/data"
+    ],
+    "env": [
+      "TZ=Asia/Shanghai"
+    ],
+    "extra": [],
+    "pre": []
+  },
+  {
+    "id": "ariang",
+    "name": "Aria2 + AriaNg",
+    "desc": "离线下载，内置 AriaNg 管理界面",
+    "icon": "ariang.png",
+    "image": "docker.io/p3terx/aria2-ariang:latest",
+    "web": "http://<ip>:6880",
+    "ports": [
+      {
+        "h": 6880,
+        "c": 6880,
+        "proto": "tcp"
+      },
+      {
+        "h": 6800,
+        "c": 6800,
+        "proto": "tcp"
+      }
+    ],
+    "volumes": [
+      "config:/config",
+      "downloads:/downloads"
+    ],
+    "env": [
+      "RPC_SECRET=podmanmarket",
+      "EULA=true",
+      "UPDATE_TRACKERS=true"
+    ],
+    "extra": [],
+    "pre": []
+  },
+  {
+    "id": "transmission",
+    "name": "Transmission",
+    "desc": "简洁的 BT 下载器",
+    "icon": "transmission.png",
+    "image": "docker.io/linuxserver/transmission:latest",
+    "web": "http://<ip>:9091",
+    "ports": [
+      {
+        "h": 9091,
+        "c": 9091,
+        "proto": "tcp"
+      },
+      {
+        "h": 51413,
+        "c": 51413,
+        "proto": "tcp"
+      },
+      {
+        "h": 51413,
+        "c": 51413,
+        "proto": "udp"
+      }
+    ],
+    "volumes": [
+      "config:/config",
+      "downloads:/downloads",
+      "watch:/watch"
+    ],
+    "env": [
+      "PUID=0",
+      "PGID=0",
+      "TZ=Asia/Shanghai"
+    ],
+    "extra": [],
+    "pre": []
+  },
+  {
+    "id": "ittools",
+    "name": "IT-Tools 开发工具集",
+    "desc": "开发者常用小工具合集（加密/转换/生成）",
+    "icon": "ittools.png",
+    "image": "docker.io/corentinth/it-tools:latest",
+    "web": "http://<ip>:8088",
+    "ports": [
+      {
+        "h": 8088,
+        "c": 80,
+        "proto": "tcp"
+      }
+    ],
+    "volumes": [],
+    "env": [],
+    "extra": [],
+    "pre": []
+  },
+  {
+    "id": "clouddrive2",
+    "name": "CloudDrive2",
+    "desc": "网盘挂载为本地磁盘",
+    "icon": "clouddrive2.png",
+    "image": "docker.io/cloudnas/clouddrive2:latest",
+    "web": "http://<ip>:19798",
+    "ports": [
+      {
+        "h": 19798,
+        "c": 19798,
+        "proto": "tcp"
+      }
+    ],
+    "volumes": [
+      "Config:/Config",
+      "mnt:/mnt"
+    ],
+    "env": [
+      "TZ=Asia/Shanghai"
+    ],
+    "extra": [
+      "--privileged"
+    ],
+    "pre": []
+  },
+  {
+    "id": "xunlei",
+    "name": "迅雷 NAS 版",
+    "desc": "迅雷远程下载（网页版）",
+    "icon": "xunlei.png",
+    "image": "docker.io/cnk3x/xunlei:latest",
+    "web": "http://<ip>:2345",
+    "ports": [],
+    "volumes": [
+      "data:/xunlei",
+      "downloads:/xunlei/downloads"
+    ],
+    "env": [
+      "TZ=Asia/Shanghai"
+    ],
+    "extra": [
+      "--network",
+      "host",
+      "--privileged"
+    ],
+    "pre": []
+  },
+  {
+    "id": "mtphotos",
+    "name": "MT Photos 相册",
+    "desc": "AI 照片库 / 相册管理",
+    "icon": "mtphotos.png",
+    "image": "docker.io/mtphotos/mt-photos:latest",
+    "web": "http://<ip>:8063",
+    "ports": [
+      {
+        "h": 8063,
+        "c": 8063,
+        "proto": "tcp"
+      }
+    ],
+    "volumes": [
+      "config:/config",
+      "upload:/upload"
+    ],
+    "env": [
+      "TZ=Asia/Shanghai"
+    ],
+    "extra": [],
+    "pre": []
+  }
+]

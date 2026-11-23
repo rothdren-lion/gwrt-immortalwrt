@@ -1,0 +1,115 @@
+import * as mfs from "fs";
+import * as muc from "uci";
+import { sha256 } from "digest";
+let test_dir = "/tmp/gwrt-mesh-verify-" + time();
+mfs.mkdir(test_dir); mfs.mkdir(test_dir + "/state");
+function mapped(path) {
+ if (path == "/etc/config/wireless") return test_dir + "/wireless";
+ if (path == "/etc/gwrt-wireless-orig") return test_dir + "/wireless-orig";
+ return path;
+}
+let fs = { readfile: function(p) { return mfs.readfile(mapped(p)); },
+ access: function(p) { return mfs.access(mapped(p)); },
+ writefile: function(p, d) { return mfs.writefile(mapped(p), d); } };
+let uci = { cursor: function() { return muc.cursor(test_dir, test_dir + "/state"); } };
+let reloads = 0, requests = [], test_clients = {};
+let uloop = { process: function(path, args) { reloads++; } };
+let ubusc = { call: function(obj, method, args) { push(requests, args); } };
+let state = { self: { mac: "02:00:00:00:00:01" }, cfg: { role: "cap", token: "test" },
+ peers: {}, steer_last: {}, link: null, roster: null };
+const PEER_TTL = 30, STEER_COOLDOWN = 60, MIN_STEER_ASSOC = 20;
+function log(msg) {}
+function push_event(a, b, c, d) {}
+function client_name_of(mn, clients) { return "test-client"; }
+function local_clients() { return test_clients; }
+function macnorm(m) { return lc(replace(m ?? "", /[^0-9a-fA-F]/g, "")); }
+function maccolon(mn) { return join(match(mn, /../g), ":"); }
+function is_backhaul_sec(name) { return name == "wifiroam_bh" || name == "wifiroam_bh2"; }
+function rssi_preset(profile) { return -70; }
+let roam = { enabled: true, ssids: ["test-ssid"], r_fast: true, ft_mode: "simple", ft_over_ds: true,
+ k_neighbor: true, k_beacon: true, v_bss_transition: true, rssi_profile: "balanced", rssi_threshold: -70, config_ver: 1 };
+function current_roam_cfg() { return roam; }
+function check(ok, message) { if (!ok) { printf("FAIL: %s\n", message); exit(1); } }
+const ROAM_KEYS = [
+	"ieee80211r", "mobility_domain", "ft_over_ds", "ft_psk_generate_local",
+	"nas_identifier", "pmk_r1_push", "r0kh", "r1kh", "reassociation_deadline",
+	"ieee80211k", "rrm_neighbor_report", "rrm_beacon_report",
+	"ieee80211v", "bss_transition",
+];
+
+function roam_md(ssid) { return substr(sha256("md:" + ssid), 0, 4); }
+function roam_key0(mac) { return substr(sha256(state.cfg.token + ":r0:" + macnorm(mac)), 0, 32); }
+function roam_key1(mac) { return substr(sha256(state.cfg.token + ":r1:" + macnorm(mac)), 0, 32); }
+
+const BACKHAUL_SECTION = "wifiroam_bh";
+/* PRODUCTION:local_wireless_nat */
+/* PRODUCTION:refresh_client_identity */
+/* PRODUCTION:apply_roam_local */
+
+// 子AP：按频段套用主AP 的 SSID/密码（同一 ESS 才能无缝漫游）
+/* PRODUCTION:apply_wifi_from_cap */
+
+/* PRODUCTION:steer_has_target */
+
+/* PRODUCTION:steer_tick */
+
+mfs.writefile(test_dir + "/wireless", "config wifi-device 'radio0'\n option band '5g'\nconfig wifi-iface 'default_radio0'\n option device 'radio0'\n option mode 'ap'\n option ssid 'test-ssid'\n option encryption 'psk2'\n option key 'test-password'\n");
+mfs.writefile(test_dir + "/wifiroam", "config roam 'roam'\n option config_ver '0'\n");
+mfs.writefile(test_dir + "/gwrt", "config mesh_apmode 'mesh_apmode'\n option enabled '1'\n");
+apply_roam_local(roam, []); check(reloads == 1, "first config must reload");
+apply_roam_local(roam, []); check(reloads == 1, "identical config must not reload");
+roam.config_ver = 2;
+apply_roam_local(roam, []); check(reloads == 1, "version-only change must not reload");
+let synced = apply_wifi_from_cap([{ band: "5g", ssid: "changed-ssid", encryption: "psk2", key: "test-password" }]);
+roam.ssids = ["changed-ssid"];
+apply_roam_local(roam, [], synced.changed); check(reloads == 2, "SSID sync must reload");
+apply_roam_local(roam, []); check(reloads == 2, "repeated SSID config must not reload");
+roam.r_fast = false;
+apply_roam_local(roam, []); check(reloads == 3, "real FT change must reload");
+apply_roam_local(roam, []); check(reloads == 3, "repeated FT config must not reload");
+let cached = { ip: "192.168.3.107", hostname: "old-phone" };
+refresh_client_identity(cached, "aabbccddeeff", true,
+ { aabbccddeeff: { ip: "192.168.9.108", hostname: "phone" } }, {}, {});
+check(cached.ip == "192.168.9.108" && cached.hostname == "phone", "wired SAP client must prefer CAP live lease");
+cached = { ip: "192.168.3.107", hostname: "old-phone" };
+refresh_client_identity(cached, "aabbccddeeff", false,
+ { aabbccddeeff: { ip: "192.168.9.108", hostname: "phone" } }, {}, {});
+check(cached.ip == "192.168.3.107" && cached.hostname == "old-phone", "wireless NAT client must preserve SAP-local lease");
+printf("PASS: 9 live-lease identity cases\n");
+roam.ssids = ["test-ssid"];
+test_clients = { "020000000002": { type: "wifi", ifname: "phy0-ap0", ssid: "test-ssid", rssi: -80, connected_time: 100 } };
+function reset_steer() { requests = []; state.steer_last = {}; }
+steer_tick(); check(length(requests) == 0, "single AP must not steer");
+state.peers = { "020000000003": { authed: true, last_seen: time(), info: { uplink: { type: "wired" }, wifi: [{ ssid: "other" }] } } };
+steer_tick(); check(length(requests) == 0, "different SSID peer must not steer");
+state.peers["020000000003"].info.wifi[0].ssid = "test-ssid";
+steer_tick(); check(length(requests) == 1, "matching online peer must allow advice");
+check(requests[0].disassociation_imminent == false && requests[0].disassociation_timer == 0, "advice must not force disconnect");
+steer_tick(); check(length(requests) == 1, "cooldown must suppress repeated advice");
+reset_steer(); state.peers["020000000003"].last_seen = time() - 31;
+steer_tick(); check(length(requests) == 0, "stale peer must not steer");
+state.peers["020000000003"].last_seen = time(); state.peers["020000000003"].authed = false;
+steer_tick(); check(length(requests) == 0, "unauthenticated peer must not steer");
+state.cfg.role = "sap";
+state.link = { authed: true, last_pong: time() };
+state.roster = { aps: [{ id: "020000000003", online: true, uplink: { type: "wired" }, ssids: ["test-ssid"] }] };
+steer_tick(); check(length(requests) == 1, "SAP can use fresh CAP roster");
+reset_steer(); state.link.last_pong = time() - 31;
+steer_tick(); check(length(requests) == 0, "stale CAP roster must not steer");
+state.link.last_pong = time(); state.roster.aps[0].id = "020000000001";
+steer_tick(); check(length(requests) == 0, "self must not count as target");
+reset_steer(); state.roster.aps[0].id = "020000000003"; state.roster.aps[0].uplink.type = "wireless";
+steer_tick(); check(length(requests) == 0, "wireless NAT target must not steer");
+state.cfg.role = "cap"; state.peers["020000000003"].authed = true; state.peers["020000000003"].info.uplink.type = "wireless";
+steer_tick(); check(length(requests) == 0, "CAP must exclude wireless NAT peer target");
+state.cfg.role = "sap";
+let nc = uci.cursor(); nc.load("wireless"); nc.set("wireless", "wifiroam_bh", "wifi-iface"); nc.set("wireless", "wifiroam_bh", "mode", "sta"); nc.set("wireless", "wifiroam_bh", "network", "wwan"); nc.set("wireless", "wifiroam_bh", "disabled", "0"); nc.commit("wireless");
+state.roster.aps[0].uplink.type = "wired";
+steer_tick(); check(length(requests) == 0, "wireless NAT SAP must not steer clients across networks");
+roam.r_fast = true; roam.ssids = ["changed-ssid"];
+apply_roam_local(roam, []);
+nc = uci.cursor(); nc.load("wireless"); check(nc.get("wireless", "default_radio0", "ieee80211r") == null, "wireless NAT SAP must not enable FT");
+printf("PASS: 14 steering/NAT/FT safety cases\n");
+for (let p in mfs.glob(test_dir + "/*")) { if (p != test_dir + "/state") mfs.unlink(p); }
+for (let p in mfs.glob(test_dir + "/state/*")) mfs.unlink(p);
+mfs.rmdir(test_dir + "/state"); mfs.rmdir(test_dir);

@@ -1,0 +1,56 @@
+#!/bin/sh
+# Read-only hardware acceleration capability probe for the dashboard.
+# Output is deliberately small and stable so it can be exposed through the
+# authenticated rpcd file.exec ACL.
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+umask 077
+
+has_path() {
+	for path in "$@"; do
+		[ -e "$path" ] && return 0
+	done
+	return 1
+}
+
+# NSS is present when one of the Qualcomm NSS modules or its debug tree is
+# loaded.  Statistics files are not used here because they may be unavailable
+# while the hardware is still enabled.
+nss=false
+if has_path \
+	/sys/module/qca_nss_drv \
+	/sys/module/qca_nss_dp \
+	/sys/module/qca_nss_gmac \
+	/sys/kernel/debug/qca-nss-drv; then
+	nss=true
+fi
+
+# PPE is exposed by the Qualcomm PPE module/debug node.  Keep the legacy HNAT
+# node out of this check: it also exists on targets where no PPE is present.
+ppe=false
+if has_path \
+	/sys/module/qca_ppe \
+	/sys/module/qca_ppe_drv \
+	/sys/kernel/debug/3a000000.ppe \
+	/sys/kernel/debug/ppe; then
+	ppe=true
+fi
+
+# There is no common NPU module name across the supported targets, so check
+# the known module and platform/debug node spellings.  A row is shown only
+# when one of these concrete nodes exists.
+npu=false
+if has_path \
+	/sys/module/qca_npu \
+	/sys/module/npu \
+	/sys/module/qca_nss_npu \
+	/sys/kernel/debug/qca-npu \
+	/sys/kernel/debug/npu; then
+	npu=true
+else
+	for path in /sys/devices/platform/*npu* /sys/devices/platform/*NPU*; do
+		if [ -e "$path" ]; then npu=true; break; fi
+	done
+fi
+
+printf '{"nss":%s,"ppe":%s,"npu":%s}\n' "$nss" "$ppe" "$npu"

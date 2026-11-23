@@ -190,6 +190,9 @@ platform_do_upgrade() {
 	h3c,magic-nx30-pro|\
 	imou,hx21|\
 	jcg,q30-pro|\
+	clx,s20p|\
+	clx,s20l|\
+	clx,s20m|\
 	jdcloud,re-cp-03|\
 	konka,komi-a31|\
 	livinet,zr-3020-ubootmod|\
@@ -239,6 +242,9 @@ platform_do_upgrade() {
 	glinet,gl-mt6000|\
 	glinet,gl-x3000|\
 	glinet,gl-xe3000|\
+	clx,s20p|\
+	clx,s20l|\
+	clx,s20m|\
 	hiveton,h5000m|\
 	huasifei,wh3000-emmc|\
 	huasifei,wh3000-pro-emmc|\
@@ -518,6 +524,9 @@ platform_copy_config() {
 	glinet,gl-mt6000|\
 	glinet,gl-x3000|\
 	glinet,gl-xe3000|\
+	clx,s20p|\
+	clx,s20l|\
+	clx,s20m|\
 	globitel,bt-r320|\
 	hiveton,h5000m|\
 	huasifei,wh3000-emmc|\

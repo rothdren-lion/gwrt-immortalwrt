@@ -1,6 +1,6 @@
 # =====================================================================
 # GWRT 国内广告域名库 (纯文本规则库 — 无数据库/SQLite)
-# 版本: 20261113-r2    分类条目: tv=218 tv-ext=115 cn=148 sec=79 kill=4
+# 版本: 20261115-r3    分类条目: tv=218 tv-ext=115 cn=148 360=7 sec=30 kill=4
 # 生成: package/gwrt-tv-adblock/build-ads-library.py (可重跑, tv/tv-ext 保留原样)
 # 来源: 六源合并(电视档) + anti-AD 品牌白名单标签抽取 + 人工验证清单
 #       阿里DNS存活验证剔除死域; 覆盖 360/百度/腾讯/字节/快手/网易/新浪微博/
@@ -13,15 +13,15 @@
 # 分类: tv     电视核心(开机广告/视频App广告SDK, 无副作用, 默认开)
 #       tv-ext 电视激进(商店/升级/语音/投屏, 有副作用, 默认关)
 #       cn     国内综合(百度/腾讯/字节等Web与APP广告、统计, 默认关)
-#       sec    安全软件与更新(360全家桶/腾讯管家/微软Defender与遥测/
-#              WindowsUpdate, 默认关, 有副作用: 360与Windows更新会失效)
+#       360    360全家桶注册域整域拦截(A/AAAA均NXDOMAIN, 默认开)
+#       sec    腾讯管家/微软Defender与遥测/WindowsUpdate, 默认关
 #       kill   必拦(无分类开关): hao123/2345 导航劫持全家桶, 总开关开即生效
 # ---------------------------------------------------------------------
 # 升级: LuCI 页面"更新规则库"按钮, 或 /usr/libexec/gwrt-tv-adblock update
 #       (需先在 LuCI 填库地址), 或直接替换本文件后执行
 #       /etc/init.d/gwrt-tv-adblock reload
 # 注意: 不要往里加裸根域(qq.com/baidu.com 等)或搜/pay/api 域, 会误伤;
-#       误拦用 LuCI 自定义放行(custom_allow)救回, 裸根和子域都有效
+#       误拦用 LuCI 自定义放行(custom_allow)救回, 必须覆盖拦截规则的域或父域
 # =====================================================================
 [tv]
 # 各品牌开机广告域 + 视频App广告SDK + 乐播广告子域 + 广告追踪
@@ -510,25 +510,20 @@ sms.ads.oppomobile.com
 toruk.tanx.com
 ugdtimg.com
 umeng.co
-[sec]
-# 安全软件与更新: 360全家桶/腾讯管家风控/微软Defender云与遥测/WindowsUpdate(有副作用)
-ad.dev.360.cn
-ad.iot.360.cn
-ad.jia.360.cn
-ad.life.360.cn
-adapi.shouji.360.cn
-adapter.shouji.360.cn
+[360]
+# 360 全家桶注册域: 根域与所有子域均拦截, 含 360 官网
+360.cn
+360os.com
+360safe.cn
+360safe.com
 ads360.cn
+mayi360.cn
+qhupdate.com
+[sec]
+# 安全软件与更新: 腾讯管家风控/微软Defender云与遥测/WindowsUpdate(有副作用)
 aegis.qq.com
-agd.p.360.cn
-agd2.p.360.cn
 asimov-win.settings.data.microsoft.com.akadns.net
-c.mse.360.cn
-c.sayhi.360.cn
 check.smartscreen.net
-click.stat.hao.360.cn
-cm.dmp.360.cn
-commercial.shouji.360.cn
 cy2.vortex.data.microsoft.com.akadns.net
 data.microsoft.com
 db5.settings.data.microsoft.com.akadns.net
@@ -536,56 +531,21 @@ db5.vortex.data.microsoft.com.akadns.net
 delivery.mp.microsoft.com
 diagnostics.support.microsoft.com
 do.dsp.mp.microsoft.com
-down.360.cn
-e.tf.360.cn
-fenxi.360.cn
 geo.settings.data.microsoft.com.akadns.net
 geo.vortex.data.microsoft.com.akadns.net
 guanjia.qq.com
-guess.tf.360.cn
 hk2.settings.data.microsoft.com.akadns.net
-huid.ad.360.cn
-huodong.ios.shouji.360.cn
-huodong.mobilem.360.cn
-hye.comp.360os.com
-hyt.comp.360os.com
-iad.e.360.cn
-inst.360safe.com
-kuaikan.netmon.360safe.com
-lianmeng.360.cn
-mayi360.cn
-mclean.f.360.cn
 modern.watson.data.microsoft.com.akadns.net
-msg.shouji.360.cn
 oca.telemetry.microsoft.us
 officecdn.microsoft.com.edgesuite.net
 pcmgr.qq.com
-qhupdate.com
-qstore.inner.api.sj.360.cn
-s.360.cn
-s.union.360.cn
-sdk.look.360.cn
-sdk.tf.360.cn
-se.360.cn
 sec.qq.com
-service.jiagu.360.cn
-show.look.360.cn
-soft.data.weather.360.cn
-softdl4.360.cn
 spynet2.microsoft.com
 spynetalt.microsoft.com
-stat.360safe.com
-stat.m.360.cn
-stat.tf.360.cn
 telemetry.microsoft.com
-tr.p.360.cn
-u.api.look.360.cn
 umwatsonc.telemetry.microsoft.us
 update.microsoft.com
-v.tf.360.cn
 v10-win.vortex.data.microsoft.com.akadns.net
-vconf.f.360.cn
-wan.360.cn
 watson.microsoft.com
 wdcp.microsoft.com
 wdcpalt.microsoft.com

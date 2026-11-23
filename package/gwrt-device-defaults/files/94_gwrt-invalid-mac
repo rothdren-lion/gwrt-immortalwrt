@@ -1,0 +1,19 @@
+#!/bin/sh
+
+# Remove only the malformed value produced by old Qihoo 360T7 firmware.
+# Do not reload networking here: the interface is already using its current MAC.
+. /lib/functions.sh
+[ "$(board_name)" = "qihoo,360t7" ] || exit 0
+
+changed=0
+for option in $(uci -q show network | sed -n "/\.macaddr=':'$/s/=.*//p"); do
+	uci -q delete "$option"
+	changed=1
+done
+
+if [ "$changed" = 1 ]; then
+	uci -q commit network
+	logger -t gwrt-device-defaults "removed malformed 360T7 MAC override; current interface addresses left unchanged"
+fi
+
+exit 0

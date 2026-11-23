@@ -1,0 +1,4 @@
+#!/bin/sh
+# The shared helper probes only fixed MMC storage and validates every mount.
+[ -x /usr/libexec/gwrt-emmc-storage ] || exit 0
+/usr/libexec/gwrt-emmc-storage prepare

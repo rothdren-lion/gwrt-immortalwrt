@@ -38,6 +38,9 @@ ipq50xx_setup_interfaces()
 		ucidef_set_network_device_conduit "lan3" "eth1"
 		ucidef_set_network_device_conduit "wan" "eth0"
 		;;
+	jdcloud,ax3000)
+		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" "wan"
+		;;
 	esac
 }
 
@@ -58,6 +61,14 @@ ipq50xx_setup_macs()
 		# gmac1 has no nvmem MAC source, so stmmac would randomise the
 		# DSA conduit's address on every boot - pin it to the label MAC
 		ucidef_set_network_device_mac "eth0" "$label_mac"
+		;;
+	jdcloud,ax3000)
+		# eMMC 0:ART 分区取 MAC（偏移套用 CMCC 布局，实机核对）
+		lan_mac=$(mmc_get_mac_binary 0:ART 12)
+		[ -n "$lan_mac" ] || return
+		ucidef_set_interface_macaddr "lan" "$lan_mac"
+		ucidef_set_interface_macaddr "wan" "$(macaddr_add "$lan_mac" 1)"
+		ucidef_set_label_macaddr "$lan_mac"
 		;;
 	esac
 }

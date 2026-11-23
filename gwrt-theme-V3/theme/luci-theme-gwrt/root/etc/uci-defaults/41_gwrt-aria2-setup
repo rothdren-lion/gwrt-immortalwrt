@@ -1,0 +1,4 @@
+#!/bin/sh
+# Retained to replace the old path writer on package upgrades.
+# gwrt-emmc-storage prepares the mounted data directory and its owner.
+exit 0

@@ -1,0 +1,16 @@
+#!/bin/sh
+# gwrt.ipv6 开关默认值 + 启用 gwrt-ipv6-auto 开机钩子
+# 开关语义见 /etc/init.d/gwrt-ipv6-auto 头注释：
+#   auto=1  → 开机自动按检测结果应用（PD 或 Relay）
+#   mode=auto|pd|relay
+
+if ! uci -q get gwrt.ipv6 >/dev/null 2>&1; then
+	uci -q set gwrt.ipv6=ipv6
+	uci -q set gwrt.ipv6.auto='1'
+	uci -q set gwrt.ipv6.mode='auto'
+	uci -q commit gwrt
+fi
+
+[ -x /etc/init.d/gwrt-ipv6-auto ] && /etc/init.d/gwrt-ipv6-auto enable 2>/dev/null
+
+exit 0

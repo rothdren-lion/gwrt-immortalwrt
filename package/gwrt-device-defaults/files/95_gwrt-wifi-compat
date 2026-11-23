@@ -1,0 +1,38 @@
+#!/bin/sh
+# Repair only known-invalid saved wireless values after an upgrade. The radio
+# generator handles new configs; this keeps a preserved /etc/config/wireless
+# from carrying a 2.4 GHz channel that cannot start or an unusable 6 GHz BSS.
+
+[ -s /etc/config/wireless ] || exit 0
+
+changed=0
+for r in $(uci -q show wireless 2>/dev/null |
+	sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p'); do
+	case "$(uci -q get "wireless.$r.band")" in
+	2g)
+		ch="$(uci -q get "wireless.$r.channel")"
+		case "$ch" in
+		''|*[!0-9]*) ch=0 ;;
+		esac
+		if [ "$ch" -lt 1 ] || [ "$ch" -gt 14 ]; then
+			uci -q set "wireless.$r.channel=1" && changed=1
+		fi
+		case "$(uci -q get "wireless.$r.htmode")" in
+		EHT*)
+			uci -q set "wireless.$r.htmode=HE20" && changed=1
+			;;
+		esac
+		;;
+	6g)
+		if [ "$(uci -q get "wireless.$r.country")" = "00" ]; then
+			uci -q set "wireless.$r.disabled=1" && changed=1
+		fi
+		;;
+	esac
+done
+
+if [ "$changed" = 1 ]; then
+	uci -q commit wireless
+	logger -t gwrt-wifi-compat "normalized invalid saved wireless settings"
+fi
+exit 0

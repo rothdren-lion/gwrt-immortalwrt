@@ -216,6 +216,7 @@ for p in \
 	ubi-utils \
 	mtd \
 	fitblk \
+	sgdisk \
 	uboot-envtools ; do
 	add_pkg "$p"
 done

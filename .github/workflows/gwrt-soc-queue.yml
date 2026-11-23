@@ -1,0 +1,83 @@
+name: GWRT requested firmware queue
+run-name: GWRT selected firmware ${{ inputs.version }}
+'on':
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Firmware version (YYMMDD-NN)
+        type: string
+        required: true
+        default: 261108-01
+      release:
+        description: Publish successful firmware images to GitHub Releases
+        type: boolean
+        default: true
+      skip_cs06:
+        description: Skip CS-06 when its separate validation build is already running
+        type: boolean
+        default: false
+permissions:
+  contents: write
+concurrency:
+  group: gwrt-soc-queue
+  cancel-in-progress: false
+jobs:
+  cs06:
+    if: ${{ !inputs.skip_cs06 }}
+    uses: ./.github/workflows/gwrt-build.yml
+    with:
+      device: cs06
+      version: ${{ inputs.version }}
+      images: flashable
+      release: ${{ inputs.release }}
+      models: jdcloud_re-cs-06
+  mt7981:
+    needs: cs06
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/gwrt-build.yml
+    with:
+      device: mt7981
+      version: ${{ inputs.version }}
+      images: flashable
+      release: ${{ inputs.release }}
+      models: qihoo_360t7
+  cs02:
+    needs: mt7981
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/gwrt-build.yml
+    with:
+      device: cs02
+      version: ${{ inputs.version }}
+      images: flashable
+      release: ${{ inputs.release }}
+      models: jdcloud_re-cs-02
+  cs02_gwrt2:
+    needs: cs02
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/gwrt-build.yml
+    with:
+      device: cs02-gwrt2
+      version: ${{ inputs.version }}
+      images: flashable
+      release: ${{ inputs.release }}
+      models: jdcloud_re-cs-02-gwrt2
+  cs07:
+    needs: cs02_gwrt2
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/gwrt-build.yml
+    with:
+      device: cs07
+      version: ${{ inputs.version }}
+      images: flashable
+      release: ${{ inputs.release }}
+      models: jdcloud_re-cs-07
+  mt7986:
+    needs: cs07
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/gwrt-build.yml
+    with:
+      device: mt7986
+      version: ${{ inputs.version }}
+      images: flashable
+      release: ${{ inputs.release }}
+      models: clx_s20p

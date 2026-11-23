@@ -1,0 +1,251 @@
+name: GWRT SS-01 Honk + EasyTier (dedicated)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (YYMMDD-NN)'
+        required: false
+        default: '261115-01'
+      release:
+        description: 'Publish images to a GitHub Release'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gwrt-ss01-honk-easytier
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: SS-01 Honk + EasyTier firmware
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          sudo apt-get clean
+          sudo swapoff -a || true
+          sudo rm -f /swapfile
+          sudo fallocate -l 6G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          df -h /
+
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y -o Acquire::Retries=5
+          sudo apt-get install -y -o Acquire::Retries=5 \
+            build-essential busybox clang llvm flex bison g++ gawk gcc-multilib \
+            g++-multilib gettext git libbpf-dev libclang-dev libncurses-dev \
+            libssl-dev pkg-config python3-setuptools python3-pyelftools rsync \
+            squashfs-tools unzip util-linux zlib1g-dev file wget swig xz-utils \
+            zstd cmake
+          LLVM_BIN="$(dirname "$(readlink -f "$(command -v clang)")")"
+          for tool in llvm-strip llc opt llvm-dis; do
+            [ -x "$LLVM_BIN/$tool" ] && sudo ln -sf "$LLVM_BIN/$tool" "/usr/local/bin/$tool"
+          done
+          command -v llvm-strip
+
+      - name: Cache downloads
+        uses: actions/cache@v4
+        with:
+          path: dl
+          key: gwrt-dl-${{ hashFiles('rules.mk', 'Config.in', 'include/**') }}
+          restore-keys: |
+            gwrt-dl-
+
+      - name: Cache toolchain
+        uses: actions/cache@v4
+        with:
+          path: staging_dir/toolchain-*
+          key: gwrt-tc-2404-${{ hashFiles('toolchain/**', 'tools/**', 'include/kernel*', 'rules.mk', 'Config.in') }}
+          restore-keys: |
+            gwrt-tc-2404-
+
+      - name: Fetch locked Honk source and resolve toolchains
+        id: honk_source
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/honk-source"
+          git clone --depth 1 --branch v0.1.0-beta.6 \
+            https://github.com/daeuniverse/honk.git "$RUNNER_TEMP/honk-source"
+          source="$RUNNER_TEMP/honk-source"
+          stable="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)"/\1/p' "$source/rust-toolchain.toml")"
+          ebpf="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)"/\1/p' "$source/crates/honk-ebpf/rust-toolchain.toml")"
+          linker_version="$(sed -n 's/^BPF_LINKER_VERSION=//p' "$source/.github/ci/pins.env")"
+          linker_sha="$(sed -n 's/^BPF_LINKER_SHA256=//p' "$source/.github/ci/pins.env")"
+          test -n "$stable" -a -n "$ebpf" -a -n "$linker_version" -a -n "$linker_sha"
+          {
+            echo "stable=$stable"
+            echo "ebpf=$ebpf"
+            echo "linker_version=$linker_version"
+            echo "linker_sha=$linker_sha"
+            echo "source_commit=$(git -C "$source" rev-parse HEAD)"
+            echo "source_tag=$(git -C "$source" describe --tags --always)"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "Honk source tag: v0.1.0-beta.6"
+            echo "Honk source commit: $(git -C "$source" rev-parse HEAD)"
+            echo "Honk feed commit: bb039381d2ae9a84dd0c40607c00ccf9fd9fdabf"
+            echo "Doona editions: embedded (standard) + embedded-lite (preview)"
+            echo "Rust stable: $stable"
+            echo "Rust eBPF: $ebpf"
+            echo "bpf-linker: $linker_version ($linker_sha)"
+          } > honk-source.txt
+
+      - name: Install Rust stable target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.honk_source.outputs.stable }}
+          target: aarch64-unknown-linux-musl
+
+      - name: Install Rust nightly for Honk eBPF
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.honk_source.outputs.ebpf }}
+          components: rust-src, llvm-tools
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: honk-cargo-${{ steps.honk_source.outputs.source_commit }}-aarch64
+          restore-keys: |
+            honk-cargo-
+
+      - name: Install pinned bpf-linker
+        run: |
+          set -euo pipefail
+          mkdir -p "${CARGO_HOME:-$HOME/.cargo}/bin"
+          archive="$RUNNER_TEMP/bpf-linker.tar.zst"
+          curl -fsSL --retry 3 -o "$archive" \
+            "https://github.com/aya-rs/bpf-linker/releases/download/v${{ steps.honk_source.outputs.linker_version }}/bpf-linker-x86_64-unknown-linux-musl.tar.zst"
+          echo "${{ steps.honk_source.outputs.linker_sha }}  $archive" | sha256sum -c -
+          zstd -dc "$archive" | tar -xf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+          bpf-linker --version
+
+      - name: Install feeds and Honk source
+        run: |
+          set -euo pipefail
+          cp configs/ss01-honk-easytier-feeds.conf feeds.conf
+          ./scripts/feeds update -a
+          test -f feeds/daeuniverse/honk/Makefile
+          rsync -a --delete --exclude=.git "$RUNNER_TEMP/honk-source/" feeds/daeuniverse/honk/src/
+          for feed in feeds/*; do
+            [ -d "$feed/.git" ] || continue
+            printf '%s %s\n' "$feed" "$(git -C "$feed" rev-parse HEAD)"
+          done > feeds-revisions.txt
+          sh scripts/gwrt-apply-feed-overlays.sh
+          ./scripts/feeds install -a
+          sh gwrt-theme-V3/scripts/integrate.sh --no-config
+          sed -i 's|^  DEPENDS:=+libpython3$|  DEPENDS:=+libpython3 +libffi|' \
+            feeds/packages/lang/python/python3/Makefile
+
+      - name: Generate isolated SS-01 config
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          python3 scripts/gwrt-mk-ss01-honk-easytier-config.py "$VERSION"
+          make defconfig
+          sh gwrt-check-target.sh .config ss01
+          python3 scripts/gwrt-validate-ss01-honk-easytier.py .config
+          sh scripts/gwrt-source-preflight.sh
+          grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)|^CONFIG_VERSION_NUMBER|^CONFIG_PACKAGE_(honk|luci-app-honk|easytier|luci-app-easytier|vmlinux-btf-builtin)' .config
+
+      - name: Test SS-01 calibration and Mesh presets
+        run: |
+          set -euo pipefail
+          GWRT_SS01_TEST_BUSYBOX="$(command -v busybox)"
+          export GWRT_SS01_TEST_BUSYBOX
+          sh scripts/tests/test-gwrt-caldata-reboot.sh
+          sh scripts/tests/test-ss01-mesh-preset.sh
+          python3 scripts/tests/test-ss01-firstboot.py
+          python3 scripts/tests/test-gwrt-wifiroam-autopair.py
+
+      - name: Build dedicated Honk + EasyTier firmware
+        id: build_firmware
+        env:
+          VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          taskset -c 0-5 make -j6 download \
+            REVISION="$(git rev-parse --short HEAD)" \
+            GWRT_CS02_KERNEL_SIZE=12288k 2>&1 | tee logs/download.log
+          taskset -c 0-5 make -j6 \
+            REVISION="$(git rev-parse --short HEAD)" \
+            GWRT_CS02_KERNEL_SIZE=12288k \
+            CONFIG_VERSION_DIST=GWRT \
+            CONFIG_VERSION_NUMBER="$VERSION" 2>&1 | tee logs/build.log \
+            || taskset -c 0-5 make -j1 V=s \
+            REVISION="$(git rev-parse --short HEAD)" \
+            GWRT_CS02_KERNEL_SIZE=12288k \
+            CONFIG_VERSION_DIST=GWRT \
+            CONFIG_VERSION_NUMBER="$VERSION" 2>&1 | tee -a logs/build.log
+
+      - name: Verify dedicated config, packages and image
+        run: |
+          set -euo pipefail
+          target=bin/targets/qualcommax/ipq60xx
+          python3 scripts/gwrt-validate-ss01-honk-easytier.py .config --manifests "$target"
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          sums = list(Path('bin/targets').rglob('sha256sums'))
+          assert sums, 'no image checksum file produced'
+          for path in sums:
+              subprocess.run(['sha256sum', '-c', path.name], cwd=path.parent, check=True)
+          PY
+          python3 scripts/gwrt-verify-ss01-image.py "$target" --variant honk-easytier | tee logs/ss01-honk-image-audit.log
+          cp honk-source.txt logs/honk-source.txt
+          printf 'Dedicated build: SS-01 Honk + EasyTier; standard Doona default, embedded-lite available\n' > logs/build-label.txt
+
+      - name: Upload dedicated firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gwrt-ss01-honk-easytier-${{ inputs.version }}
+          path: |
+            bin/targets/qualcommax/ipq60xx/*factory*.bin
+            bin/targets/qualcommax/ipq60xx/*sysupgrade*.bin
+            bin/targets/qualcommax/ipq60xx/*.manifest
+            bin/targets/qualcommax/ipq60xx/sha256sums
+            bin/targets/qualcommax/ipq60xx/profiles.json
+            honk-source.txt
+            logs/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Publish dedicated release
+        if: success() && inputs.release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp bin/targets/qualcommax/ipq60xx/*factory*.bin release/
+          cp bin/targets/qualcommax/ipq60xx/*sysupgrade*.bin release/
+          cp bin/targets/qualcommax/ipq60xx/*.manifest bin/targets/qualcommax/ipq60xx/sha256sums release/
+          cp honk-source.txt release/
+          sha256sum release/* > release/ss01-honk-easytier-${{ inputs.version }}.sha256sums
+          gh release create "gwrt-ss01-honk-easytier-${{ inputs.version }}" release/* \
+            --title "GWRT SS-01 Honk + EasyTier ${{ inputs.version }}" \
+            --notes "Dedicated SS-01 build: Honk v0.1.0-beta.6 with embedded Doona editions and EasyTier; all other proxy engines removed."

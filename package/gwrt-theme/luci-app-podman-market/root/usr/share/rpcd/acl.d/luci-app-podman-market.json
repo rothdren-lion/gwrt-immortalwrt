@@ -1,0 +1,29 @@
+{
+	"luci-app-podman-market": {
+		"description": "Grant access to LuCI Podman Market",
+		"read": {
+			"ubus": {
+				"podmanmarket": [
+					"list",
+					"job",
+					"logs"
+				]
+			},
+			"uci": [ "podman-market" ],
+			"file": {
+				"/usr/share/podman-market/catalog.json": [ "read" ]
+			}
+		},
+		"write": {
+			"ubus": {
+				"podmanmarket": [
+					"deploy",
+					"update",
+					"action",
+					"autostart"
+				]
+			},
+			"uci": [ "podman-market" ]
+		}
+	}
+}

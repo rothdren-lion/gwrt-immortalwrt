@@ -5,13 +5,35 @@
 
 #include "qca_ppe.h"
 
-static int ppe_xlt_idx_alloc(struct qca_ppe_priv *priv)
+int ppe_xlt_idx_alloc(struct qca_ppe_priv *priv)
 {
 	int idx;
 
 	lockdep_assert_held(&priv->vlan_lock);
 
-	idx = find_first_zero_bit(priv->xlt_bitmap, PPE_XLT_TBL_NUM);
+	/* Entries 0..7 are the fixed DSA/CPU VLAN translation slots. They are
+	 * programmed outside this allocator and must never be reused by a flow
+	 * or WLAN private tag. */
+	/* The upper rows carry routed VLAN selectors. Bridge/DSA rules must
+	 * never consume them: their source-info action is a separate resource
+	 * class and is selected by the routed allocator below. */
+	idx = find_next_zero_bit(priv->xlt_bitmap,
+				 PPE_XLT_TBL_NUM - QCA_PPE_ROUTED_XLT_SLOTS,
+				 QCA_PPE_DSA_SERVICE_MAX);
+	if (idx >= PPE_XLT_TBL_NUM - QCA_PPE_ROUTED_XLT_SLOTS)
+		return -ENOSPC;
+
+	set_bit(idx, priv->xlt_bitmap);
+	return idx;
+}
+
+int ppe_routed_xlt_idx_alloc(struct qca_ppe_priv *priv)
+{
+	int idx;
+
+	lockdep_assert_held(&priv->vlan_lock);
+	idx = find_next_zero_bit(priv->xlt_bitmap, PPE_XLT_TBL_NUM,
+				 PPE_XLT_TBL_NUM - QCA_PPE_ROUTED_XLT_SLOTS);
 	if (idx >= PPE_XLT_TBL_NUM)
 		return -ENOSPC;
 
@@ -67,7 +89,7 @@ static void ppe_xlt_clear(struct qca_ppe_priv *priv, int idx)
 	regmap_write(priv->regmap, PPE_XLT_ACTION_W1(idx), 0);
 }
 
-static void ppe_xlt_idx_free(struct qca_ppe_priv *priv, int *idx)
+void ppe_xlt_idx_free(struct qca_ppe_priv *priv, int *idx)
 {
 	lockdep_assert_held(&priv->vlan_lock);
 
@@ -142,6 +164,7 @@ static void ppe_vlan_free(struct qca_ppe_priv *priv,
 		ppe_xlt_idx_free(priv, &entry->xlt_idx);
 	if (entry->xlt_pvid_idx >= 0)
 		ppe_xlt_idx_free(priv, &entry->xlt_pvid_idx);
+	ppe_flow_purge_vsi(priv, entry->vsi);
 	ppe_vsi_free(priv, entry->vsi);
 	entry->br_dev = NULL;
 }
@@ -215,6 +238,7 @@ int qca_ppe_port_vlan_filtering(struct dsa_switch *ds, int port,
 	struct qca_ppe_priv *priv = ds_to_priv(ds);
 	int i;
 
+	guard(mutex)(&priv->flow_lock);
 	guard(mutex)(&priv->vlan_lock);
 
 	regmap_update_bits(priv->regmap, PPE_PORT_EG_VLAN(port),
@@ -288,6 +312,7 @@ int qca_ppe_port_vlan_add(struct dsa_switch *ds, int port,
 	if (!br_dev)
 		return 0;
 
+	guard(mutex)(&priv->flow_lock);
 	guard(mutex)(&priv->vlan_lock);
 
 	entry = ppe_vlan_find(priv, br_dev, vid);
@@ -378,6 +403,7 @@ int qca_ppe_port_vlan_del(struct dsa_switch *ds, int port,
 	if (!br_dev)
 		return 0;
 
+	guard(mutex)(&priv->flow_lock);
 	guard(mutex)(&priv->vlan_lock);
 
 	entry = ppe_vlan_find(priv, br_dev, vid);

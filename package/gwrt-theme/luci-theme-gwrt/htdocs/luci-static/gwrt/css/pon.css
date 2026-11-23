@@ -1,0 +1,35 @@
+/* ==== PON optical uplink card (AN7581 pon0) 2026-10-25 ==== */
+.gwrt-port.pon{flex:0 0 196px;min-width:196px;max-width:230px;position:relative;overflow:hidden}
+.gwrt-port.pon .gwrt-port-title{justify-content:flex-start;gap:4px;min-width:0}
+.gwrt-pon-mode{font-size:8px;font-weight:800;line-height:14px;letter-spacing:.02em;color:var(--accent-primary);background:var(--accent-primary-light);border:1px solid color-mix(in srgb,var(--accent-primary) 30%,var(--border-primary));border-radius:999px;padding:0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:96px}
+.gwrt-pon-optics{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:2px 0 0;font:9px var(--font-mono);color:var(--text-tertiary);white-space:nowrap}
+.gwrt-pon-optics b{color:var(--text-primary);font-weight:700}
+.gwrt-pon-meta{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding-top:1px;font:9px var(--font-mono);color:var(--text-tertiary);white-space:nowrap}
+.gwrt-pon-rate{color:var(--accent-secondary);overflow:hidden;text-overflow:ellipsis}
+.gwrt-pon-state{padding-top:1px;font-size:8.5px;line-height:1.4;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gwrt-port.pon.up .gwrt-port-dot{background:var(--accent-secondary)}
+.gwrt-port.pon.warn .gwrt-port-dot{background:var(--accent-warning)}
+.gwrt-port.pon.down .gwrt-port-dot{background:transparent!important;border:1.5px solid var(--accent-danger);box-sizing:border-box;width:7px;height:7px}
+.gwrt-port.pon .gwrt-port-gear{opacity:.55}
+.gwrt-port.pon:hover .gwrt-port-gear{opacity:1}
+.gwrt-pon-panel{max-width:560px}
+.gwrt-pon-badge{display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:999px;background:var(--accent-primary-light);border:1px solid color-mix(in srgb,var(--accent-primary) 30%,var(--border-primary));color:var(--accent-primary);font:9px var(--font-mono);font-weight:800;white-space:nowrap}
+.gwrt-pon-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 12px;padding:0 20px 8px}
+.gwrt-pon-grid>div{min-width:0;padding:6px 8px;border:1px solid var(--border-primary);border-radius:var(--radius-sm);background:var(--bg-secondary)}
+.gwrt-pon-grid span{display:block;font-size:9px;line-height:1.4;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gwrt-pon-grid b{display:block;font:11px var(--font-mono);font-weight:700;line-height:1.5;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gwrt-pon-traffic{padding:0 20px 10px}
+.gwrt-pon-traffic-row{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:2px 0;font-size:10px;color:var(--text-tertiary)}
+.gwrt-pon-traffic-row b{font:10px var(--font-mono);color:var(--text-primary);text-align:right}
+.gwrt-pon-note{padding:2px 0 6px;font-size:10px;line-height:1.55;color:var(--text-tertiary)}
+.gwrt-pon-note code{font-family:var(--font-mono);font-size:9px;color:var(--accent-primary);background:var(--accent-primary-light);border-radius:4px;padding:0 3px}
+.gwrt-pon-links{padding:0 0 4px;font-size:10px}
+.gwrt-pon-links a{color:var(--accent-primary);text-decoration:none}
+.gwrt-pon-links a:hover{text-decoration:underline}
+@media(max-width:720px){
+  .gwrt-port.pon{flex:0 0 184px;min-width:184px}
+  .gwrt-pon-grid{grid-template-columns:minmax(0,1fr);padding-left:16px;padding-right:16px}
+  .gwrt-pon-traffic{padding-left:16px;padding-right:16px}
+}
+/* The mode badge already occupies the top-right; the gear would overlap it. */
+.gwrt-port.pon .gwrt-port-gear{display:none}

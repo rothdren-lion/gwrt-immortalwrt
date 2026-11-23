@@ -1,0 +1,69 @@
+#!/bin/sh
+
+conntrack_table=/proc/net/nf_conntrack
+[ -r "$conntrack_table" ] || conntrack_table=/proc/net/ip_conntrack
+[ -r "$conntrack_table" ] || exit 1
+conntrack_routes="$(ip -4 route show scope link 2>/dev/null)"
+
+# rpcd file.read stops after the first procfs read. Aggregate the entire stream here.
+exec awk -v routes="$conntrack_routes" '
+function ipv4(ip, a, n, i, value) {
+	n = split(ip, a, ".")
+	if (n != 4) return -1
+	value = 0
+	for (i = 1; i <= 4; i++) {
+		if (a[i] !~ /^[0-9]+$/ || a[i] + 0 > 255) return -1
+		value = value * 256 + a[i]
+	}
+	return value
+}
+function local_ip(ip, value, i, block, octets) {
+	value = ipv4(ip)
+	if (value < 0) return 0
+	if (network_count) {
+		for (i = 1; i <= network_count; i++) {
+			block = 2 ^ (32 - masks[i])
+			if (int(value / block) == int(networks[i] / block)) return 1
+		}
+		return 0
+	}
+	split(ip, octets, ".")
+	return octets[1] == 10 || (octets[1] == 172 && octets[2] >= 16 && octets[2] <= 31) || (octets[1] == 192 && octets[2] == 168) || (octets[1] == 100 && octets[2] >= 64 && octets[2] <= 127)
+}
+BEGIN {
+	line_count = split(routes, route_lines, "\n")
+	for (i = 1; i <= line_count; i++) {
+		split(route_lines[i], route_fields, /[ \t]+/)
+		split(route_fields[1], cidr, "/")
+		address = ipv4(cidr[1])
+		prefix = index(route_fields[1], "/") ? cidr[2] : 32
+		if (address < 0 || prefix !~ /^[0-9]+$/ || prefix < 1 || prefix > 32) continue
+		networks[++network_count] = address
+		masks[network_count] = prefix
+	}
+}
+NF {
+	protocol = ($1 == "ipv4" || $1 == "ipv6") ? $3 : $1
+	total++
+	if (protocol == "tcp") tcp++
+	else if (protocol == "udp") udp++
+	# Count each local endpoint once per flow, including NAT reply tuples.
+	for (i = 1; i <= NF; i++) {
+		if ($i !~ /^(src|dst)=/) continue
+		ip = substr($i, 5)
+		if (!local_ip(ip) || seen[ip] == NR) continue
+		seen[ip] = NR
+		counts[ip]++
+		if (protocol == "tcp") tcp_counts[ip]++
+		else if (protocol == "udp") udp_counts[ip]++
+	}
+}
+END {
+	printf "{\"g\":{\"total\":%d,\"tcp\":%d,\"udp\":%d},\"d\":[", total, tcp, udp
+	sep = ""
+	for (ip in counts) {
+		printf "%s{\"ip\":\"%s\",\"ip4\":\"%s\",\"total\":%d,\"tcp\":%d,\"udp\":%d}", sep, ip, ip, counts[ip], tcp_counts[ip], udp_counts[ip]
+		sep = ","
+	}
+	print "]}"
+}' "$conntrack_table"

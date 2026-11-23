@@ -1,0 +1,127 @@
+name: GWRT IPQ60xx preserved image recheck
+
+on:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: Device preset
+        required: true
+        type: choice
+        options:
+          - cs02
+          - cs02-gwrt2
+          - cs07
+      version:
+        description: Original build version
+        required: true
+        type: string
+      run_id:
+        description: Original build run ID
+        required: true
+        type: string
+      source_sha:
+        description: Original firmware source commit
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  recheck:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out the corrected verifier
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate the original build and audit source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEVICE: ${{ inputs.device }}
+          RUN_ID: ${{ inputs.run_id }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          run = os.environ['RUN_ID']
+          sha = os.environ['SOURCE_SHA']
+          assert re.fullmatch(r'[0-9]+', run)
+          assert re.fullmatch(r'[a-f0-9]{40}', sha)
+          assert re.fullmatch(r'[0-9]{6}-[0-9]{2}', os.environ['VERSION'])
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', path], text=True))
+          repo = os.environ['GITHUB_REPOSITORY']
+          info = api(f'repos/{repo}/actions/runs/{run}')
+          assert info['head_sha'] == sha and info['status'] == 'completed'
+          assert info['conclusion'] == 'failure', 'expected original audit failure'
+          jobs = api(f'repos/{repo}/actions/runs/{run}/jobs?per_page=100')['jobs']
+          assert len(jobs) == 1
+          steps = {step['name']: step['conclusion'] for step in jobs[0]['steps']}
+          for name in ('Generate config', 'Build firmware', 'Verify packages and image hashes'):
+              assert steps.get(name) == 'success', (name, steps.get(name))
+          assert steps.get('Verify DSA IPQ60xx packaged Ethernet and applications') == 'failure'
+          print('Original build and package/hash verification passed; final audit failed.')
+          PY
+          git diff --quiet "$SOURCE_SHA" HEAD -- \
+            target/linux/qualcommax/image/ipq60xx.mk \
+            scripts/gwrt-verify-ss01-image.py \
+            gwrt-theme-V3/theme/luci-theme-gwrt
+
+      - name: Install squashfs tools
+        run: |
+          sudo apt-get update -y -o Acquire::Retries=5
+          sudo apt-get install -y squashfs-tools
+
+      - name: Test layout verifier
+        run: python3 scripts/tests/test-ipq60xx-factory-rootfs.py
+
+      - name: Download the original inspection artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: gwrt-${{ inputs.device }}-${{ inputs.version }}-inspection
+          path: inspection
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.run_id }}
+
+      - name: Verify checksums and packaged firmware
+        env:
+          DEVICE: ${{ inputs.device }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -o pipefail
+          mkdir -p results
+          python3 - <<'PY' | tee results/checksums.log
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          d = Path('inspection')
+          profiles = json.loads((d / 'profiles.json').read_text())
+          assert profiles['git_commit'] == os.environ['SOURCE_SHA']
+          sums = {line.split(maxsplit=1)[1].lstrip('*'): line.split(maxsplit=1)[0]
+                  for line in (d / 'sha256sums').read_text().splitlines() if line.strip()}
+          files = list(d.glob('*.bin')) + list(d.glob('*.manifest')) + [d / 'profiles.json']
+          assert len(list(d.glob('*.bin'))) == 2 and len(list(d.glob('*.manifest'))) == 1
+          for path in files:
+              digest = hashlib.file_digest(path.open('rb'), 'sha256').hexdigest()
+              assert sums.get(path.name) == digest, path.name
+              print(digest, path.name)
+          PY
+          python3 scripts/gwrt-verify-ipq60xx-image.py inspection "$DEVICE" | tee results/image-audit.log
+
+      - name: Save recheck records
+        uses: actions/upload-artifact@v4
+        with:
+          name: gwrt-${{ inputs.device }}-${{ inputs.version }}-recheck
+          path: results/
+          if-no-files-found: error
+          retention-days: 30

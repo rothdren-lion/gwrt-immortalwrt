@@ -1,0 +1,25 @@
+# Sets the UCI option enabled, which decides whether dae starts at boot, and
+# enables the rc.d link that runs the init script's boot. Run by the package
+# scripts (default_postinst sources it in a subshell, pkgname set) and on the
+# first boot of a firmware image that contains the package (pkgname empty).
+# Never on the build host, where /etc/init.d would be the host's.
+if [ -z "$IPKG_INSTROOT" ]; then
+	# An option already set is the user's choice, also one that sysupgrade kept
+	if [ -z "$(uci -q get dae.config.enabled)" ]; then
+		if [ -f /tmp/dae-autostart ]; then
+			# saved by the preinst script before apk replaced an unedited
+			# /etc/config/dae of a version that kept the option
+			enabled="$(cat /tmp/dae-autostart)"
+		elif [ -n "$pkgname" ] && /etc/init.d/dae enabled; then
+			# an apk upgrade from a version whose boot setting was the rc.d link
+			enabled=1
+		else
+			# a fresh install, or a new image: off until the user turns it on
+			enabled=0
+		fi
+		uci -q set dae.config.enabled="$enabled"
+		uci commit dae
+	fi
+	rm -f /tmp/dae-autostart
+	/etc/init.d/dae enable
+fi

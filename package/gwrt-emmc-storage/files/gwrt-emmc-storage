@@ -1,0 +1,239 @@
+#!/bin/sh
+# Existing eMMC data only. Never partition a disk or format a data filesystem.
+umask 022
+
+log() { logger -t gwrt-emmc-storage "$*"; }
+field() { printf '%s\n' "$probe" | sed -n "s/^$1=//p" | head -n 1; }
+partition_name() {
+	local label
+	label=$(field PART_ENTRY_NAME)
+	[ -n "$label" ] || label=$(sed -n 's/^PARTNAME=//p' "$sys/uevent" 2>/dev/null)
+	printf '%s\n' "$label" | tr 'A-Z' 'a-z'
+}
+get() { uci -q get "$1" 2>/dev/null; }
+set_value() {
+	[ "$(get "$1")" = "$2" ] && return 0
+	uci -q set "$1=$2" || return 1
+	case " $dirty " in *" ${1%%.*} "*) ;; *) dirty="$dirty ${1%%.*}" ;; esac
+}
+commit_changes() {
+	local config
+	for config in $dirty; do uci -q commit "$config" || return 1; done
+	dirty=""
+}
+mount_for() {
+	awk -v dev="$1" '$1 == dev {gsub(/\\040/, " ", $2); print $2; exit}' /proc/mounts
+}
+is_active_swap() { awk -v dev="$1" '$1 == dev {found=1} END {exit !found}' /proc/swaps; }
+safe_mount() {
+	case "$1" in /mnt/*|/media/*) ;; *) return 1 ;; esac
+	case "$1" in *[!a-zA-Z0-9_./-]*|*/../*|*/..|*/./*) return 1 ;; esac
+	[ "$(readlink -f "$1")" = "$1" ]
+}
+has_holders() {
+	local item
+	for item in "$sys/holders/"*; do [ ! -e "$item" ] || return 0; done
+	return 1
+}
+in_use() {
+	local major
+	[ -r /proc/self/mountinfo ] && [ -r /proc/swaps ] || return 0
+	has_holders && return 0
+	major=$(cat "$sys/dev" 2>/dev/null)
+	# Device aliases (/dev/root) and bind mounts must also exclude system data.
+	[ -z "$major" ] || ! awk -v dev="$major" '$3 == dev {found=1} END {exit !found}' /proc/self/mountinfo 2>/dev/null || return 0
+	[ -z "$(mount_for "$dev")" ] || return 0
+	is_active_swap "$dev"
+}
+protected_name() {
+	case "$1" in
+		*rootfs*|*rootdisk*|*overlay*|*kernel*|*hlos*|*boot*|*uboot*|*u-boot*|*factory*|*art*|*caldata*|*firmware*|*recovery*|*reserved*|*trust*|*fip*|*sbl*|*qsee*|*cdt*|*devinfo*|*env*|*config*|*persist*|*log*) return 0 ;;
+	esac
+	return 1
+}
+setup_swap() {
+	local label guid section
+	label=$(partition_name)
+	protected_name "$label" && return 0
+	has_holders && return 0
+	guid=$(field PART_ENTRY_TYPE | tr 'A-Z' 'a-z')
+	if [ "$type" != swap ]; then
+		case "$label:$guid" in
+			swap:*|linux-swap:*|*:0657fd6d-a4ab-43c4-84e5-0933c84b4f4f|*:0x82) ;;
+			*) return 0 ;;
+		esac
+		# A probe error/ambiguous signature or any other usage forbids formatting.
+		[ -z "$type" ] && [ -z "$(field USAGE)" ] || { log "$dev has another filesystem; skip swap initialization"; return 0; }
+		in_use && return 0
+		mkswap "$dev" >/dev/null 2>&1 || { log "mkswap failed: $dev"; return 0; }
+		log "initialized dedicated swap: $dev"
+	fi
+	[ -z "$(mount_for "$dev")" ] || return 0
+	[ -f /etc/config/fstab ] || touch /etc/config/fstab || return 1
+	section="fstab.gwrt_emmc_swap_${dev##*/}"
+	set_value "$section" swap &&
+	set_value "$section.device" "$dev" &&
+	set_value "$section.enabled" 1 || return 1
+	is_active_swap "$dev" || swapon "$dev" >/dev/null 2>&1 || log "swapon failed: $dev"
+}
+find_storage() {
+	local disk kind removable base name sectors start mounted rc
+	store_dev=""; store_mount=""; store_type=""; store_uuid=""; best_start=-1
+	for disk in /sys/class/block/mmcblk[0-9]*; do
+		base=${disk##*/}
+		case "$base" in *[!0-9kblcm]*|*p*|*boot*|*rpmb*) continue ;; esac
+		[ -f "$disk/device/type" ] || continue
+		kind=$(cat "$disk/device/type" 2>/dev/null)
+		removable=$(cat "$disk/removable" 2>/dev/null)
+		[ "$kind" = MMC ] && [ "$removable" = 0 ] || continue
+		for sys in "$disk"p[0-9]*; do
+			[ -f "$sys/partition" ] || continue
+			dev="/dev/${sys##*/}"; [ -b "$dev" ] || continue
+			partno=$(cat "$sys/partition" 2>/dev/null)
+			case "$partno" in ''|*[!0-9]*) continue ;; esac
+			probe=$(blkid -p -o export "$dev" 2>/dev/null); rc=$?
+			case "$rc" in 0|2) ;; *) log "cannot safely probe $dev; skip"; continue ;; esac
+			type=$(field TYPE)
+			setup_swap || return 1
+			name=$(partition_name)
+			protected_name "$name" && continue
+			case "$name" in swap|linux-swap) continue ;; esac
+			case "$type" in ext4|ext3|ext2|f2fs|btrfs|xfs) ;; *) continue ;; esac
+			sectors=$(cat "$sys/size" 2>/dev/null)
+			start=$(cat "$sys/start" 2>/dev/null)
+			case "$sectors:$start" in *[!0-9:]*|:*|*:) continue ;; esac
+			[ "$sectors" -ge 2097152 ] && [ "$start" -gt "$best_start" ] || continue
+			has_holders && continue
+			mounted=$(mount_for "$dev")
+			if [ -n "$mounted" ]; then safe_mount "$mounted" || continue
+			else in_use && continue
+			fi
+			store_dev="$dev"; store_mount="$mounted"; store_type="$type"
+			store_uuid=$(field UUID); best_start=$start
+		done
+	done
+	return 0
+}
+mount_storage() {
+	local section
+	[ -n "$store_dev" ] || return 1
+	if [ -z "$store_mount" ]; then
+		store_mount="/mnt/${store_dev##*/}"
+		safe_mount "$store_mount" || return 1
+		# Do not hide another mounted filesystem or follow a symlinked directory.
+		awk -v target="$store_mount" '$2 == target {found=1} END {exit !found}' /proc/mounts && return 1
+		mkdir -p "$store_mount" || return 1
+		mount -t "$store_type" -o rw,noatime "$store_dev" "$store_mount" || { log "data mount failed: $store_dev"; return 1; }
+	fi
+	[ "$(mount_for "$store_dev")" = "$store_mount" ] || return 1
+	awk -v dev="$store_dev" '$1 == dev && $4 ~ /(^|,)rw(,|$)/ {ok=1} END {exit !ok}' /proc/mounts || return 1
+	[ -f /etc/config/fstab ] || touch /etc/config/fstab || return 1
+	[ -f /etc/config/gwrt ] || touch /etc/config/gwrt || return 1
+	section=fstab.gwrt_emmc_data
+	set_value "$section" mount &&
+	set_value "$section.device" "$store_dev" &&
+	set_value "$section.target" "$store_mount" &&
+	set_value "$section.fstype" "$store_type" &&
+	set_value "$section.options" rw,noatime &&
+	set_value "$section.enabled" 1 || return 1
+	safe_mount "$store_mount/downloads" || return 1
+	mkdir -p "$store_mount/downloads" || return 1
+	chmod 0775 "$store_mount/downloads" || return 1
+	set_value gwrt.storage storage &&
+	set_value gwrt.storage.device "$store_dev" &&
+	set_value gwrt.storage.mount "$store_mount" &&
+	set_value gwrt.storage.downloads "$store_mount/downloads"
+}
+setup_aria2() {
+	local current target user
+	[ -f /etc/config/aria2 ] || return 0
+	target="$store_mount/downloads/aria2"
+	current=$(get aria2.main.dir)
+	case "$current" in ""|/mnt/sda1/aria2|"$target") ;; *) return 0 ;; esac
+	user=$(get aria2.main.user); user=${user:-aria2}
+	id -u "$user" >/dev/null 2>&1 || { log "missing aria2 user: $user"; return 0; }
+	safe_mount "$target" || return 1
+	mkdir -p "$target" && chown "$user" "$target" && chmod 2775 "$target" || return 1
+	set_value aria2.main aria2 &&
+	set_value aria2.main.dir "$target" &&
+	set_value aria2.main.user "$user" || return 1
+	[ -n "$(get aria2.main.enabled)" ] || set_value aria2.main.enabled 0
+}
+setup_samba() {
+	local section=samba4.smb_share
+	[ -f /etc/config/samba4 ] || return 0
+	# Only maintain our own share. Preserve administrator paths and options.
+	if [ -n "$(get "$section")" ]; then
+		[ "$(get "$section.gwrt_auto")" = 1 ] || return 0
+		[ -z "$(get "$section.gwrt_path")" ] || [ "$(get "$section.path")" = "$(get "$section.gwrt_path")" ] || return 0
+		set_value "$section.path" "$store_mount" && set_value "$section.gwrt_path" "$store_mount"
+		return $?
+	fi
+	if ! id -u gwrt >/dev/null 2>&1; then
+		adduser -D -H -s /bin/false gwrt 2>/dev/null || useradd -M -N -d /nonexistent -s /sbin/nologin gwrt 2>/dev/null || return 1
+	fi
+	if [ "$(get gwrt.storage.smb_account_ready)" != 1 ]; then
+		if ! pdbedit -L 2>/dev/null | grep -q '^gwrt:'; then
+			printf 'gwrt\ngwrt\n' | smbpasswd -s -a gwrt >/dev/null 2>&1 || return 1
+		fi
+		set_value gwrt.storage.smb_account_ready 1 || return 1
+	fi
+	set_value "$section" sambashare &&
+	set_value "$section.gwrt_auto" 1 &&
+	set_value "$section.name" gwrt &&
+	set_value "$section.path" "$store_mount" &&
+	set_value "$section.gwrt_path" "$store_mount" &&
+	set_value "$section.guest_ok" no &&
+	set_value "$section.read_only" no &&
+	set_value "$section.force_root" 1 &&
+	set_value "$section.users" gwrt &&
+	set_value "$section.create_mask" 0666 &&
+	set_value "$section.dir_mask" 0777
+}
+lan_network() {
+	local ip mask
+	ip=$(get network.lan.ipaddr); mask=$(get network.lan.netmask)
+	[ -n "$mask" ] || mask=255.255.255.0
+	printf '%s %s\n' "$ip" "$mask" | awk '
+	function octets(s,a) {return split(s,a,".")==4}
+	{if (!octets($1,ip)||!octets($2,m)) exit; bits=0; zero=0; net=""
+	 for(i=1;i<=4;i++){if(ip[i]!~/^[0-9]+$/||m[i]!~/^[0-9]+$/||ip[i]>255||m[i]>255) exit
+	  n=0; for(b=128;b>=1;b/=2){v=int(m[i]/b)%2; if(zero&&v) exit; if(!v) zero=1; bits+=v; if(v&&int(ip[i]/b)%2) n+=b}
+	  net=net (i>1?".":"") n}
+	 print net "/" bits}'
+}
+setup_nfs() {
+	local section=nfs.gwrt_share clients
+	[ -f /etc/config/nfs ] || return 0
+	if [ -n "$(get "$section")" ]; then
+		[ "$(get "$section.gwrt_auto")" = 1 ] || return 0
+		[ -z "$(get "$section.gwrt_path")" ] || [ "$(get "$section.path")" = "$(get "$section.gwrt_path")" ] || return 0
+	fi
+	clients=$(lan_network); [ -n "$clients" ] || clients=192.168.3.0/24
+	set_value "$section" share &&
+	set_value "$section.gwrt_auto" 1 &&
+	set_value "$section.path" "$store_mount" &&
+	set_value "$section.gwrt_path" "$store_mount" || return 1
+	[ -n "$(get "$section.enabled")" ] || set_value "$section.enabled" 0 || return 1
+	[ -n "$(get "$section.clients")" ] || set_value "$section.clients" "$clients" || return 1
+	[ -n "$(get "$section.options")" ] || set_value "$section.options" rw,sync,no_subtree_check,no_root_squash,insecure
+}
+prepare() {
+	dirty=""
+	find_storage || return 1
+	# Swap remains useful even when no data filesystem is available.
+	commit_changes || return 1
+	mount_storage || return 0
+	local rc=0
+	setup_aria2 || rc=1
+	setup_samba || rc=1
+	setup_nfs || rc=1
+	commit_changes || rc=1
+	return "$rc"
+}
+
+case "${1:-prepare}" in prepare) ;; *) exit 2 ;; esac
+mkdir -p /var/run
+exec 9>/var/run/gwrt-emmc-storage.lock
+flock -n 9 || exit 0
+prepare

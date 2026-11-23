@@ -1,0 +1,71 @@
+#!/bin/sh
+# GWRT: 把冗余的 rootfs_1 分区做成可用数据盘，挂到 /opt
+#
+# 背景：IPQ5018 机型（如 CMCC PZ-L8）NAND 上有 A/B 双槽 rootfs/rootfs_1，
+# 各 58M。系统只从 rootfs 启动，rootfs_1 永远闲置。这里首次启动把它
+# 格式化成 UBI + UBIFS，挂载为 /opt，给插件/数据腾出约 58M。
+#
+# 安全设计：
+#  - 只在 /opt 尚未挂载、且分区存在时动手
+#  - 分区已有可识别文件系统（非空/非全FF）时不动，避免误格式化
+#  - 任何一步失败都安静退出，不影响启动
+#  - 成功后写 fstab 持久化，并留标记避免重复格式化
+#
+# 关闭方法：rm /etc/gwrt/data-part.once && uci delete fstab.opt && /etc/init.d/fstab restart
+
+MARK=/etc/gwrt/data-part.once
+MNT=/opt
+DEVNAME="rootfs_1"
+
+[ -e "$MARK" ] && exit 0
+logger -t gwrt-data "checking $DEVNAME for /opt"
+
+# 1) 找分区
+mtdnum=""
+for d in /proc/mtd; do
+	[ -f "$d" ] || break
+	line="$(grep -m1 "\"$DEVNAME\"" "$d")"
+	[ -n "$line" ] || continue
+	mtdnum="$(echo "$line" | cut -d: -f1 | tr -dc '0-9')"
+	break
+done
+[ -n "$mtdnum" ] || { logger -t gwrt-data "no $DEVNAME partition, skip"; exit 0; }
+DEV=/dev/mtd$mtdnum
+logger -t gwrt-data "found $DEV -> $MNT"
+
+# 2) 已经有文件系统就别动（读一下卷表头判断）
+if ubiattach -m "$mtdnum" -d 9 >/dev/null 2>&1; then
+	# 能挂上 UBI，说明已格式化过；直接建卷/挂载
+	:
+else
+	# 未格式化：确认是空白（前 4K 全 FF 才格式化）
+	if [ "$(dd if="$DEV" bs=4096 count=1 2>/dev/null | md5sum | cut -d' ' -f1)" != "$(head -c 4096 /dev/zero | tr '\0' '\377' | md5sum | cut -d' ' -f1)" ]; then
+		logger -t gwrt-data "$DEV not blank, refuse to format"
+		exit 0
+	fi
+	ubiformat "$DEV" -y -q >/dev/null 2>&1 || { logger -t gwrt-data "ubiformat failed"; exit 0; }
+	ubiattach -m "$mtdnum" -d 9 >/dev/null 2>&1 || { logger -t gwrt-data "ubiattach failed"; exit 0; }
+fi
+
+# 3) 建卷（没有就建）
+ubimkvol /dev/ubi9 -N opt -m >/dev/null 2>&1 || true
+
+# 4) 挂载（空卷会被内核自动格式化成 UBIFS）
+mkdir -p "$MNT"
+mount -t ubifs ubi9:opt "$MNT" >/dev/null 2>&1 || { logger -t gwrt-data "mount failed"; exit 0; }
+
+# 5) 持久化到 fstab
+uci -q get fstab.opt >/dev/null 2>&1 || {
+	uci -q set fstab.opt=mount
+	uci -q set fstab.opt.target="$MNT"
+	uci -q set fstab.opt.device="ubi9:opt"
+	uci -q set fstab.opt.fstype="ubifs"
+	uci -q set fstab.opt.options="rw"
+	uci -q set fstab.opt.enabled="1"
+	uci -q commit fstab
+}
+
+mkdir -p /etc/gwrt
+echo "ok $(date)" > "$MARK"
+logger -t gwrt-data "$MNT ready on $DEVNAME"
+exit 0

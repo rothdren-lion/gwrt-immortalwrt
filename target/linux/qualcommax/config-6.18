@@ -659,3 +659,22 @@ CONFIG_ZONE_DMA32=y
 CONFIG_ZSTD_COMMON=y
 CONFIG_ZSTD_COMPRESS=y
 CONFIG_ZSTD_DECOMPRESS=y
+
+# Added by 0981-1-qca-skb_recycler-support.patch (QCA/NSS skb recycling)
+# 2026-10-02：按用户决定全部开启（260929-02 已验证可引导）。
+CONFIG_SKB_RECYCLER=y
+CONFIG_SKB_RECYCLER_MULTI_CPU=y
+# CONFIG_SKB_RECYCLER_PREALLOC is not set
+CONFIG_SKB_RECYCLE_SIZE=2304
+
+# GWRT: daed(eBPF) 需要内核 BTF
+# BTF 要求 !DEBUG_INFO_REDUCED（见 lib/Kconfig.debug: DEBUG_INFO_BTF depends on
+# !DEBUG_INFO_REDUCED）。generic 里虽已写 not set，但最终 .config 仍被置 y，
+# 在此显式关闭以确保 BTF 生效。
+# CONFIG_DEBUG_INFO_REDUCED is not set
+CONFIG_DEBUG_INFO_BTF=y
+
+# QCA NSS ECM patch (0600-6) adds this symbol; explicit entry avoids syncconfig prompt
+# CONFIG_NF_CONNTRACK_DSCPREMARK_EXT is not set
+# CONFIG_NET_DSA_TAG_RTL837X_8021AD is not set
+# CONFIG_NET_DSA_TAG_RTL9303_8021AD is not set

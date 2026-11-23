@@ -1,7 +1,7 @@
 #!/bin/sh
 # GWRT 广告拦截命令行
 #   /usr/libexec/gwrt-tv-adblock status              状态/库版本/分类计数/实测
-#   /usr/libexec/gwrt-tv-adblock on|off <分类>       分类开关 (tv|tv-ext|cn|sec)
+#   /usr/libexec/gwrt-tv-adblock on|off <分类>       分类开关 (tv|tv-ext|cn|360|sec)
 #   /usr/libexec/gwrt-tv-adblock core|extended|off   旧三档 (兼容映射)
 #   /usr/libexec/gwrt-tv-adblock update [noreload]   从库地址下载并替换规则库
 #   /usr/libexec/gwrt-tv-adblock migrate             旧 mode 配置迁移为分类开关
@@ -17,11 +17,15 @@ lib() {
 	fi
 }
 
-# 判定是否被拦: 看有没有非 127.0.0.1 的应答地址(NXDOMAIN/空应答都算拦截)
-check_blocked() {
-	local out
-	out=$(nslookup "$1" 127.0.0.1 2>&1 | grep -E "^Address" | grep -v "127.0.0.1")
-	[ -z "$out" ]
+# 分别检查 A/AAAA；查询结果由共享解析器区分 NXDOMAIN、无该类型记录和错误。
+query_state() {
+	case "$(/usr/libexec/gwrt-tv-adblock-query "$1" "$2")" in
+		blocked) echo "已拦截" ;;
+		unblocked) echo "未拦截" ;;
+		no-record) echo "未拦截（无此类型记录）" ;;
+		dns-error) echo "DNS异常" ;;
+		*) echo "结果不明" ;;
+	esac
 }
 
 cat_count() {
@@ -43,7 +47,7 @@ lib_version() {
 cat_state() {
 	local v; v="$(uci -q get ${CFG}.config.$1 2>/dev/null)"
 	case "$1" in
-		cat_tv) [ "$v" != 0 ] && echo on || echo off ;;
+		cat_tv|cat_360) [ "$v" != 0 ] && echo on || echo off ;;
 		*) [ "$v" = 1 ] && echo on || echo off ;;
 	esac
 }
@@ -57,20 +61,19 @@ do_status() {
 	local en; en="$(uci -q get ${CFG}.config.enabled 2>/dev/null)"; [ -z "$en" ] && en=1
 	echo "library: $lib"
 	echo "version: $(lib_version "$lib")"
-	echo "counts: tv=$(cat_count "$lib" tv) tv-ext=$(cat_count "$lib" tv-ext) cn=$(cat_count "$lib" cn) sec=$(cat_count "$lib" sec) kill=$(cat_count "$lib" kill)"
-	echo "enabled: $en  tv: $(cat_state cat_tv)  tv-ext: $(cat_state cat_tv_ext)  cn: $(cat_state cat_cn)  sec: $(cat_state cat_sec)"
+	echo "counts: tv=$(cat_count "$lib" tv) tv-ext=$(cat_count "$lib" tv-ext) cn=$(cat_count "$lib" cn) 360=$(cat_count "$lib" 360) sec=$(cat_count "$lib" sec) kill=$(cat_count "$lib" kill)"
+	echo "enabled: $en  tv: $(cat_state cat_tv)  tv-ext: $(cat_state cat_tv_ext)  cn: $(cat_state cat_cn)  360: $(cat_state cat_360)  sec: $(cat_state cat_sec)"
 	local cb ca
 	cb=$(uci -q get ${CFG}.config.custom_block 2>/dev/null)
 	ca=$(uci -q get ${CFG}.config.custom_allow 2>/dev/null)
 	echo "custom: $(echo $cb | wc -w) block / $(echo $ca | wc -w) allow"
-	# 实测: 电视域 + 国内综合域 + 安全档域 + 必拦域(反映各开关效果)
+	# 保留其它档位的 IPv4 样本，并分开测 360 的 A/AAAA。
 	local d
-	for d in api.ad.xiaomi.com ads.huan.tv hm.baidu.com s.360.cn hao123.com; do
-		if check_blocked "$d"; then
-			echo "test: $d 已拦截"
-		else
-			echo "test: $d 未拦截"
-		fi
+	for d in api.ad.xiaomi.com ads.huan.tv hm.baidu.com hao123.com; do
+		echo "test: $d A $(query_state "$d" A)"
+	done
+	for d in www.360.cn s.360.cn www.360safe.com; do
+		echo "test: $d A $(query_state "$d" A) / AAAA $(query_state "$d" AAAA)"
 	done
 }
 
@@ -79,6 +82,7 @@ norm_cat() {
 		tv|cat_tv) echo cat_tv ;;
 		tv-ext|tv_ext|cat_tv_ext) echo cat_tv_ext ;;
 		cn|cat_cn) echo cat_cn ;;
+		360|qh360|cat_360) echo cat_360 ;;
 		sec|cat_sec) echo cat_sec ;;
 		*) echo "" ;;
 	esac
@@ -86,7 +90,7 @@ norm_cat() {
 
 set_cat() {
 	local opt; opt="$(norm_cat "$2")"
-	[ -n "$opt" ] || { echo "未知分类: $2 (tv|tv-ext|cn|sec)"; exit 2; }
+	[ -n "$opt" ] || { echo "未知分类: $2 (tv|tv-ext|cn|360|sec)"; exit 2; }
 	uci set ${CFG}.config.$opt="$([ "$1" = on ] && echo 1 || echo 0)"
 	uci commit ${CFG}
 	"$INIT" reload
@@ -174,6 +178,17 @@ do_update() {
 		rm -f "$tmp" "${tmp}.rules"
 		exit 1
 	fi
+	if ! awk '
+		BEGIN { n = split("360.cn 360safe.com 360safe.cn qhupdate.com mayi360.cn ads360.cn 360os.com", roots, " ") }
+		$0 == "[360]" { in360 = 1; next }
+		/^\[/ { in360 = 0 }
+		in360 && $1 !~ /^#/ { for (i = 1; i <= n; i++) if ($1 == roots[i]) found[roots[i]] = 1 }
+		END { for (i = 1; i <= n; i++) if (!found[roots[i]]) exit 1 }
+	' "$tmp"; then
+		echo "内容校验失败 (360分类需包含7个根域), 保留原库"
+		rm -f "$tmp" "${tmp}.rules"
+		exit 1
+	fi
 	if command -v dnsmasq >/dev/null 2>&1 && \
 	   ! dnsmasq --test -C "${tmp}.rules" >/dev/null 2>&1; then
 		echo "dnsmasq 语法校验失败, 保留原库"
@@ -203,7 +218,7 @@ case "$1" in
 	update)    do_update "$2" ;;
 	migrate)   do_migrate ;;
 	on)
-		[ -n "$2" ] || { echo "usage: $0 on <tv|tv-ext|cn|sec>"; exit 2; }
+		[ -n "$2" ] || { echo "usage: $0 on <tv|tv-ext|cn|360|sec>"; exit 2; }
 		set_cat on "$2" ;;
 	off)
 		# 带分类参数: 关该分类; 不带: 旧总关
@@ -213,5 +228,5 @@ case "$1" in
 			set_mode off
 		fi
 		;;
-	*) echo "usage: $0 status|on <cat>|off [cat]|core|extended|update|migrate (cat: tv|tv-ext|cn|sec)" >&2; exit 2 ;;
+	*) echo "usage: $0 status|on <cat>|off [cat]|core|extended|update|migrate (cat: tv|tv-ext|cn|360|sec)" >&2; exit 2 ;;
 esac

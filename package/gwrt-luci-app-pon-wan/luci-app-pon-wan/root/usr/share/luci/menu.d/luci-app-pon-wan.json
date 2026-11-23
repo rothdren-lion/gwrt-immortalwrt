@@ -1,0 +1,14 @@
+{
+	"admin/network/ponwan": {
+		"title": "PON WAN",
+		"order": 87,
+		"action": {
+			"type": "view",
+			"path": "ponwan/config"
+		},
+		"depends": {
+			"acl": [ "luci-app-pon-wan" ],
+			"uci": { "pon_wan": true }
+		}
+	}
+}

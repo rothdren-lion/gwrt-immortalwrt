@@ -1,0 +1,22 @@
+{
+	"luci-app-kixdns-lite": {
+		"description": "Grant access to the KixDNS control page",
+		"read": {
+			"ubus": {
+				"service": [ "list" ]
+			},
+			"file": {
+				"/etc/kixdns/pipeline.json": [ "read" ],
+				"/etc/config/kixdns": [ "read" ]
+			},
+			"uci": [ "kixdns" ]
+		},
+		"write": {
+			"file": {
+				"/etc/kixdns/pipeline.json": [ "write" ],
+				"/etc/init.d/kixdns": [ "exec" ]
+			},
+			"uci": [ "kixdns" ]
+		}
+	}
+}

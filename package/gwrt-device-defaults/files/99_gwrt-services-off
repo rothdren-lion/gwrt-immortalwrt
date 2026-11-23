@@ -1,0 +1,21 @@
+#!/bin/sh
+# 默认不启动的常驻服务（只 disable/stop，不卸载、不改配置）
+#
+# nfsd：OpenWrt 的 /etc/init.d/nfsd 前台启的是 /usr/sbin/nfsdcld，它自己会 fork
+# 到后台并立刻退出，procd 拿不到前台进程，就判定实例崩溃并反复重启，在纯有线
+# 机型（JDCloud RE-CS-08，261114-01）上表现为：
+#   procd: Instance nfsd::instance2 s in a crash loop 6 crashes, 0 seconds since last crash
+# 内核模块和软件包都保留，需要 NFS 时手动
+#   /etc/init.d/nfsd enable && /etc/init.d/nfsd start
+# 即可。
+#
+# 重复执行安全：enabled 才 disable，stop 对没在跑的服务不做任何事。
+
+for svc in nfsd nfs-server rpcbind; do
+	init="/etc/init.d/$svc"
+	[ -x "$init" ] || continue
+	"$init" enabled >/dev/null 2>&1 && "$init" disable >/dev/null 2>&1
+	"$init" stop >/dev/null 2>&1
+done
+
+exit 0

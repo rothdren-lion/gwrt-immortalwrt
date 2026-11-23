@@ -1,0 +1,10 @@
+. /lib/functions/uci-defaults.sh
+logger -t 99-lan-ip "setting GWRT default LAN IP"
+board_config_update
+json_select network
+json_select lan
+json_add_string ipaddr "192.168.3.3"
+json_add_string netmask "255.255.255.0"
+json_select ..
+json_select ..
+board_config_flush

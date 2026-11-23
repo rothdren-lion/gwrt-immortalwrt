@@ -1,0 +1,22 @@
+#!/bin/sh
+# gwrt-podman - expose the podman container list as JSON to the dashboard.
+# Requires a valid LuCI session id passed as ?sid=<ubus_rpc_session>.
+# (uhttpd does not forward HTTP_COOKIE to cgi scripts, so the page JS
+# appends the session token it already has.)
+
+sid=$(printf '%s' "${QUERY_STRING:-}" | tr '&' '\n' | sed -n 's/^sid=//p' | head -n 1)
+. /usr/share/gwrt/cgi-auth.sh
+gwrt_cgi_authorize "$sid" luci-theme-gwrt-containers read || {
+	printf 'Status: 403 Forbidden\r\nContent-Type: application/json\r\nCache-Control: no-store\r\n\r\n[]\n'
+	exit 0
+}
+
+printf 'Content-Type: application/json\r\nCache-Control: no-store\r\n\r\n'
+
+if [ -x /usr/bin/podman ]; then
+	podman ps -a --format json 2>/dev/null || printf '%s\n' '[]'
+elif [ -x /usr/bin/docker ]; then
+	docker ps -a --format json 2>/dev/null || printf '%s\n' '[]'
+else
+	printf '%s\n' '[]'
+fi

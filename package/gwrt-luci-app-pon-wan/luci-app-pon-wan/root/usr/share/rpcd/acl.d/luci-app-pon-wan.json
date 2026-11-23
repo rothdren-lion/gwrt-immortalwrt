@@ -1,0 +1,15 @@
+{
+	"luci-app-pon-wan": {
+		"description": "Grant access to the PON WAN service VLAN configuration",
+		"read": {
+			"uci": [ "pon_wan", "network", "firewall" ],
+			"ubus": {
+				"network.device": [ "status" ],
+				"network.interface": [ "dump" ]
+			}
+		},
+		"write": {
+			"uci": [ "pon_wan", "network", "firewall" ]
+		}
+	}
+}

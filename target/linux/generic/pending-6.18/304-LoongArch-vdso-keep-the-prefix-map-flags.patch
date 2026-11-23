@@ -26,18 +26,18 @@ filter. -fmacro-prefix-map does not change the debug information and is
 left out.
 
 Signed-off-by: John Crispin <john@phrozen.org>
+
 ---
- arch/loongarch/vdso/Makefile | 2 ++
- 1 file changed, 2 insertions(+)
+ arch/loongarch/vdso/Makefile | diff
 
 --- a/arch/loongarch/vdso/Makefile
 +++ b/arch/loongarch/vdso/Makefile
-@@ -13,6 +13,8 @@ ccflags-vdso := \
+@@ -13,6 +13,8 @@
  	$(filter -E%,$(KBUILD_CFLAGS)) \
  	$(filter -march=%,$(KBUILD_CFLAGS)) \
  	$(filter -m%-float,$(KBUILD_CFLAGS)) \
 +	$(filter -ffile-prefix-map=%,$(KBUILD_CFLAGS)) \
 +	$(filter -fdebug-prefix-map=%,$(KBUILD_CFLAGS)) \
+ 	$(CONFIG_CC_OPT_INLINE_MEMSET) \
  	$(CLANG_FLAGS) \
  	-D__VDSO__
- 
