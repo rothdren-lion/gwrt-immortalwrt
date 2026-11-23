@@ -10,6 +10,7 @@
     "network",
     "system",
     "wireless",
+    "pon",
     "pon_wan"
    ],
    "file": {
@@ -188,6 +189,11 @@
      "status",
      "peers",
      "topology"
+    ],
+    "luci.pon-info": [
+     "status",
+     "record",
+     "clear"
     ]
    }
   },
@@ -199,6 +205,7 @@
     "gwrt",
     "network",
     "wireless",
+    "pon",
     "pon_wan"
    ],
    "file": {

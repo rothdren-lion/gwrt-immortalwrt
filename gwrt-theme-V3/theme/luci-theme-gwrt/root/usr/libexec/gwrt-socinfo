@@ -17,7 +17,7 @@ machine_file=${GWRT_SOCINFO_MACHINE_FILE:-/sys/devices/soc0/machine}
 soc=$(cat "$machine_file" 2>/dev/null | tr 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' 'abcdefghijklmnopqrstuvwxyz' \
 	| sed 's/[[:space:]].*$//' | head -n 1)
 case "$soc" in
-	mt[0-9]*|ipq[0-9]*|an[0-9]*|en[0-9]*|rtl[0-9]*) ;;
+	mt[0-9]*|ipq[0-9]*|an[0-9]*|en[0-9]*) ;;
 	*) soc= ;;
 esac
 if [ -z "$soc" ]; then
@@ -41,7 +41,5 @@ case "$soc" in
 esac
 threads=$(awk '/^processor[[:space:]]*:/ { count++ } END { print count + 0 }' "$cpuinfo_file" 2>/dev/null)
 freq=$(cat "$freq_file" 2>/dev/null || true)
-[ -n "$freq" ] || freq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq 2>/dev/null || true)
-[ -n "$freq" ] || freq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq 2>/dev/null || true)
 
 printf '%s\n%s\n%s\n' "$soc" "${threads:-0}" "$freq"
