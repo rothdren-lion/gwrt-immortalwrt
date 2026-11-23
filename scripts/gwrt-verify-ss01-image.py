@@ -50,6 +50,15 @@ def fdt_nodes(data):
 def enabled(node):
     return node.get('status', b'okay\0') in (b'okay\0', b'ok\0')
 
+def cells(node, name, *values):
+    return node.get(name) == struct.pack(f'>{len(values)}I', *values)
+
+
+def phandle(node):
+    value = node.get('phandle', node.get('linux,phandle', b''))
+    require(len(value) == 4, 'missing DT phandle')
+    return struct.unpack('>I', value)[0]
+
 
 def verify_native_dtb(nodes):
     def lookup(compatible):
@@ -57,14 +66,6 @@ def verify_native_dtb(nodes):
                    and compatible in node.get('compatible', b'').split(b'\0')]
         require(len(matches) == 1, 'expected one enabled ' + compatible.decode())
         return matches[0]
-
-    def cells(node, name, *values):
-        return node.get(name) == struct.pack(f'>{len(values)}I', *values)
-
-    def phandle(node):
-        value = node.get('phandle', node.get('linux,phandle', b''))
-        require(len(value) == 4, 'missing DT phandle')
-        return struct.unpack('>I', value)[0]
 
     legacy = {b'qcom,ess-switch-ipq60xx', b'qcom,edma', b'qcom,nss-dp'}
     require(not any(legacy.intersection(node.get('compatible', b'').split(b'\0'))
