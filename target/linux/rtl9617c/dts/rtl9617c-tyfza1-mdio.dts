@@ -1,8 +1,0 @@
-// SPDX-License-Identifier: GPL-2.0-only
-#include "rtl9617c-tyfza1.dts"
-
-/ { model = "TYFZA1"; };
-
-&mdio {
-	status = "okay";
-};

@@ -1,0 +1,1146 @@
+// SPDX-License-Identifier: GPL-2.0-only
+
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/soc/realtek-taurus-irqs.h>
+#include <dt-bindings/reset/realtek-taurus-reset.h>
+#include <dt-bindings/clock/realtek-taurus-clk.h>
+#include <dt-bindings/phy/realtek-taurus-phy.h>
+
+/ {
+	#address-cells = <2>;
+	#size-cells = <2>;
+	interrupt-parent = <&gic>;
+
+	cpus {
+		#address-cells = <2>;
+		#size-cells = <0>;
+
+		cpu0: cpu@0 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a55";
+			reg = <0 0>;
+			enable-method = "psci";
+			clocks = <&cpu_daemon_clk>;
+			clock-names = "cpu";
+			operating-points-v2 = <&cpu_opp>;
+		};
+
+		cpu1: cpu@100 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a55";
+			reg = <0 0x100>;
+			enable-method = "psci";
+			clocks = <&cpu_daemon_clk>;
+			clock-names = "cpu";
+			operating-points-v2 = <&cpu_opp>;
+		};
+
+		cpu2: cpu@200 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a55";
+			reg = <0 0x200>;
+			enable-method = "psci";
+			clocks = <&cpu_daemon_clk>;
+			clock-names = "cpu";
+			operating-points-v2 = <&cpu_opp>;
+		};
+
+		cpu3: cpu@300 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a55";
+			reg = <0 0x300>;
+			enable-method = "psci";
+			clocks = <&cpu_daemon_clk>;
+			clock-names = "cpu";
+			operating-points-v2 = <&cpu_opp>;
+		};
+	};
+
+	cpu_opp: opp-table-cpu {
+		compatible = "operating-points-v2";
+		opp-shared;
+
+		opp-400000000 {
+			opp-hz = /bits/ 64 <400000000>;
+			clock-latency-ns = <20000000>;
+		};
+		opp-625000000 {
+			opp-hz = /bits/ 64 <625000000>;
+			clock-latency-ns = <20000000>;
+		};
+		opp-700000000 {
+			opp-hz = /bits/ 64 <700000000>;
+			clock-latency-ns = <20000000>;
+		};
+		opp-800000000 {
+			opp-hz = /bits/ 64 <800000000>;
+			clock-latency-ns = <20000000>;
+		};
+		opp-900000000 {
+			opp-hz = /bits/ 64 <900000000>;
+			clock-latency-ns = <20000000>;
+		};
+		opp-1000000000 {
+			opp-hz = /bits/ 64 <1000000000>;
+			clock-latency-ns = <20000000>;
+		};
+		opp-1100000000 {
+			opp-hz = /bits/ 64 <1100000000>;
+			clock-latency-ns = <20000000>;
+		};
+		opp-1200000000 {
+			opp-hz = /bits/ 64 <1200000000>;
+			clock-latency-ns = <20000000>;
+		};
+	};
+
+	thermal-zones {
+		cpu-thermal {
+			polling-delay-passive = <500>;
+			polling-delay = <3000>;
+			thermal-sensors = <&cpu_thermal>;
+
+			trips {
+				cpu_passive: cpu-passive {
+					temperature = <105000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+				cpu_crit: cpu-crit {
+					temperature = <120000>;
+					hysteresis = <5000>;
+					type = "critical";
+				};
+			};
+		};
+	};
+
+	psci {
+		compatible = "arm,psci-0.2";
+		method = "smc";
+	};
+
+	gic: interrupt-controller@4f8000000 {
+		compatible = "arm,gic-v3";
+		#interrupt-cells = <3>;
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+		interrupt-controller;
+		#redistributor-regions = <1>;
+		reg = <4 0xf8000000 0 0x10000>,
+		      <4 0xf8040000 0 0x80000>;
+		interrupts = <GIC_PPI 9 IRQ_TYPE_LEVEL_HIGH>;
+	};
+
+	timer {
+		compatible = "arm,armv8-timer";
+		interrupts = <GIC_PPI 13 IRQ_TYPE_LEVEL_LOW>,
+			     <GIC_PPI 14 IRQ_TYPE_LEVEL_LOW>,
+			     <GIC_PPI 11 IRQ_TYPE_LEVEL_LOW>,
+			     <GIC_PPI 10 IRQ_TYPE_LEVEL_LOW>;
+		clock-frequency = <25000000>;
+	};
+
+	ref_clk: clock-reference {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <25000000>;
+	};
+
+	apb_clk: clock-apb {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <125000000>;
+	};
+
+	soc {
+		compatible = "simple-bus";
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		soc_id: soc {
+			compatible = "realtek,taurus-soc";
+			reg = <0 0xf4320000 0 0x1000>;
+		};
+
+		soc_clks: clock-controller@f4320000 {
+			compatible = "realtek,taurus-soc-clks";
+			reg = <0 0xf4320000 0 0x260>;
+
+			pll_cpll_clk: pll_cpll {
+				compatible = "realtek,taurus-pll-cpll-clk";
+				#clock-cells = <0>;
+				clocks = <&ref_clk>;
+			};
+
+			pll_fpll_clk: pll_fpll {
+				compatible = "realtek,taurus-pll-fpll-clk";
+				#clock-cells = <0>;
+				clocks = <&ref_clk>;
+			};
+
+			div_f2c_clk: div_f2c {
+				compatible = "realtek,taurus-div-cpll-clk";
+				#clock-cells = <0>;
+				clocks = <&pll_fpll_clk>;
+				operate-shift = /bits/ 8 <TAURUS_CPLLDIV_F2C_OFFSET>;
+				operate-width = /bits/ 8 <TAURUS_CPLLDIV_F2C_SIZE>;
+			};
+
+			div_f_clk: div_fpll {
+				compatible = "realtek,taurus-div-fpll-clk";
+				#clock-cells = <0>;
+				clocks = <&pll_fpll_clk>;
+				operate-shift = /bits/ 8 <TAURUS_FPLLDIV_FPLL_OFFSET>;
+				operate-width = /bits/ 8 <TAURUS_FPLLDIV_FPLL_SIZE>;
+			};
+
+			div_c2f_clk: div_c2f {
+				compatible = "realtek,taurus-div-fpll-clk";
+				#clock-cells = <0>;
+				clocks = <&pll_cpll_clk>;
+				operate-shift = /bits/ 8 <TAURUS_FPLLDIV_C2F_OFFSET>;
+				operate-width = /bits/ 8 <TAURUS_FPLLDIV_C2F_SIZE>;
+			};
+
+			mux_cpu_clk: mux_cpu {
+				compatible = "realtek,taurus-mux-cpu-clk";
+				#clock-cells = <0>;
+				clocks = <&pll_cpll_clk>, <&div_f2c_clk>;
+				operate-shift = /bits/ 8 <TAURUS_CPLLDIV_CF_SEL>;
+			};
+
+			mux_pe_clk: mux_pe {
+				compatible = "realtek,taurus-mux-pe-clk";
+				#clock-cells = <0>;
+				clocks = <&div_f_clk>, <&div_c2f_clk>;
+				operate-shift = /bits/ 8 <TAURUS_PEDIV_OFFLOAD_SEL>;
+			};
+
+			div_cortex_clk: div_cortex {
+				compatible = "realtek,taurus-div-cpll-clk";
+				#clock-cells = <0>;
+				clocks = <&mux_cpu_clk>;
+				operate-shift = /bits/ 8 <TAURUS_CPLLDIV_CORTEX_OFFSET>;
+				operate-width = /bits/ 8 <TAURUS_CPLLDIV_CORTEX_SIZE>;
+			};
+
+			div_trc_clk: div_trc {
+				compatible = "realtek,taurus-div-cpll-clk";
+				#clock-cells = <0>;
+				clocks = <&mux_cpu_clk>;
+				operate-shift = /bits/ 8 <TAURUS_CPLLDIV_TRC_OFFSET>;
+				operate-width = /bits/ 8 <TAURUS_CPLLDIV_TRC_SIZE>;
+			};
+
+			div_peaxi_clk: div_peaxi {
+				compatible = "realtek,taurus-div-fpll-clk";
+				#clock-cells = <0>;
+				clocks = <&mux_pe_clk>;
+				operate-shift = /bits/ 8 <TAURUS_FPLLDIV_PEAXI_OFFSET>;
+				operate-width = /bits/ 8 <TAURUS_FPLLDIV_PEAXI_SIZE>;
+			};
+
+			mux_peaxi_clk: mux_peaxi {
+				compatible = "realtek,taurus-mux-pe-clk";
+				#clock-cells = <0>;
+				clocks = <&div_peaxi_clk>, <&mux_pe_clk>;
+				operate-shift = /bits/ 8 <TAURUS_PEDIV_FULLSPEED_SEL>;
+			};
+
+			pll_epll_clk: pll_epll {
+				compatible = "realtek,taurus-pll-epll-clk";
+				#clock-cells = <0>;
+				clocks = <&ref_clk>;
+			};
+
+			div_crypto_clk: div_crypto {
+				compatible = "realtek,taurus-div-epll-clk";
+				#clock-cells = <0>;
+				clocks = <&pll_epll_clk>;
+				operate-shift = /bits/ 8 <TAURUS_EPLLDIV_CRYPTO_OFFSET>;
+				operate-width = /bits/ 8 <TAURUS_EPLLDIV_CRYPTO_SIZE>;
+			};
+
+			div_core_clk: div_core {
+				compatible = "realtek,taurus-div-epll-clk";
+				#clock-cells = <0>;
+				clocks = <&pll_epll_clk>;
+				operate-shift = /bits/ 8 <TAURUS_EPLLDIV_CORE_OFFSET>;
+				operate-width = /bits/ 8 <TAURUS_EPLLDIV_CORE_SIZE>;
+			};
+
+			div_cci_clk: div_cci {
+				compatible = "realtek,taurus-div-epll2-clk";
+				#clock-cells = <0>;
+				clocks = <&pll_epll_clk>;
+				operate-shift = /bits/ 8 <TAURUS_EPLLDIV2_CCI_OFFSET>;
+				operate-width = /bits/ 8 <TAURUS_EPLLDIV2_CCI_SIZE>;
+			};
+
+			div_lsaxi_clk: div_lsaxi {
+				compatible = "realtek,taurus-div-epll-clk";
+				#clock-cells = <0>;
+				clocks = <&pll_epll_clk>;
+				operate-shift = /bits/ 8 <TAURUS_EPLLDIV_LSAXI_OFFSET>;
+				operate-width = /bits/ 8 <TAURUS_EPLLDIV_LSAXI_SIZE>;
+			};
+
+			factor_peripheral_clk: factor_peripheral {
+				compatible = "realtek,taurus-fixed-factor-clk";
+				#clock-cells = <0>;
+				clocks = <&pll_epll_clk>;
+				fixed-div = <16>;
+			};
+
+			factor_usb_suspend_clk: factor_usb_suspend {
+				compatible = "realtek,taurus-fixed-factor-clk";
+				#clock-cells = <0>;
+				clocks = <&pll_epll_clk>;
+				fixed-div = <200>;
+			};
+
+			cpu_daemon_clk: cpu_daemon {
+				compatible = "realtek,taurus-cpu-daemon-clk";
+				#clock-cells = <0>;
+				clocks = <&ref_clk>,
+					 <&pll_cpll_clk>,
+					 <&div_f2c_clk>,
+					 <&mux_cpu_clk>,
+					 <&div_cortex_clk>;
+			};
+
+			gate_pcie0_clk: gate_pcie0 {
+				compatible = "realtek,taurus-gate-clk";
+				#clock-cells = <0>;
+				operate-shift = /bits/ 8 <TAURUS_CFG_CLKEN_PCIE0>;
+			};
+
+			gate_pcie1_clk: gate_pcie1 {
+				compatible = "realtek,taurus-gate-clk";
+				#clock-cells = <0>;
+				operate-shift = /bits/ 8 <TAURUS_CFG_CLKEN_PCIE1>;
+			};
+
+			gate_pcie2_clk: gate_pcie2 {
+				compatible = "realtek,taurus-gate-clk";
+				#clock-cells = <0>;
+				operate-shift = /bits/ 8 <TAURUS_CFG_CLKEN_PCIE2>;
+			};
+		};
+
+		block_rst: reset-controller@f4320098 {
+			compatible = "realtek,taurus-reset";
+			reg = <0x0 0xf4320098 0x0 0x4>;
+			#reset-cells = <1>;
+		};
+
+		block_ext_rst: reset-controller@f432009c {
+			compatible = "realtek,taurus-reset";
+			reg = <0x0 0xf432009c 0x0 0x4>;
+			#reset-cells = <1>;
+		};
+
+		pon_rst: reset-controller@f4320094 {
+			compatible = "realtek,taurus-reset";
+			reg = <0x0 0xf4320094 0x0 0x4>;
+			#reset-cells = <1>;
+		};
+
+		dphy_rst: reset-controller@f43200a0 {
+			compatible = "realtek,taurus-reset";
+			reg = <0x0 0xf43200a0 0x0 0x4>;
+			#reset-cells = <1>;
+		};
+
+		pinctrl: pinctrl@4f43200f0 {
+			compatible = "realtek,taurus-pinctrl";
+			reg = <4 0xf43200f0 0 0x24>;
+
+			i2c0_pins: i2c0-default {
+				data-signals {
+					pins = "GPIO_204", "GPIO_205", "PMUX_120";
+					function = "multi-fn";
+				};
+			};
+
+			i2c0_gpio_pins: i2c0-gpio {
+				data-signals {
+					pins = "GPIO_204", "GPIO_205";
+					function = "gpio";
+				};
+			};
+		};
+
+		spare_reg: spare@4f432945c {
+			compatible = "realtek,taurus-spare-reg";
+			reg = <4 0xf432945c 0 0x4>;
+		};
+
+		vsfc: vsfc@4f4320278 {
+			compatible = "realtek,taurus-vsfc";
+			reg = <4 0xf4320278 0 0x4c>;
+			trig_sel = <1>;
+			div_sel = <0>;
+			core_idle_div_en = <1>;
+			core_min = <4>;
+			det_recv_sel = <1>;
+			recv_ctrl1 = <0xaaaa0080>;
+			recv_ctrl2 = <0x88880100>;
+			recv_ctrl3 = <0x08080140>;
+			status = "disabled";
+		};
+
+		per_ictl: interrupt-controller@f4329004 {
+			compatible = "realtek,taurus-peri-ictl";
+			reg = <0 0xf4329004 0 0x10>;
+			interrupt-controller;
+			#interrupt-cells = <1>;
+			#address-cells = <0>;
+			interrupts = <GIC_SPI TAURUS_IRQ_GLB_PERI IRQ_TYPE_LEVEL_HIGH>;
+		};
+
+		cpu_thermal: thermal-sensor@f4320264 {
+			compatible = "realtek,taurus-thermal";
+			reg = <0 0xf4320264 0 0x10>;
+			#thermal-sensor-cells = <0>;
+		};
+
+		watchdog: watchdog@f432901c {
+			compatible = "realtek,taurus-wdt";
+			reg = <0 0xf432901c 0 0x30>,
+			      <0 0xf43200c0 0 0x4>;
+			interrupt-parent = <&per_ictl>;
+			interrupts = <TAURUS_IRQ_PER_WDT>;
+			clocks = <&apb_clk>;
+			status = "disabled";
+		};
+
+		uart0: serial@f43291b0 {
+			compatible = "realtek,taurus-uart";
+			reg = <0 0xf43291b0 0 0x30>;
+			interrupts = <GIC_SPI TAURUS_IRQ_GLB_UART0 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&apb_clk>;
+			status = "disabled";
+		};
+
+		uart1: serial@f43291e0 {
+			compatible = "realtek,taurus-uart";
+			reg = <0 0xf43291e0 0 0x30>;
+			interrupts = <GIC_SPI TAURUS_IRQ_GLB_UART1 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&apb_clk>;
+			status = "disabled";
+		};
+
+		qspi: spi@4f4324000 {
+			compatible = "realtek,taurus-qspi";
+			reg = <4 0xf4324000 0 0x50>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		i2c0: i2c@4f4329160 {
+			compatible = "realtek,taurus-i2c";
+			reg = <4 0xf4329160 0 0x28>;
+			clocks = <&apb_clk>;
+			clock-frequency = <100000>;
+			interrupt-parent = <&per_ictl>;
+			interrupts = <TAURUS_IRQ_PER_BIW0>;
+			pinctrl-names = "default", "gpio";
+			pinctrl-0 = <&i2c0_pins>;
+			pinctrl-1 = <&i2c0_gpio_pins>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		i2c1: i2c@4f4329188 {
+			compatible = "realtek,taurus-i2c";
+			reg = <4 0xf4329188 0 0x28>;
+			clocks = <&apb_clk>;
+			clock-frequency = <100000>;
+			interrupt-parent = <&per_ictl>;
+			interrupts = <TAURUS_IRQ_PER_BIW1>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		gpio0: gpio@4f43292c0 {
+			compatible = "realtek,taurus-gpio";
+			reg = <4 0xf43292c0 0 0xb4>;
+			id = <0>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			gpio-controller;
+			status = "disabled";
+
+			gpio_bank0: bank@0 {
+				gpio-controller;
+				interrupt-controller;
+				reg = <0>;
+				ngpios = <32>;
+				#gpio-cells = <2>;
+				#address-cells = <0>;
+				#interrupt-cells = <2>;
+				interrupt-parent = <&per_ictl>;
+				interrupts = <TAURUS_IRQ_PER_GPIO0>;
+				gpio-ranges = <&pinctrl 0 0 32>;
+			};
+
+			gpio_bank1: bank@1 {
+				gpio-controller;
+				interrupt-controller;
+				reg = <1>;
+				ngpios = <32>;
+				#gpio-cells = <2>;
+				#address-cells = <0>;
+				#interrupt-cells = <2>;
+				interrupt-parent = <&per_ictl>;
+				interrupts = <TAURUS_IRQ_PER_GPIO1>;
+				gpio-ranges = <&pinctrl 0 32 32>;
+			};
+
+			gpio_bank2: bank@2 {
+				gpio-controller;
+				interrupt-controller;
+				reg = <2>;
+				ngpios = <32>;
+				#gpio-cells = <2>;
+				#address-cells = <0>;
+				#interrupt-cells = <2>;
+				interrupt-parent = <&per_ictl>;
+				interrupts = <TAURUS_IRQ_PER_GPIO2>;
+				gpio-ranges = <&pinctrl 0 64 32>;
+			};
+
+			gpio_bank3: bank@3 {
+				gpio-controller;
+				interrupt-controller;
+				reg = <3>;
+				ngpios = <32>;
+				#gpio-cells = <2>;
+				#address-cells = <0>;
+				#interrupt-cells = <2>;
+				interrupt-parent = <&per_ictl>;
+				interrupts = <TAURUS_IRQ_PER_GPIO3>;
+				gpio-ranges = <&pinctrl 0 96 32>;
+			};
+
+			gpio_bank4: bank@4 {
+				gpio-controller;
+				interrupt-controller;
+				reg = <4>;
+				ngpios = <32>;
+				#gpio-cells = <2>;
+				#address-cells = <0>;
+				#interrupt-cells = <2>;
+				interrupt-parent = <&per_ictl>;
+				interrupts = <TAURUS_IRQ_PER_GPIO4>;
+				gpio-ranges = <&pinctrl 0 128 32>;
+			};
+		};
+
+		ne_irq: interrupt-controller@f4320164 {
+			compatible = "realtek,taurus-peri-ictl";
+			reg = <0 0xf4320164 0 0x10>;
+			interrupt-controller;
+			#interrupt-cells = <1>;
+			#address-cells = <0>;
+			interrupt-parent = <&gic>;
+			interrupts = <GIC_SPI TAURUS_IRQ_GLB_NE IRQ_TYPE_LEVEL_HIGH>;
+		};
+
+		mdio: mdio@4f4329118 {
+			compatible = "realtek,taurus-mdio";
+			reg = <4 0xf4329118 0 0x48>,
+			      <4 0xf4600000 0 0x100000>;
+			reg-names = "mdio", "gphy";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			nvmem-cells = <&gphy_param &gphy_calib &gphy_patch>;
+			nvmem-cell-names = "param", "calibration", "phy_patch";
+			status = "disabled";
+		};
+
+		serdes: phy@4f550d000 {
+			compatible = "realtek,taurus-serdes";
+			reg = <4 0xf550d000 0 0x1000>,
+			      <0 0xf43200c4 0 0x20>,
+			      <0 0xf43200a0 0 0x4>,
+			      <0 0xf432036c 0 0x4>,
+			      <4 0xf433b000 0 0x1000>,
+			      <0 0xf4600000 0 0x1000>;
+			reg-names = "sds", "lane-ctrl", "lane-reset", "lane-power",
+				    "lane-analog", "lane-tx";
+			#phy-cells = <0>;
+			status = "disabled";
+		};
+
+		lane_phy: phy@f43200c4 {
+			compatible = "realtek,taurus-phy";
+			reg = <0 0xf43200c4 0 0x20>,
+			      <0 0xf432036c 0 0x4>;
+			reg-names = "control", "power";
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			s0_pcie_phy0: phy@0 {
+				reg = <TAURUS_PHY_S0_PCIE0>;
+				#phy-cells = <0>;
+			};
+
+			s0_pcie_phy1: phy@1 {
+				reg = <TAURUS_PHY_S0_PCIE1>;
+				#phy-cells = <0>;
+			};
+
+			s0_rxaui_phy: phy@9 {
+				reg = <TAURUS_PHY_S0_RXAUI>;
+				#phy-cells = <0>;
+			};
+
+			s1_pcie_phy0: phy@2 {
+				reg = <TAURUS_PHY_S1_PCIE0>;
+				#phy-cells = <0>;
+			};
+
+			s1_pcie_phy1: phy@3 {
+				reg = <TAURUS_PHY_S1_PCIE1>;
+				#phy-cells = <0>;
+			};
+
+			s2_pcie_phy0: phy@4 {
+				reg = <TAURUS_PHY_S2_PCIE0>;
+				#phy-cells = <0>;
+			};
+
+			s2_usb_phy: phy@5 {
+				reg = <TAURUS_PHY_S2_USB>;
+				#phy-cells = <0>;
+			};
+
+			s3_usb_phy: phy@6 {
+				reg = <TAURUS_PHY_S3_USB>;
+				#phy-cells = <0>;
+			};
+
+			s3_sgmii_phy: phy@7 {
+				reg = <TAURUS_PHY_S3_SGMII>;
+				#phy-cells = <0>;
+				serdes-reg = <0x0 0xf4600000 0x0 0x1000>;
+			};
+		};
+
+		otp: otp@fff80300 {
+			compatible = "realtek,taurus-otp";
+			reg = <0x0 0xfff80300 0x0 0x100>;
+
+			nvmem-layout {
+				compatible = "fixed-layout";
+				#address-cells = <1>;
+				#size-cells = <1>;
+
+				gphy_param: param@80 {
+					reg = <0x80 0x4>;
+				};
+
+				gphy_patch: phy-patch@84 {
+					reg = <0x84 0x10>;
+				};
+
+				gphy_calib: calibration@94 {
+					reg = <0x94 0x20>;
+				};
+			};
+		};
+
+		usb_hsphy: usbphy@f432b020 {
+			compatible = "realtek,taurus-usb2phy";
+			reg = <0 0xf432b020 0 0x18>;
+			reg-names = "u2host_reg";
+			resets = <&block_rst TAURUS_USB_RESET>,
+				 <&block_ext_rst TAURUS_USB2_PORT1_RESET>;
+			reset-names = "usbcore_reset", "usb2port1_reset";
+			portmask = <0x3>;
+			phy_sel = <&phy_param0>, <&phy_param1>;
+			status = "disabled";
+
+			phy_param0: phy_param0 {
+				phy_data_addrA = /bits/ 8
+					<0xE0 0xE2 0xE4 0xE7 0xF4 0xE7 0xF4 0xE0 0xE0 0xE0>;
+				phy_data_arrayA = /bits/ 8
+					<0x1F 0xF9 0x68 0x71 0xDB 0x44 0xBB 0x25 0x21 0x25>;
+				phy_data_addrB = /bits/ 8
+					<0xE0 0xE2 0xE4 0xE7 0xF4 0xE7 0xF4 0xE0 0xE0 0xE0>;
+				phy_data_arrayB = /bits/ 8
+					<0x1F 0xF9 0x3B 0x71 0xDB 0x73 0xBB 0x26 0x22 0x26>;
+			};
+
+			phy_param1: phy_param1 {
+				phy_data_addrA = /bits/ 8
+					<0xE0 0xE2 0xE4 0xE7 0xF4 0xE7 0xF4 0xE0 0xE0 0xE0>;
+				phy_data_arrayA = /bits/ 8
+					<0x1F 0xF9 0x68 0x71 0xDB 0x44 0xBB 0x25 0x21 0x25>;
+				phy_data_addrB = /bits/ 8
+					<0xE0 0xE2 0xE4 0xE7 0xF4 0xE7 0xF4 0xE0 0xE0 0xE0>;
+				phy_data_arrayB = /bits/ 8
+					<0x1F 0xF9 0x3B 0x71 0xDB 0x53 0xBB 0x26 0x22 0x26>;
+			};
+		};
+
+		usb_ssphy: usbphy@f432b000 {
+			compatible = "realtek,taurus-usb3phy";
+			reg = <0 0xf432b000 0 0x20>,
+			      <0 0xf432b04c 0 0x10>,
+			      <0 0xf4337000 0 0x1000>,
+			      <0 0xf4338000 0 0x1000>;
+			reg-names = "u3host_reg", "u3ext_reg", "s2usbphy_u3port",
+				    "s3usbphy_u3port";
+			phys = <&s2_usb_phy>, <&s3_usb_phy>;
+			phy-names = "s2usb3-phy", "s3usb3-phy";
+			phymask = <0x1>;
+			phy_data_verA = "revA v1.1 (2021.10.28)";
+			phy_data_addrA = /bits/ 8
+				<0x01 0x04 0x05 0x08 0x09
+				 0x0a 0x0b 0x0d 0x0e
+				 0x20 0x21 0x22 0x23 0x27
+				 0x2b 0x33>;
+			phy_data_arrayA = /bits/ 16
+				<0xaccc 0x7000 0x6313 0x30d1 0x424c
+				 0xa610 0xb905 0xef2e 0x1000
+				 0x705e 0xf8e8 0x0003 0x0b66 0x0241
+				 0x0038 0x0001>;
+			phy_data_verB = "revB v1.0 (2022.02.24)";
+			phy_data_addrB = /bits/ 8
+				<0x01 0x04 0x05 0x08 0x09
+				 0x0a 0x0b 0x0d 0x0e
+				 0x20 0x21 0x22 0x23 0x27
+				 0x2b 0x33
+				 0x09 0x09 0x09>;
+			phy_data_arrayB = /bits/ 16
+				<0xaccc 0x7000 0x6313 0x30d1 0x424c
+				 0xc610 0xa905 0xef2e 0x1000
+				 0x705e 0xf8e8 0x0003 0x0b66 0x0241
+				 0x0038 0x0001
+				 0x424c 0x404c 0x424c>;
+			status = "disabled";
+		};
+
+		usb3: usb@f0200000 {
+			compatible = "snps,dwc3";
+			dr_mode = "host";
+			reg = <0 0xf0200000 0 0x80000>;
+			interrupts = <GIC_SPI TAURUS_IRQ_GLB_USB3_0 IRQ_TYPE_LEVEL_HIGH>;
+			status = "disabled";
+		};
+
+		pcie0: pcie@f4325000 {
+			compatible = "realtek,taurus-pcie";
+			reg = <0 0xf4325000 0 0x400>,
+			      <0 0xa0001000 0 0x1000>,
+			      <0 0xa0002000 0 0x2000>,
+			      <0 0xa0030000 0 0x100000>,
+			      <0 0xf4333000 0 0x2000>;
+			reg-names = "glbl_regs", "rc_dbi", "config", "iatu",
+				    "serdes_phy";
+			phys = <&s0_pcie_phy0>,
+			      <&s0_pcie_phy1>;
+			phy-names = "pcie-phy0";
+
+			#address-cells = <3>;
+			#size-cells = <2>;
+			device_type = "pci";
+			bus-range = <0x0 0xff>;
+			ranges = <0x81000000 0 0 0 0xa0003000 0 0x00010000>,
+				 <0x82000000 0 0xa0400000 0 0xa0400000 0 0x0fc00000>;
+
+			id = <0>;
+			num-viewport = <1>;
+			num-lanes = <1>;
+			clocks = <&gate_pcie0_clk>;
+			interrupt-parent = <&gic>;
+			interrupts = 			<GIC_SPI TAURUS_IRQ_GLB_PCI0_0 IRQ_TYPE_LEVEL_HIGH>,
+			<GIC_SPI TAURUS_IRQ_GLB_PCI0_1 IRQ_TYPE_LEVEL_HIGH>,
+			<GIC_SPI TAURUS_IRQ_GLB_PCI0_2 IRQ_TYPE_LEVEL_HIGH>,
+			<GIC_SPI TAURUS_IRQ_GLB_PCI0_3 IRQ_TYPE_LEVEL_HIGH>;
+
+			resets = <&block_rst TAURUS_PCIE0_RESET>,
+				 <&dphy_rst TAURUS_PHY_S0_PCIE_RESET>;
+			reset-names = "core_reset", "phy_reset";
+
+			serdes-cfg-verA = "revA v1.3 (2022.04.22)";
+			serdes-cfg-verB = "revB v1.5 (2023.12.13)";
+			serdes-cfg-dataA = /* S0_0 & S0_1 gen1 for revA */
+		              <0x04 0xa855>,
+		              <0x18 0x000a>,
+		              <0x20 0x3591>,
+		              <0x28 0x8670>,
+		              <0x2c 0xb90d>,
+		              <0x34 0xf71a>,
+		              <0x38 0x1000>,
+		              <0x74 0xda1f>,
+		              <0x80 0xd477>,
+		              <0x88 0x0023>,
+		              <0x8c 0x0b66>,
+		              <0x90 0x4f30>,
+		              <0xa0 0xf802>,
+		              <0xc0 0x0055>,
+		              <0x24 0x500c>,
+		              <0x24 0x520c>,
+		              /* S0_0 & S0_1 gen2 for revA */
+		              <0x104 0xa84a>,
+		              <0x118 0x000a>,
+		              <0x120 0x3591>,
+		              <0x128 0x8650>,
+		              <0x12c 0xb90d>,
+		              <0x134 0xf71a>,
+		              <0x138 0x1000>,
+		              <0x174 0xda1f>,
+		              <0x180 0xd477>,
+		              <0x184 0x55aa>,
+		              <0x188 0x0023>,
+		              <0x18c 0x0b66>,
+		              <0x1a0 0xf802>,
+		              <0x1bc 0x3900>,
+		              <0x1c0 0x004a>,
+		              <0x124 0x500c>,
+		              <0x124 0x520c>;
+			serdes-cfg-dataB = /* S0_0 & S0_1 gen1 for revB */
+		              <0x04 0xa855>,
+		              <0x08 0x60c6>,
+		              <0x18 0x001f>,
+		              <0x20 0x3591>,
+		              <0x28 0xf670>,
+		              <0x2c 0xa90d>,
+		              <0x34 0xf71a>,
+		              <0x38 0x1000>,
+		              <0x74 0xda1f>,
+				<0x78 0xe0e2>,
+		              <0x80 0xd477>,
+		              <0x88 0x0023>,
+		              <0x8c 0x0b66>,
+		              <0x90 0x4f30>,
+		              <0xa0 0xf802>,
+		              <0xc0 0x0055>,
+		              <0xc8 0xf0f3>,
+		              <0x24 0x520c>,
+		              /* S0_0 & S0_1 gen2 for revB */
+		              <0x104 0xa84a>,
+		              <0x108 0x60c6>,
+		              <0x118 0x001f>,
+		              <0x120 0x3591>,
+		              <0x128 0xf670>,
+		              <0x12c 0xa90d>,
+		              <0x134 0xf71a>,
+		              <0x138 0x1000>,
+		              <0x174 0xda1f>,
+				<0x178 0xe0e2>,
+		              <0x180 0xd479>,
+		              <0x184 0x55aa>,
+		              <0x188 0x0023>,
+		              <0x18c 0x0b66>,
+		              <0x190 0x4f0c>,
+		              <0x1a0 0xf802>,
+		              <0x1bc 0x3900>,
+		              <0x1c0 0x004a>,
+		              <0x1c8 0xf0f3>,
+		              <0x124 0x520c>;
+			status = "disabled";
+		};
+
+		pcie1: pcie@f4326000 {
+			compatible = "realtek,taurus-pcie";
+			reg = <0 0xf4326000 0 0x400>,
+			      <0 0xb0001000 0 0x1000>,
+			      <0 0xb0002000 0 0x2000>,
+			      <0 0xb0030000 0 0x100000>,
+			      <0 0xf4335000 0 0x2000>;
+			reg-names = "glbl_regs", "rc_dbi", "config", "iatu",
+				    "serdes_phy";
+			phys = <&s1_pcie_phy0>,
+			      <&s1_pcie_phy1>;
+			phy-names = "pcie-phy0";
+
+			#address-cells = <3>;
+			#size-cells = <2>;
+			device_type = "pci";
+			bus-range = <0x0 0xff>;
+			ranges = <0x81000000 0 0 0 0xb0003000 0 0x00010000>,
+				 <0x82000000 0 0xb0400000 0 0xb0400000 0 0x0fc00000>;
+
+			id = <1>;
+			num-viewport = <1>;
+			num-lanes = <1>;
+			clocks = <&gate_pcie1_clk>;
+			interrupt-parent = <&gic>;
+			interrupts = 			<GIC_SPI TAURUS_IRQ_GLB_PCI1_0 IRQ_TYPE_LEVEL_HIGH>,
+			<GIC_SPI TAURUS_IRQ_GLB_PCI1_1 IRQ_TYPE_LEVEL_HIGH>,
+			<GIC_SPI TAURUS_IRQ_GLB_PCI1_2 IRQ_TYPE_LEVEL_HIGH>,
+			<GIC_SPI TAURUS_IRQ_GLB_PCI1_3 IRQ_TYPE_LEVEL_HIGH>;
+
+			resets = <&block_rst TAURUS_PCIE1_RESET>,
+				 <&dphy_rst TAURUS_PHY_S1_PCIE_RESET>;
+			reset-names = "core_reset", "phy_reset";
+
+			serdes-cfg-verA = "revA v1.3 (2022.04.22)";
+			serdes-cfg-verB = "revB v1.5 (2023.12.13)";
+			serdes-cfg-dataA = /* S0_0 & S0_1 gen1 for revA */
+		              <0x04 0xa855>,
+		              <0x18 0x000a>,
+		              <0x20 0x3591>,
+		              <0x28 0x8670>,
+		              <0x2c 0xb90d>,
+		              <0x34 0xf71a>,
+		              <0x38 0x1000>,
+		              <0x74 0xda1f>,
+		              <0x80 0xd477>,
+		              <0x88 0x0023>,
+		              <0x8c 0x0b66>,
+		              <0x90 0x4f30>,
+		              <0xa0 0xf802>,
+		              <0xc0 0x0055>,
+		              <0x24 0x500c>,
+		              <0x24 0x520c>,
+		              /* S0_0 & S0_1 gen2 for revA */
+		              <0x104 0xa84a>,
+		              <0x118 0x000a>,
+		              <0x120 0x3591>,
+		              <0x128 0x8650>,
+		              <0x12c 0xb90d>,
+		              <0x134 0xf71a>,
+		              <0x138 0x1000>,
+		              <0x174 0xda1f>,
+		              <0x180 0xd477>,
+		              <0x184 0x55aa>,
+		              <0x188 0x0023>,
+		              <0x18c 0x0b66>,
+		              <0x1a0 0xf802>,
+		              <0x1bc 0x3900>,
+		              <0x1c0 0x004a>,
+		              <0x124 0x500c>,
+		              <0x124 0x520c>;
+			serdes-cfg-dataB = /* S0_0 & S0_1 gen1 for revB */
+		              <0x04 0xa855>,
+		              <0x08 0x60c6>,
+		              <0x18 0x001f>,
+		              <0x20 0x3591>,
+		              <0x28 0xf670>,
+		              <0x2c 0xa90d>,
+		              <0x34 0xf71a>,
+		              <0x38 0x1000>,
+		              <0x74 0xda1f>,
+				<0x78 0xe0e2>,
+		              <0x80 0xd477>,
+		              <0x88 0x0023>,
+		              <0x8c 0x0b66>,
+		              <0x90 0x4f30>,
+		              <0xa0 0xf802>,
+		              <0xc0 0x0055>,
+		              <0xc8 0xf0f3>,
+		              <0x24 0x500c>,
+		              <0x24 0x520c>,
+		              /* S0_0 & S0_1 gen2 for revB */
+		              <0x104 0xa84a>,
+		              <0x108 0x60c6>,
+		              <0x118 0x001f>,
+		              <0x120 0x3591>,
+		              <0x128 0xf670>,
+		              <0x12c 0xa90d>,
+		              <0x134 0xf71a>,
+		              <0x138 0x1000>,
+		              <0x174 0xda1f>,
+				<0x178 0xe0e2>,
+		              <0x180 0xd479>,
+		              <0x184 0x55aa>,
+		              <0x188 0x0023>,
+		              <0x18c 0x0b66>,
+		              <0x190 0x4f0c>,
+		              <0x1a0 0xf802>,
+		              <0x1bc 0x3900>,
+		              <0x1c0 0x004a>,
+		              <0x1c8 0xf0f3>,
+		              <0x124 0x500c>,
+		              <0x124 0x520c>;
+			status = "disabled";
+		};
+
+		pcie2: pcie@f4327000 {
+			compatible = "realtek,taurus-pcie";
+			reg = <0 0xf4327000 0 0x400>,
+			      <0 0xc0001000 0 0x1000>,
+			      <0 0xc0002000 0 0x2000>,
+			      <0 0xc0030000 0 0x100000>,
+			      <0 0xf4337000 0 0x1000>;
+			reg-names = "glbl_regs", "rc_dbi", "config", "iatu",
+				    "serdes_phy";
+			phys = <&s2_pcie_phy0>;
+			phy-names = "pcie-phy0";
+
+			#address-cells = <3>;
+			#size-cells = <2>;
+			device_type = "pci";
+			bus-range = <0x0 0xff>;
+			ranges = <0x81000000 0 0 0 0xc0003000 0 0x00010000>,
+				 <0x82000000 0 0xc0400000 0 0xc0400000 0 0x0fc00000>;
+
+			id = <2>;
+			num-viewport = <1>;
+			num-lanes = <1>;
+			clocks = <&gate_pcie2_clk>;
+			interrupt-parent = <&gic>;
+			interrupts = 			<GIC_SPI TAURUS_IRQ_GLB_PCI2_0 IRQ_TYPE_LEVEL_HIGH>,
+			<GIC_SPI TAURUS_IRQ_GLB_PCI2_1 IRQ_TYPE_LEVEL_HIGH>,
+			<GIC_SPI TAURUS_IRQ_GLB_PCI2_2 IRQ_TYPE_LEVEL_HIGH>,
+			<GIC_SPI TAURUS_IRQ_GLB_PCI2_3 IRQ_TYPE_LEVEL_HIGH>;
+
+			resets = <&block_rst TAURUS_PCIE2_RESET>,
+				 <&dphy_rst TAURUS_PHY_S2_PCIE_RESET>;
+			reset-names = "core_reset", "phy_reset";
+
+			serdes-cfg-verA = "revA v1.3 (2022.04.22)";
+			serdes-cfg-verB = "revB v1.5 (2023.12.13)";
+			serdes-cfg-dataA = /* S0_0 & S0_1 gen1 for revA */
+		              <0x04 0xa855>,
+		              <0x18 0x000a>,
+		              <0x20 0x3591>,
+		              <0x28 0x8670>,
+		              <0x2c 0xb90d>,
+		              <0x34 0xf71a>,
+		              <0x38 0x1000>,
+		              <0x70 0x2000>,
+		              <0x74 0xda1f>,
+		              <0x78 0x66eb>,
+		              <0x80 0xd477>,
+		              <0x88 0x0023>,
+		              <0x8c 0x0b66>,
+		              <0x90 0x4f30>,
+		              <0xa0 0xf802>,
+		              <0xbc 0x7055>,
+		              <0x24 0x500c>,
+		              <0x24 0x520c>,
+		              /* S0_0 & S0_1 gen2 for revA */
+		              <0x104 0xa84a>,
+		              <0x118 0x000a>,
+		              <0x120 0x3591>,
+		              <0x128 0x8650>,
+		              <0x12c 0xb90d>,
+		              <0x134 0xf71a>,
+		              <0x138 0x1000>,
+		              <0x170 0x2000>,
+		              <0x174 0xda1f>,
+		              <0x180 0xd477>,
+		              <0x184 0x55aa>,
+		              <0x188 0x0023>,
+		              <0x18c 0x0b66>,
+		              <0x1a0 0xf802>,
+		              <0x1bc 0x704a>,
+		              <0x124 0x500c>,
+		              <0x124 0x520c>;
+			serdes-cfg-dataB = /* S0_0 & S0_1 gen1 for revB */
+		              <0x04 0xa855>,
+		              <0x08 0x60c6>,
+		              <0x18 0x001f>,
+		              <0x20 0x3591>,
+		              <0x28 0xf670>,
+		              <0x2c 0xa90d>,
+		              <0x34 0xf71a>,
+		              <0x38 0x1000>,
+		              <0x70 0x2000>,
+		              <0x74 0xda1f>,
+		              <0x78 0x66eb>,
+		              <0x80 0xd477>,
+		              <0x88 0x0023>,
+		              <0x8c 0x0b66>,
+		              <0x90 0x4f30>,
+		              <0xa0 0xf802>,
+		              <0xbc 0x7055>,
+		              <0xc8 0xf0f3>,
+		              <0x24 0x500c>,
+		              <0x24 0x520c>,
+		              /* S0_0 & S0_1 gen2 for revB */
+		              <0x104 0xa84a>,
+		              <0x108 0x60c6>,
+		              <0x118 0x001f>,
+		              <0x120 0x3591>,
+		              <0x128 0xf670>,
+		              <0x12c 0xa90d>,
+		              <0x134 0xf71a>,
+		              <0x138 0x1000>,
+		              <0x170 0x2000>,
+		              <0x174 0xda1f>,
+		              <0x180 0xd479>,
+		              <0x184 0x55aa>,
+		              <0x188 0x0023>,
+		              <0x18c 0x0b66>,
+		              <0x190 0x4f0c>,
+		              <0x1a0 0xf802>,
+		              <0x1bc 0x704a>,
+		              <0x1c8 0xf0f3>,
+		              <0x124 0x500c>,
+		              <0x124 0x520c>;
+			status = "disabled";
+		};
+
+		trng: rng@90600200 {
+			compatible = "realtek,taurus-trng";
+			reg = <0 0x90600200 0 0x68>;
+			interrupts = <GIC_SPI TAURUS_IRQ_GLB_TRNG IRQ_TYPE_LEVEL_HIGH>;
+			status = "okay";
+		};
+
+		crypto: crypto@90500000 {
+			compatible = "realtek,taurus-crypto";
+			reg = <0 0x90500000 0 0x8000>,
+			      <0 0x9030304c 0 0x4>;
+			reg-names = "crypto", "protect";
+			interrupts = <GIC_SPI TAURUS_IRQ_GLB_IPSEC IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&div_crypto_clk>;
+			status = "okay";
+		};
+
+		leds: led-controller@4f43201bc {
+			compatible = "realtek,taurus-leds";
+			reg = <4 0xf43201bc 0 0x44>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		ni: ethernet@4f4300000 {
+			compatible = "realtek,rtl9617c-ni";
+			reg = <4 0xf4300000 0 0x10000>,
+			      <4 0xf7001000 0 0x1000>,
+			      <4 0xf432d000 0 0x1000>,
+			      <4 0xf4320098 0 0x4>,
+			      <4 0xf432f000 0 0x1000>;
+			reg-names = "ni", "dma", "qm-axi", "reset", "fe-axi";
+			interrupts = <GIC_SPI 84 IRQ_TYPE_LEVEL_HIGH>;
+			status = "disabled";
+
+			ethernet-ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+			};
+		};
+
+		pon: pon@4f5500000 {
+			compatible = "realtek,rtl9617c-pon";
+			reg = <4 0xf5500000 0 0xc000>, <4 0xf4320094 0 4>,
+			      <4 0xf4320074 0 4>, <4 0xf432022c 0 4>,
+			      <4 0xf4320080 0 8>, <4 0xf4320090 0 4>,
+			      <4 0xf4320180 0 8>, <4 0xf432007c 0 4>,
+			      <4 0xf4329440 0 0x10>;
+			reg-names = "mac", "control", "epon-control", "serdes-init",
+				    "optical-control", "optical-status", "top-irq",
+				    "gpon-control", "dying-gasp";
+			interrupts-extended = <&ne_irq 5>, <&per_ictl 24>;
+			interrupt-names = "pon", "dying-gasp";
+			realtek,network-engine = <&ni>;
+			status = "disabled";
+		};
+	};
+};

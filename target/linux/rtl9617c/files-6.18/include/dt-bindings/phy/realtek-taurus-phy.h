@@ -1,0 +1,17 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+#ifndef _DT_BINDINGS_PHY_REALTEK_TAURUS_H
+#define _DT_BINDINGS_PHY_REALTEK_TAURUS_H
+
+#define TAURUS_PHY_S0_PCIE0		0
+#define TAURUS_PHY_S0_PCIE1		1
+#define TAURUS_PHY_S1_PCIE0		2
+#define TAURUS_PHY_S1_PCIE1		3
+#define TAURUS_PHY_S2_PCIE0		4
+#define TAURUS_PHY_S2_USB		5
+#define TAURUS_PHY_S3_USB		6
+#define TAURUS_PHY_S3_SGMII		7
+#define TAURUS_PHY_S3_HSGMII		8
+#define TAURUS_PHY_S0_RXAUI		9
+#define TAURUS_PHY_NUMS			10
+
+#endif

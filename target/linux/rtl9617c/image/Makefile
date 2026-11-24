@@ -2,73 +2,47 @@
 include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/image.mk
 
-# TYFZA1 stock U-Boot loads a FIT that carries kernel, board DTBs and the slot
-# selection script.  The helper lives in this target so the port stays additive:
-# no other target sees these files.
-TYFZA1_TOOLS := $(TOPDIR)/target/linux/rtl9617c/python
-TYFZA1_MKIMAGE ?= $(STAGING_DIR_HOST)/bin/mkimage
-# Set TYFZA1_SIGNING_KEYS to a directory holding dev.key/dev.crt to sign the FIT.
-# Signing needs a crypto-enabled mkimage; the staging one has TOOLS_LIBCRYPTO off.
-TYFZA1_SIGNING_KEYS ?=
-
-define Build/tyfza1-ubi-fit
-	python3 $(TYFZA1_TOOLS)/make_ubi_fit.py \
-		$@ $(KDIR)/image-rtl9617c-tyfza1-ubi.dtb $@.fit \
-		--dtb-2p5g $(KDIR)/image-rtl9617c-tyfza1-ubi-2p5g.dtb \
-		--kver $(LINUX_VERSION) \
-		--mkimage $(TYFZA1_MKIMAGE) \
-		$(if $(TYFZA1_SIGNING_KEYS),--keys $(TYFZA1_SIGNING_KEYS))
-	$(CP) $@.fit/image.itb $@
+define Device/Default
+  PROFILES = $$(DEVICE_NAME)
+  KERNEL_NAME := Image
+  KERNEL := kernel-bin | gzip
+  KERNEL_LOADADDR := 0x08000000
+  KERNEL_ENTRY := 0x08000000
+  DEVICE_DTS_DIR := ../dts
+  KERNEL_INITRAMFS_SUFFIX := -recovery.itb
+  KERNEL_INITRAMFS = kernel-bin | gzip | \
+	      fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | pad-to 128k
+  FILESYSTEMS := squashfs
+  IMAGES := sysupgrade.itb
+  IMAGE/sysupgrade.itb = append-kernel | \
+	      fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-static-with-rootfs | \
+	      pad-rootfs | append-metadata
 endef
 
-define Build/tyfza1-dtb
-	$(CP) $(KDIR)/image-$(1).dtb $@
+define Device/youhua_pt1500_h10_2p5g
+  DEVICE_VENDOR := Youhua
+  DEVICE_MODEL := PT1500-H10
+  DEVICE_VARIANT := 2.5G
+  SUPPORTED_DEVICES += youhua,pt1500-h10-2p5g
+  DEVICE_DTS := rtl9617c-pt1500-h10-2p5g
+  DEVICE_PACKAGES := fitblk rtl9617c-pon-control luci-app-rtl9617c-pon luci-app-rtl9617c-qos luci-theme-argon \
+	kmod-gpio-button-hotplug luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-mod-system \
+	uhttpd uhttpd-mod-ubus iperf3 ethtool ip-full tc curl htop openssl-util mtr socat \
+	conntrack-tools
 endef
+TARGET_DEVICES += youhua_pt1500_h10_2p5g
 
-define Build/tyfza1-rootfs-size
-	@size="$$(stat -c%s $(IMAGE_ROOTFS))"; \
-	[ "$$size" -le 33648640 ] || { \
-		echo "TYFZA1 rootfs is $$size bytes; OEM rootfs volume holds 33648640 bytes" >&2; \
-		exit 1; \
-	}
-endef
-
-define Device/tianyi_tyfza1
+define Device/tianyi_tyfza1_2p5g
   DEVICE_VENDOR := Tianyi
   DEVICE_MODEL := TYFZA1
-  DEVICE_VARIANT := UBI
+  DEVICE_VARIANT := 2.5G
   SUPPORTED_DEVICES += tianyi,tyfza1-2p5g
-  DEVICE_DTS := rtl9617c-tyfza1 rtl9617c-tyfza1-nand-readonly rtl9617c-tyfza1-stock-ubi-readonly rtl9617c-tyfza1-mdio rtl9617c-tyfza1-xram-lan rtl9617c-tyfza1-dma-tx rtl9617c-tyfza1-ni rtl9617c-tyfza1-pon-status rtl9617c-tyfza1-pcie rtl9617c-tyfza1-pcie-2p5g rtl9617c-tyfza1-ubi rtl9617c-tyfza1-ubi-2p5g
-  DEVICE_DTS_DIR := ../dts
-  IMAGE_METADATA := "tyfza1_storage": "factory-v1"
-  DEVICE_PACKAGES := kmod-rtl-ax-ap tyfza1-pon-control tyfza1-storage luci-app-tyfza1-pon \
-	ubi-utils nand-utils uboot-envtools iw wpad-mbedtls wifi-scripts wireless-regdb \
-	kmod-gpio-button-hotplug kmod-usb3 kmod-usb-storage kmod-usb-storage-uas \
-	kmod-usb-ledtrig-usbport kmod-tyfza1-usb-led block-mount kmod-fs-vfat kmod-fs-exfat \
-	kmod-fs-ntfs3 kmod-fs-ext4 kmod-nls-utf8 kmod-nls-cp437 kmod-nls-iso8859-1
-  KERNEL := kernel-bin | tyfza1-ubi-fit
-  KERNEL_INITRAMFS := kernel-bin
-  KERNEL_SUFFIX := -kernel.itb
-  KERNEL_INITRAMFS_SUFFIX := -initramfs-Image
-  KERNEL_INSTALL := 1
-  FILESYSTEMS := squashfs
-  IMAGES := rootfs.squashfs sysupgrade.bin
-  IMAGE/rootfs.squashfs := append-rootfs | tyfza1-rootfs-size
-  IMAGE/sysupgrade.bin := tyfza1-rootfs-size | sysupgrade-tar | append-metadata
-  ARTIFACTS := board.dtb nand-readonly.dtb stock-ubi-readonly.dtb mdio-probe.dtb xram-lan.dtb dma-tx.dtb ni.dtb pon-status.dtb pcie.dtb pcie-2p5g.dtb ubi.dtb ubi-2p5g.dtb
-  ARTIFACT/board.dtb := tyfza1-dtb rtl9617c-tyfza1
-  ARTIFACT/nand-readonly.dtb := tyfza1-dtb rtl9617c-tyfza1-nand-readonly
-  ARTIFACT/stock-ubi-readonly.dtb := tyfza1-dtb rtl9617c-tyfza1-stock-ubi-readonly
-  ARTIFACT/mdio-probe.dtb := tyfza1-dtb rtl9617c-tyfza1-mdio
-  ARTIFACT/xram-lan.dtb := tyfza1-dtb rtl9617c-tyfza1-xram-lan
-  ARTIFACT/dma-tx.dtb := tyfza1-dtb rtl9617c-tyfza1-dma-tx
-  ARTIFACT/ni.dtb := tyfza1-dtb rtl9617c-tyfza1-ni
-  ARTIFACT/pon-status.dtb := tyfza1-dtb rtl9617c-tyfza1-pon-status
-  ARTIFACT/pcie.dtb := tyfza1-dtb rtl9617c-tyfza1-pcie
-  ARTIFACT/pcie-2p5g.dtb := tyfza1-dtb rtl9617c-tyfza1-pcie-2p5g
-  ARTIFACT/ubi.dtb := tyfza1-dtb rtl9617c-tyfza1-ubi
-  ARTIFACT/ubi-2p5g.dtb := tyfza1-dtb rtl9617c-tyfza1-ubi-2p5g
+  DEVICE_DTS := rtl9617c-tianyi-tyfza1-2p5g
+  DEVICE_PACKAGES := fitblk rtl9617c-pon-control luci-app-rtl9617c-pon luci-app-rtl9617c-qos luci-theme-argon \
+	kmod-gpio-button-hotplug luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-mod-system \
+	uhttpd uhttpd-mod-ubus iperf3 ethtool ip-full tc curl htop openssl-util mtr socat \
+	conntrack-tools
 endef
-TARGET_DEVICES += tianyi_tyfza1
+TARGET_DEVICES += tianyi_tyfza1_2p5g
 
 $(eval $(call BuildImage))
