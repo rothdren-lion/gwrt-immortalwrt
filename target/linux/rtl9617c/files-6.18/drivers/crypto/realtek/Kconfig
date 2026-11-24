@@ -1,0 +1,13 @@
+config CRYPTO_DEV_REALTEK_TAURUS
+	tristate "Realtek Taurus IPsec Crypto Engine"
+	depends on ARCH_REALTEK_TAURUS || COMPILE_TEST
+	select CRYPTO_AEAD
+	select CRYPTO_AES
+	select CRYPTO_GCM
+	select CRYPTO_SKCIPHER
+	help
+	  Support for the hardware cryptographic accelerator (AES-CBC and
+	  AES-GCM/RFC4106) found on Realtek Taurus (RTL9617C) SoCs.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called rtk-taurus-crypto.
