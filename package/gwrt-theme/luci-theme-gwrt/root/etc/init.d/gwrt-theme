@@ -14,6 +14,8 @@ DHCPSCRIPT="/usr/libexec/gwrt-dhcp-fp"
 BADGE_SRC="/usr/share/gwrt/render-badge.js"
 PKGMGR_CSS_SRC="/usr/share/gwrt/bootstrap-package-manager.css"
 STATUS_VIEWS="/www/luci-static/resources/view/status/include"
+RETURN_LINK_SRC="/usr/share/gwrt/native-return-link.js"
+LUCI_CBI_JS="/www/luci-static/resources/cbi.js"
 
 repair_theme() {
 	local changed=0 tmp
@@ -108,27 +110,23 @@ repair_package_manager_css() {
 	done
 }
 
-# The native bootstrap theme (ports 81/444) pushes the package actions column
-# past the right edge on narrow windows, so the install button cannot be
-# clicked.  Append the responsive override once per bootstrap stylesheet.
-repair_package_manager_css() {
-	local css tmp
+# Ports 81/444 render the stock bootstrap theme, whose header has no theme
+# switch, so a user who opens them cannot get back to the GWRT theme without
+# editing the URL.  The stock header template ships as ucode bytecode, so the
+# shortcut is injected from cbi.js, which every bootstrap page loads.
+repair_native_return_link() {
+	local js tmp
 
-	[ -r "$PKGMGR_CSS_SRC" ] || return 0
+	[ -r "$RETURN_LINK_SRC" ] && [ -f "$LUCI_CBI_JS" ] || return 0
+	grep -q "GWRT native return link" "$LUCI_CBI_JS" 2>/dev/null && return 0
 
-	for css in /www/luci-static/bootstrap/cascade.css \
-		/www/luci-static/bootstrap-dark/cascade.css \
-		/www/luci-static/bootstrap-light/cascade.css; do
-		[ -f "$css" ] || continue
-		grep -q "GWRT package-manager responsive" "$css" 2>/dev/null && continue
-		tmp="${css}.gwrt.$$"
-		if { cat "$css"; printf '\n'; cat "$PKGMGR_CSS_SRC"; } > "$tmp" 2>/dev/null; then
-			mv -f "$tmp" "$css"
-		else
-			rm -f "$tmp"
-		fi
-	done
+	tmp="${LUCI_CBI_JS}.gwrt.$$"
+	if { cat "$LUCI_CBI_JS"; printf '\n'; cat "$RETURN_LINK_SRC"; } > "$tmp" 2>/dev/null; then
+		mv -f "$tmp" "$LUCI_CBI_JS"
+	else
+		rm -f "$tmp"
+	fi
 }
 
-start() { repair_theme; repair_status_badge; repair_package_manager_css; repair_dhcp_fingerprint; }
-reload() { repair_theme; repair_status_badge; repair_package_manager_css; repair_dhcp_fingerprint; }
+start() { repair_theme; repair_status_badge; repair_package_manager_css; repair_native_return_link; repair_dhcp_fingerprint; }
+reload() { repair_theme; repair_status_badge; repair_package_manager_css; repair_native_return_link; repair_dhcp_fingerprint; }
