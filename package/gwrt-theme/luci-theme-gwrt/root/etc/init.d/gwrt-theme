@@ -11,6 +11,9 @@ SRC="/usr/share/gwrt/admin_status-index.ut"
 DST="/usr/share/ucode/luci/template/admin_status/index.ut"
 THEME="/luci-static/gwrt"
 DHCPSCRIPT="/usr/libexec/gwrt-dhcp-fp"
+BADGE_SRC="/usr/share/gwrt/render-badge.js"
+PKGMGR_CSS_SRC="/usr/share/gwrt/bootstrap-package-manager.css"
+STATUS_VIEWS="/www/luci-static/resources/view/status/include"
 
 repair_theme() {
 	local changed=0 tmp
@@ -59,5 +62,73 @@ repair_dhcp_fingerprint() {
 	logger -t gwrt-theme "removed stale dnsmasq DHCP fingerprint hook; hotplug path remains active"
 }
 
-start() { repair_theme; repair_dhcp_fingerprint; }
-reload() { repair_theme; repair_dhcp_fingerprint; }
+# luci-mod-status calls renderBadge() from 30_network.js and 60_wifi.js but
+# the pinned luci-base feed ships no definition, so Status -> Overview dies
+# with "ReferenceError: renderBadge is not defined" on every theme.  Append the
+# missing helper to those two stock views: both files end with a `return ...`
+# for the class factory, and a function declaration is hoisted for the whole
+# module body, so the appended helper is in scope for renderbox().  Idempotent
+# through the marker string.
+repair_status_badge() {
+	local f tmp
+
+	[ -r "$BADGE_SRC" ] || return 0
+
+	for f in "$STATUS_VIEWS/30_network.js" "$STATUS_VIEWS/60_wifi.js"; do
+		[ -f "$f" ] || continue
+		grep -q "GWRT renderBadge fallback" "$f" 2>/dev/null && continue
+		tmp="${f}.gwrt.$$"
+		if { cat "$f"; printf '\n'; cat "$BADGE_SRC"; } > "$tmp" 2>/dev/null; then
+			mv -f "$tmp" "$f"
+		else
+			rm -f "$tmp"
+		fi
+	done
+}
+
+# The native bootstrap theme (ports 81/444) pushes the package actions column
+# past the right edge on narrow windows, so the install button cannot be
+# clicked.  Append the responsive override once per bootstrap stylesheet.
+repair_package_manager_css() {
+	local css tmp
+
+	[ -r "$PKGMGR_CSS_SRC" ] || return 0
+
+	for css in /www/luci-static/bootstrap/cascade.css \
+		/www/luci-static/bootstrap-dark/cascade.css \
+		/www/luci-static/bootstrap-light/cascade.css; do
+		[ -f "$css" ] || continue
+		grep -q "GWRT package-manager responsive" "$css" 2>/dev/null && continue
+		tmp="${css}.gwrt.$$"
+		if { cat "$css"; printf '\n'; cat "$PKGMGR_CSS_SRC"; } > "$tmp" 2>/dev/null; then
+			mv -f "$tmp" "$css"
+		else
+			rm -f "$tmp"
+		fi
+	done
+}
+
+# The native bootstrap theme (ports 81/444) pushes the package actions column
+# past the right edge on narrow windows, so the install button cannot be
+# clicked.  Append the responsive override once per bootstrap stylesheet.
+repair_package_manager_css() {
+	local css tmp
+
+	[ -r "$PKGMGR_CSS_SRC" ] || return 0
+
+	for css in /www/luci-static/bootstrap/cascade.css \
+		/www/luci-static/bootstrap-dark/cascade.css \
+		/www/luci-static/bootstrap-light/cascade.css; do
+		[ -f "$css" ] || continue
+		grep -q "GWRT package-manager responsive" "$css" 2>/dev/null && continue
+		tmp="${css}.gwrt.$$"
+		if { cat "$css"; printf '\n'; cat "$PKGMGR_CSS_SRC"; } > "$tmp" 2>/dev/null; then
+			mv -f "$tmp" "$css"
+		else
+			rm -f "$tmp"
+		fi
+	done
+}
+
+start() { repair_theme; repair_status_badge; repair_package_manager_css; repair_dhcp_fingerprint; }
+reload() { repair_theme; repair_status_badge; repair_package_manager_css; repair_dhcp_fingerprint; }
