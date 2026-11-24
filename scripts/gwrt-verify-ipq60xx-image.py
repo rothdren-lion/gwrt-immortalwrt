@@ -125,12 +125,30 @@ def main():
                     'wireless or Athena component installed on wired CS-07')
         for module in ('qca_ppe', 'qca_edma'):
             require(re.search(r'/' + module + r'\.ko(?:\s|$|\.)', listing), 'missing Ethernet module: ' + module)
-        require(not re.search(r'/(?:qca-nss-dp|qca-ssdk)\.ko(?:\s|$|\.)', listing), 'NSS/SSDK modules present in DSA image')
-        marker = b'daed-4d6a433_wing-dc50308_core-5db27a0-gwrt-runtime1'
-        require(read('usr/share/daed/gwrt-runtime-version').strip() == marker, 'wrong daed repair version')
-        daemon = read('usr/bin/daed')
-        require(daemon[:6] == b'\x7fELF\x02\x01' and struct.unpack_from('<H', daemon, 18)[0] == 183 and marker in daemon,
-                'wrong daed ARM64 executable')
+        if args.preset == 'cs07':
+            require(not re.search(r'/(?:qca-nss-dp|qca-ssdk)\.ko(?:\s|$|\.)', listing), 'NSS/SSDK modules present in DSA image')
+        else:
+            # CS-02/CS-02-GWRT2 要求 NSS+PPE 同镜像：NSS 栈模块必须存在，
+            # 但绑定哪一路由 DTS 决定（当前 DTS 为 ipq6018-ess.dtsi，PPE/EDMA 生效）。
+            for module in ('qca-nss-dp', 'qca-ssdk'):
+                require(re.search(r'/' + module + r'\.ko(?:\s|$|\.)', listing), 'missing NSS module: ' + module)
+        if args.preset in ('cs02', 'cs02-gwrt2'):
+            # Honk 取代 daed：镜像内应有 Honk 引擎与 LuCI 页，且不得残留代理引擎。
+            require(re.search(r'/usr/bin/honk-core\s*$', listing, re.M), 'missing honk-core binary')
+            require(re.search(r'/etc/init\.d/honk\s*$', listing, re.M), 'missing honk service')
+            require(read('etc/config/honk') != b'', 'missing honk UCI config')
+            require(read('usr/bin/honk-core')[:6] == b'\x7fELF\x02\x01', 'honk-core is not an ARM64 ELF')
+            for gone in ('daed', 'sing-box', 'xray-core', 'openclash', 'homeproxy'):
+                require(not re.search(r'/(?:usr/bin/|etc/init\.d/)' + gone + r'(?:\s|$)', listing, re.M),
+                        'proxy engine still installed: ' + gone)
+            marker_text = 'honk'
+        else:
+            marker = b'daed-4d6a433_wing-dc50308_core-5db27a0-gwrt-runtime1'
+            require(read('usr/share/daed/gwrt-runtime-version').strip() == marker, 'wrong daed repair version')
+            daemon = read('usr/bin/daed')
+            require(daemon[:6] == b'\x7fELF\x02\x01' and struct.unpack_from('<H', daemon, 18)[0] == 183 and marker in daemon,
+                    'wrong daed ARM64 executable')
+            marker_text = 'daed runtime1'
         require(not re.search(r'/etc/init\.d/homeproxy\s*$', listing, re.M), 'HomeProxy remains installed')
         theme = ROOT / 'gwrt-theme-V3/theme/luci-theme-gwrt'
         for installed, source in {
@@ -142,7 +160,7 @@ def main():
             require(read(installed) == (theme / source).read_bytes(), 'packaged theme source mismatch: ' + installed)
         for name in ('gwrt-mesh-apmode', 'gwrt-mesh-led', 'gwrt-wifiroam-autopair'):
             require(re.search(r'/etc/init\.d/' + name + r'\s*$', listing, re.M), 'missing Mesh service: ' + name)
-        print('PASS 12M factory/sysupgrade, DSA modules, daed runtime1, current theme and Mesh:', device)
+        print('PASS 12M factory/sysupgrade, DSA modules, ' + marker_text + ', current theme and Mesh:', device)
 
 
 if __name__ == '__main__':

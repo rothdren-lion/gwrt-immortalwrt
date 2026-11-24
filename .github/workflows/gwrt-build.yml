@@ -153,6 +153,82 @@ jobs:
           sed -i 's|^  DEPENDS:=+libpython3$|  DEPENDS:=+libpython3 +libffi|' \
               feeds/packages/lang/python/python3/Makefile
 
+      - name: Install Honk build dependencies
+        if: inputs.device == 'cs02' || inputs.device == 'cs02-gwrt2'
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -o Acquire::Retries=5 libbpf-dev libclang-dev cmake zstd
+
+      - name: Fetch Honk source and resolve toolchains
+        if: inputs.device == 'cs02' || inputs.device == 'cs02-gwrt2'
+        id: honk_source
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/honk-source"
+          git clone --depth 1 --branch v0.1.0-beta.6 \
+            https://github.com/daeuniverse/honk.git "$RUNNER_TEMP/honk-source"
+          source="$RUNNER_TEMP/honk-source"
+          stable="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)"/\1/p' "$source/rust-toolchain.toml")"
+          ebpf="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)"/\1/p' "$source/crates/honk-ebpf/rust-toolchain.toml")"
+          linker_version="$(sed -n 's/^BPF_LINKER_VERSION=//p' "$source/.github/ci/pins.env")"
+          linker_sha="$(sed -n 's/^BPF_LINKER_SHA256=//p' "$source/.github/ci/pins.env")"
+          test -n "$stable" -a -n "$ebpf" -a -n "$linker_version" -a -n "$linker_sha"
+          test -d feeds/daeuniverse/honk
+          mkdir -p feeds/daeuniverse/honk/src
+          rsync -a --delete --exclude=.git "$source/" feeds/daeuniverse/honk/src/
+          {
+            echo "stable=$stable"
+            echo "ebpf=$ebpf"
+            echo "linker_version=$linker_version"
+            echo "linker_sha=$linker_sha"
+            echo "source_commit=$(git -C "$source" rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "Honk source tag: v0.1.0-beta.6"
+            echo "Honk source commit: $(git -C "$source" rev-parse HEAD)"
+            echo "Honk feed commit: bb039381d2ae9a84dd0c40607c00ccf9fd9fdabf"
+            echo "Rust stable: $stable"
+            echo "Rust eBPF: $ebpf"
+            echo "bpf-linker: $linker_version ($linker_sha)"
+          } > honk-source.txt
+
+      - name: Install Rust stable target (Honk)
+        if: inputs.device == 'cs02' || inputs.device == 'cs02-gwrt2'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.honk_source.outputs.stable }}
+          target: aarch64-unknown-linux-musl
+
+      - name: Install Rust nightly for Honk eBPF
+        if: inputs.device == 'cs02' || inputs.device == 'cs02-gwrt2'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.honk_source.outputs.ebpf }}
+          components: rust-src, llvm-tools
+
+      - name: Cache Rust dependencies (Honk)
+        if: inputs.device == 'cs02' || inputs.device == 'cs02-gwrt2'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: honk-cargo-${{ steps.honk_source.outputs.source_commit }}-aarch64
+          restore-keys: |
+            honk-cargo-
+
+      - name: Install pinned bpf-linker (Honk)
+        if: inputs.device == 'cs02' || inputs.device == 'cs02-gwrt2'
+        run: |
+          set -euo pipefail
+          mkdir -p "${CARGO_HOME:-$HOME/.cargo}/bin"
+          archive="$RUNNER_TEMP/bpf-linker.tar.zst"
+          curl -fsSL --retry 3 -o "$archive" \
+            "https://github.com/aya-rs/bpf-linker/releases/download/v${{ steps.honk_source.outputs.linker_version }}/bpf-linker-x86_64-unknown-linux-musl.tar.zst"
+          echo "${{ steps.honk_source.outputs.linker_sha }}  $archive" | sha256sum -c -
+          zstd -dc "$archive" | tar -xf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+          bpf-linker --version
+
       - name: Generate config
         env:
           GWRT_MODELS: ${{ inputs.models || inputs.model }}
@@ -334,6 +410,7 @@ jobs:
             logs/ss01-nss-cleanup-test.log
             logs/ss01-uniphy-clocks-test.log
             logs/ipq60xx-image-audit.log
+            honk-*.txt
             .config
             feeds-revisions.txt
             bin/targets/qualcommax/ipq60xx/*.manifest

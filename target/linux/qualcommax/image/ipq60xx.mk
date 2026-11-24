@@ -135,7 +135,7 @@ define Device/jdcloud_re-cs-02
 	#                                     key in the CS-02 DTS)
 	# kmod-ath11k-ahb comes from the board-wide DEFAULT_PACKAGES.
 	DEVICE_PACKAGES := -ath11k-firmware-ipq6018 ath11k-firmware-ipq6018-ddwrt -ath11k-firmware-qcn9074 ath11k-firmware-qcn9074-ddwrt ipq-wifi-jdcloud_re-cs-02 kmod-ath11k-pci luci-app-athena-led \
-		-kmod-qca-nss-dp -kmod-qca-nss-ecm -kmod-qca-nss-drv -kmod-qca-nss-drv-bridge-mgr kmod-qca-edma kmod-qca-ppe
+		kmod-qca-edma kmod-qca-ppe kmod-qca-nss-dp kmod-qca-nss-drv kmod-qca-nss-drv-bridge-mgr
 	IMAGES += factory.bin
 	IMAGE/factory.bin := append-kernel | pad-to $$$$(KERNEL_SIZE) | append-rootfs | append-metadata
 endef
@@ -153,7 +153,7 @@ define Device/jdcloud_re-cs-02-gwrt2
 	# LED screen driver must match the plain CS-02 exactly - see the comment
 	# there.
 	DEVICE_PACKAGES := -ath11k-firmware-ipq6018 ath11k-firmware-ipq6018-ddwrt -ath11k-firmware-qcn9074 ath11k-firmware-qcn9074-ddwrt ipq-wifi-jdcloud_re-cs-02 kmod-ath11k-pci luci-app-athena-led \
-		-kmod-qca-nss-dp -kmod-qca-nss-ecm -kmod-qca-nss-drv -kmod-qca-nss-drv-bridge-mgr kmod-qca-edma kmod-qca-ppe
+		kmod-qca-edma kmod-qca-ppe kmod-qca-nss-dp kmod-qca-nss-drv kmod-qca-nss-drv-bridge-mgr
 	IMAGES += factory.bin
 	IMAGE/factory.bin := append-kernel | pad-to $$$$(KERNEL_SIZE) | append-rootfs | append-metadata
 endef
