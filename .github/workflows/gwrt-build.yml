@@ -1,4 +1,5 @@
 name: GWRT firmware build
+run-name: ${{ inputs.device }}-${{ inputs.version || format('run{0}', github.run_number) }}
 
 on:
   workflow_dispatch:
@@ -22,6 +23,7 @@ on:
           - nezha
           - bdy-g98-direct
           - bdy-g98-uefi
+          - r68s
           - mt7981
           - mt7986
           - an758x
@@ -45,6 +47,11 @@ on:
         type: choice
         options:
           - flashable
+      cs06_minimal:
+        description: 'CS-06 only: minimal authentication diagnostic image'
+        required: false
+        default: false
+        type: boolean
       release:
         description: 'Publish images to GitHub Releases'
         required: false
@@ -67,6 +74,9 @@ on:
       images:
         default: 'flashable'
         type: string
+      cs06_minimal:
+        default: false
+        type: boolean
       release:
         default: false
         type: boolean
@@ -89,14 +99,7 @@ jobs:
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-          # 内核 BTF（daed 必需）关闭了 DEBUG_INFO_REDUCED，DWARF 会让 build_dir 暴涨，
-          # 261115-02 首次带 BTF 构建即因 "Free space left: 0 MB" 失败。这里再腾出
-          # 宿主镜像里的大件（swift/jvm/powershell/az/ghcup/sam/npm 缓存）约 10-15G。
-          sudo rm -rf /usr/share/swift /usr/lib/jvm /usr/local/share/powershell /opt/az \
-            /usr/local/.ghcup /usr/local/aws-sam-cli /opt/pipx /usr/share/miniconda \
-            /usr/local/lib/node_modules/npm/node_modules/npm-audit-report 2>/dev/null || true
           sudo docker image prune -af >/dev/null 2>&1 || true
-          sudo rm -rf ~/.cache/pip ~/.npm /home/runner/.cache 2>/dev/null || true
           sudo apt-get clean
           sudo swapoff -a || true
           sudo rm -f /swapfile
@@ -109,7 +112,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -y -o Acquire::Retries=5
-          sudo apt-get install -y -o Acquire::Retries=5 build-essential busybox clang llvm flex bison g++ gawk gcc-multilib g++-multilib gettext git libncurses-dev libssl-dev python3-setuptools rsync squashfs-tools unzip util-linux zlib1g-dev file wget swig xz-utils dwarves
+          sudo apt-get install -y -o Acquire::Retries=5 build-essential busybox clang llvm flex bison g++ gawk gcc-multilib g++-multilib gettext git libncurses-dev libssl-dev python3-setuptools python3-pyelftools rsync squashfs-tools unzip util-linux zlib1g-dev file wget swig xz-utils zstd
           # bpf.mk (daed) needs unversioned llvm tools in PATH
           LLVM_BIN="$(dirname "$(readlink -f "$(command -v clang)")")"
           for t in llvm-strip llc opt llvm-dis; do
@@ -154,6 +157,9 @@ jobs:
         env:
           GWRT_MODELS: ${{ inputs.models || inputs.model }}
         run: |
+          if [ "${{ inputs.cs06_minimal }}" = true ] && [ "${{ inputs.device }}" != cs06 ]; then
+            echo 'cs06_minimal is restricted to CS-06'; exit 1
+          fi
           VER="${{ inputs.version }}"
           [ -n "$VER" ] || VER="$(date -u +%y%m%d)-01"
           echo "VER=$VER" >> "$GITHUB_ENV"
@@ -165,12 +171,18 @@ jobs:
             cs08) MN="太乙2pluscs-08" ;;
             be6500) MN="小米BE6500" ;;
             cs07) MN="太乙er1-cs-07" ;;
+            r68s) MN="FastRhinoR68S" ;;
             *) MN="" ;;
           esac
           echo "MODEL_NAME=$MN" >> "$GITHUB_ENV"
           case "${{ inputs.device }}" in
             ss01|cs02|cs02-gwrt2|cs07) python3 scripts/gwrt-mk-ipq60xx-config.py "${{ inputs.device }}" --version "$VER" ;;
-            cs06) OUT=.config VER="$VER" sh gwrt-mk-cs06-config.sh ;;
+            cs06)
+              if [ "${{ inputs.cs06_minimal }}" = true ]; then
+                OUT=.config VER="$VER" sh gwrt-mk-cs06-minimal-config.sh
+              else
+                OUT=.config VER="$VER" sh gwrt-mk-cs06-config.sh
+              fi ;;
             cs08) OUT=.config VER="$VER" sh gwrt-mk-cs08-config.sh ;;
             be6500) OUT=.config VER="$VER" sh gwrt-mk-be6500-config.sh ;;
             xer5) cp configs/config.xer5-261011-built .config ;;
@@ -179,6 +191,7 @@ jobs:
             nezha) OUT=.config VER="$VER" sh gwrt-mk-nezha-config.sh ;;
             bdy-g98-direct) OUT=.config VER="$VER" BOOT=direct sh gwrt-mk-bdy-g98-config.sh ;;
             bdy-g98-uefi) OUT=.config VER="$VER" BOOT=uefi sh gwrt-mk-bdy-g98-config.sh ;;
+            r68s) OUT=.config VER="$VER" sh gwrt-mk-r68s-config.sh ;;
             mt7981) OUT=.config GWRT_NO_SELF_DEFCONFIG=1 VER="$VER" sh gwrt-mk-xingloo-ax3000-config.sh ;;
             mt7986) OUT=.config GWRT_NO_SELF_DEFCONFIG=1 VER="$VER" sh gwrt-mk-mt7986-config.sh ;;
             an758x) OUT=.config VER="$VER" DEVICE=all WITH_OPENCLASH=1 WITH_SMB=1 sh gwrt-mk-an7581-config.sh ;;
@@ -192,6 +205,10 @@ jobs:
           # 一个预设只允许一个 SoC 序列（多 board = make world 串台）
           sh gwrt-check-target.sh .config "${{ inputs.device }}"
           python3 scripts/gwrt-validate-build-config.py .config "${{ inputs.device }}" --models "$GWRT_MODELS"
+          if [ "${{ inputs.cs06_minimal }}" = true ]; then
+            python3 scripts/tests/test-gwrt-cs06-minimal.py
+            python3 scripts/gwrt-verify-cs06-minimal.py .config
+          fi
           sh scripts/gwrt-source-preflight.sh
           grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)|^CONFIG_VERSION_NUMBER|^CONFIG_PACKAGE_(gwrt-agent|gwrt-mesh-apmode|gwrt-device-defaults|ucode-mod-socket)' .config
 
@@ -211,6 +228,25 @@ jobs:
           sh scripts/tests/test-ss01-mesh-preset.sh
           python3 scripts/tests/test-ss01-firstboot.py
           python3 scripts/tests/test-gwrt-wifiroam-autopair.py
+
+      - name: Test CS-06 ath12k recovery before compilation
+        if: inputs.device == 'cs06'
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p logs
+          python3 scripts/tests/test-gwrt-cs06-kernel.py 2>&1 | tee logs/cs06-kernel-selection-test.log
+          taskset -c 0-5 make -j6 package/kernel/mac80211/download \
+            REVISION="$(git rev-parse --short HEAD)" 2>&1 | tee logs/cs06-mac80211-download.log
+          backports_version=$(sed -n 's/^PKG_SOURCE_VERSION:=//p' package/kernel/mac80211/Makefile)
+          prepared="$RUNNER_TEMP/cs06-ath12k"
+          python3 scripts/tests/prepare-gwrt-ath12k.py . "dl/backports-$backports_version.tar.zst" "$prepared" | tee logs/cs06-ath12k-prepare.log
+          cp "$prepared/patch-application.json" logs/cs06-ath12k-patches.json
+          ath12k_dir="$prepared/backports-$backports_version/drivers/net/wireless/ath/ath12k"
+          python3 scripts/tests/test-gwrt-ath12k-group-recovery.py "$ath12k_dir" | tee logs/cs06-recovery-before-build.log
+          python3 scripts/tests/test-gwrt-ath12k-mlo-policy.py "$ath12k_dir" | tee logs/cs06-mlo-before-build.log
+          python3 scripts/tests/test-gwrt-ath12k-tx-encap.py "$ath12k_dir" | tee logs/cs06-tx-encap-before-build.log
+          python3 scripts/tests/test-gwrt-cs06-radio-config.py | tee logs/cs06-radio-config.log
 
       - name: Build firmware
         id: build_firmware
@@ -240,6 +276,9 @@ jobs:
           GWRT_MODELS: ${{ inputs.models || inputs.model }}
         run: |
           python3 scripts/gwrt-validate-build-config.py .config "${{ inputs.device }}" --models "$GWRT_MODELS" --manifests bin/targets
+          if [ "${{ inputs.cs06_minimal }}" = true ]; then
+            python3 scripts/gwrt-verify-cs06-minimal.py .config --manifests bin/targets
+          fi
           python3 - <<'PY'
           from pathlib import Path
           import subprocess
@@ -248,6 +287,21 @@ jobs:
           for path in sums:
               subprocess.run(['sha256sum', '-c', path.name], cwd=path.parent, check=True)
           PY
+
+      - name: Verify CS-06 compiled ath12k sources
+        if: success() && inputs.device == 'cs06'
+        shell: bash
+        run: |
+          set -o pipefail
+          core=$(find build_dir -path '*/backports-*/drivers/net/wireless/ath/ath12k/core.c' -print -quit)
+          test -n "$core"
+          ath12k_dir=$(dirname "$core")
+          python3 scripts/tests/test-gwrt-ath12k-group-recovery.py "$ath12k_dir" | tee logs/cs06-recovery-compiled-source.log
+          python3 scripts/tests/test-gwrt-ath12k-mlo-policy.py "$ath12k_dir" | tee logs/cs06-mlo-compiled-source.log
+          python3 scripts/tests/test-gwrt-ath12k-tx-encap.py "$ath12k_dir" | tee logs/cs06-tx-encap-compiled-source.log
+          sha256sum "$ath12k_dir"/{core.c,core.h,ahb.c,pci.c,mac.c} > logs/cs06-ath12k-compiled-source.sha256
+          python3 scripts/gwrt-verify-cs06-kernel.py build_dir \
+            --output logs/cs06-kernel.config 2>&1 | tee logs/cs06-kernel-audit.log
 
       - name: Verify SS-01 packaged theme and Ethernet
         if: success() && inputs.device == 'ss01'
@@ -289,6 +343,23 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Save CS-06 verification records
+        if: success() && inputs.device == 'cs06'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gwrt-${{ inputs.device }}-${{ env.VER }}-verification
+          include-hidden-files: true
+          path: |
+            logs/cs06-*
+            .config
+            feeds-revisions.txt
+            bin/targets/qualcommbe/ipq53xx/*.manifest
+            bin/targets/qualcommbe/ipq53xx/profiles.json
+            bin/targets/qualcommbe/ipq53xx/sha256sums
+            bin/targets/qualcommbe/ipq53xx/*.buildinfo
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Collect images
         if: success()
         run: |
@@ -325,6 +396,27 @@ jobs:
             bin/targets/qualcommax/ipq60xx/*.manifest
             bin/targets/qualcommax/ipq60xx/profiles.json
             bin/targets/qualcommax/ipq60xx/sha256sums
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Preserve CS-06 images for failed verification
+        if: failure() && inputs.device == 'cs06' && steps.build_firmware.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gwrt-${{ inputs.device }}-${{ env.VER }}-inspection
+          include-hidden-files: true
+          path: |
+            bin/targets/qualcommbe/ipq53xx/*.bin
+            bin/targets/qualcommbe/ipq53xx/*.itb
+            bin/targets/qualcommbe/ipq53xx/*.manifest
+            bin/targets/qualcommbe/ipq53xx/profiles.json
+            bin/targets/qualcommbe/ipq53xx/sha256sums
+            bin/targets/qualcommbe/ipq53xx/*.buildinfo
+            .config
+            feeds-revisions.txt
+            logs/cs06-*
+            build_dir/target-aarch64*/linux-qualcommbe_ipq53xx/linux-[0-9]*/.config
+            build_dir/target-aarch64*/linux-qualcommbe_ipq53xx/linux-[0-9]*/include/config/kernel.release
           if-no-files-found: error
           retention-days: 7
 

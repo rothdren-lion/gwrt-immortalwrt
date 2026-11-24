@@ -56,11 +56,15 @@ def requirements(device):
         if args.preset in ('cs02', 'cs02-gwrt2'):
             req -= _GECOSOS_PKGS
         required |= req
-        forbidden |= {'luci-app-homeproxy', 'luci-i18n-homeproxy-zh-cn'}
+        forbidden |= {
+            'luci-app-homeproxy', 'luci-i18n-homeproxy-zh-cn',
+            'luci-app-openclash', 'luci-app-passwall', 'luci-i18n-passwall-zh-cn',
+            'v2ray-geoip', 'v2ray-geosite', 'sing-box', 'xray-core',
+        }
         if args.preset != 'ss01':
             required |= {'kmod-qca-edma', 'kmod-qca-ppe'}
-            forbidden |= {'kmod-qca-nss-dp', 'kmod-qca-nss-drv', 'kmod-qca-nss-ecm',
-                          'kmod-qca-nss-drv-bridge-mgr', 'kmod-qca-ssdk'}
+            # 用户要求 NSS+PPE：不再禁止 NSS 包，保留 PPE 必选。
+            # 注意 DSA PPE/EDMA 与 NSS/SSDK 存在硬件路径冲突，实机可用性未验证。
     if values.get('EMMC_SUPPORT') == 'y' and 'gwrt-device-defaults' in packages:
         required.add('sgdisk')
     if board == 'airoha' and 'emmc' in device:

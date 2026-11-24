@@ -49,10 +49,8 @@ def main():
 
     if args.preset != 'ss01':
         if args.preset in ('cs02', 'cs02-gwrt2'):
-            # CS-02 DSA PPE/EDMA 路径与 NSS/SSDK 硬件冲突：NSS 禁止，PPE 必选
-            for name in re.findall(r'^CONFIG_PACKAGE_([^=]+)=y$', source, re.M):
-                if name.startswith(('kmod-qca-nss', 'kmod-qca-ssdk', 'kmod-nss-', 'nss-firmware', 'nss-eip-firmware')):
-                    set_value('PACKAGE_' + name, None)
+            # 用户要求：NSS+PPE 并开。注意 DSA PPE/EDMA 与 NSS/SSDK 存在硬件路径冲突，
+            # 此处按用户指令保留 NSS 并加 PPE，编译通过与否及硬件可用性需实机验证。
             for name in ('kmod-qca-ppe', 'kmod-qca-edma'):
                 set_value('PACKAGE_' + name, 'y')
         else:
@@ -68,6 +66,16 @@ def main():
         # 删除 geocosos（gecoosac）——用户要求不纳入本机型
         for name in ('gecoosac', 'luci-app-gecoosac', 'luci-i18n-gecoosac-zh-cn'):
             set_value('PACKAGE_' + name, None)
+        # 去掉所有代理插件，换 honk（honk 包名待确认，先去掉现有代理）
+        for name in (
+            'luci-app-openclash', 'luci-i18n-openclash-zh-cn',
+            'luci-app-passwall', 'luci-i18n-passwall-zh-cn',
+            'luci-app-homeproxy', 'luci-i18n-homeproxy-zh-cn',
+            'v2ray-geoip', 'v2ray-geosite', 'sing-box', 'xray-core',
+        ):
+            set_value('PACKAGE_' + name, None)
+        set_value('OVERRIDE_PKGS', None)
+        # TODO: 用户确认 honk 包名后补 set_value('PACKAGE_honk', 'y')
         for name in ('ipq-wifi-jdcloud_re-cs-02', 'ath11k-firmware-ipq6018-ddwrt',
                      'ath11k-firmware-qcn9074-ddwrt', 'kmod-ath11k-ahb',
                      'kmod-ath11k-pci', 'wpad-openssl', 'athena-led', 'luci-app-athena-led'):
