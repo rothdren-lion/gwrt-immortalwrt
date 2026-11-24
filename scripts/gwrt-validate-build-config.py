@@ -45,12 +45,57 @@ baseline = (ROOT / 'config.ss01-261101-01-nss').read_text()
 ss01_apps = {name for name in re.findall(r'^CONFIG_PACKAGE_([^=]+)=y$', baseline, re.M)
              if re.fullmatch(r'(?:luci-(?:app|i18n)-[a-z0-9+.-]+|gwrt-[a-z0-9+.-]+|daed(?:-[a-z0-9+.-]+)?)', name)}
 
+# CS-02/CS-02-GWRT2 不带 gecoosac（用户要求删除），从 SS-01 继承的应用
+# 基线中剔除 gecoosac 相关包，避免校验报 missing。
+_GECOSOS_PKGS = {'gecoosac', 'luci-app-gecoosac', 'luci-i18n-gecoosac-zh-cn'}
+
+# CS-02/CS-02-GWRT2 用 Honk 替代代理插件：从 SS-01 继承基线中剔除的代理包。
+# 注意 v2ray-geoip/v2ray-geosite 不在此列：Honk 的 Makefile 依赖它们提供 dat。
+_CS02_PROXY_PKGS = {
+    'daed', 'daed-geoip', 'daed-geosite',
+    'luci-app-daed', 'luci-i18n-daed-zh-cn',
+    'luci-app-openclash', 'luci-i18n-openclash-zh-cn',
+    'luci-app-passwall', 'luci-i18n-passwall-zh-cn',
+    'luci-app-homeproxy', 'luci-i18n-homeproxy-zh-cn',
+    'sing-box', 'xray-core',
+}
+
+# Honk 运行时依赖（kernel BTF + TC-bpf/NFQUEUE 数据面）
+_HONK_KMODS = {
+    'kmod-sched-core', 'kmod-sched-bpf', 'kmod-veth', 'kmod-nft-core',
+    'kmod-nft-queue', 'kmod-nfnetlink-queue', 'kmod-nf-conntrack',
+}
+# 用户要求 NSS+PPE 同镜像
+_NSS_PKGS = {
+    'nss-firmware', 'nss-firmware-ipq60xx', 'kmod-qca-nss-dp', 'kmod-qca-nss-drv',
+    'kmod-qca-nss-drv-bridge-mgr', 'kmod-qca-nss-drv-vlan-mgr', 'kmod-qca-nss-ecm',
+    'kmod-qca-ssdk',
+}
+
 def requirements(device):
     required, forbidden = set(), set()
     if args.preset in jdc_presets:
-        required |= ss01_apps | {'daed', 'sgdisk'}
-        forbidden |= {'luci-app-homeproxy', 'luci-i18n-homeproxy-zh-cn'}
-        if args.preset != 'ss01':
+        req = ss01_apps | {'sgdisk'}
+        if args.preset in ('cs02', 'cs02-gwrt2'):
+            # Honk 取代所有代理插件；gecoosac 不入镜
+            req -= _GECOSOS_PKGS | _CS02_PROXY_PKGS
+            req |= {'honk', 'luci-app-honk', 'luci-lib-daeuniverse',
+                    'vmlinux-btf-builtin', 'v2ray-geoip', 'v2ray-geosite'} | _HONK_KMODS
+        else:
+            req |= {'daed'}
+        required |= req
+        forbidden |= {
+            'luci-app-homeproxy', 'luci-i18n-homeproxy-zh-cn',
+            'luci-app-openclash', 'luci-i18n-openclash-zh-cn',
+            'luci-app-passwall', 'luci-i18n-passwall-zh-cn',
+            'sing-box', 'xray-core',
+        }
+        if args.preset in ('cs02', 'cs02-gwrt2'):
+            forbidden |= _CS02_PROXY_PKGS
+            required |= {'kmod-qca-edma', 'kmod-qca-ppe'} | _NSS_PKGS
+            if values.get('KERNEL_DEBUG_INFO_BTF') != 'y':
+                fail('Honk eBPF requires KERNEL_DEBUG_INFO_BTF')
+        elif args.preset != 'ss01':
             required |= {'kmod-qca-edma', 'kmod-qca-ppe'}
             forbidden |= {'kmod-qca-nss-dp', 'kmod-qca-nss-drv', 'kmod-qca-nss-ecm',
                           'kmod-qca-nss-drv-bridge-mgr', 'kmod-qca-ssdk'}
@@ -159,6 +204,13 @@ if 'daed' in packages:
         fail('the selected daed runtime build requires aarch64')
     if values.get('KERNEL_DEBUG_INFO_BTF') != 'y' and 'vmlinux-btf' not in packages:
         fail('daed needs kernel BTF or vmlinux-btf')
+
+# Honk 是 CS-02/CS-02-GWRT2 的唯一代理引擎：仍需 kernel BTF 做 CO-RE relocation；
+# vmlinux-btf-builtin 提供 vmlinux-btf 虚拟包。
+if 'honk' in packages:
+    if values.get('KERNEL_DEBUG_INFO_BTF') != 'y' and 'vmlinux-btf' not in packages:
+        fail('honk needs kernel BTF or vmlinux-btf')
+    check_packages(packages, _HONK_KMODS, (), 'honk')
 
 if args.manifests:
     manifests = list(args.manifests.rglob('*.manifest'))
