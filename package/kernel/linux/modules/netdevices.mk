@@ -2131,7 +2131,10 @@ $(eval $(call KernelPackage,net-selftests))
 
 define KernelPackage/qca-ppe
   SUBMENU:=$(NETWORK_DEVICES_MENU)
-  DEPENDS:=@TARGET_qualcommax +kmod-nf-flow
+  # qca_ppe.ko 调用 qca_edma.ko 导出的符号，所以依赖方向是 ppe -> edma。
+  # 不能反过来（旧版 edma 依赖 ppe 会与符号依赖构成环，apk 检查报
+  # "missing dependencies for the following libraries: qca_edma.ko"）。
+  DEPENDS:=@TARGET_qualcommax +kmod-nf-flow +kmod-qca-edma
   TITLE:=Qualcomm IPQ60xx/IPQ807x DSA PPE switch
   KCONFIG:=CONFIG_QCOM_80211AX_PPE
   FILES:=$(LINUX_DIR)/drivers/net/ethernet/qualcomm/qca_ppe.ko
@@ -2142,7 +2145,7 @@ $(eval $(call KernelPackage,qca-ppe))
 
 define KernelPackage/qca-edma
   SUBMENU:=$(NETWORK_DEVICES_MENU)
-  DEPENDS:=@TARGET_qualcommax +kmod-qca-ppe
+  DEPENDS:=@TARGET_qualcommax
   TITLE:=Qualcomm IPQ60xx/IPQ807x EDMA Ethernet
   KCONFIG:=CONFIG_QCOM_EDMA
   FILES:=$(LINUX_DIR)/drivers/net/ethernet/qualcomm/qca_edma.ko
