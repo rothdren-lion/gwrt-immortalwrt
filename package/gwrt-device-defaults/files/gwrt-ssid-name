@@ -2,24 +2,70 @@
 # GWRT SSID 命名：GWRT_<频段>_<MAC后4>
 #   2.4G -> GWRT_2.4G_XXXX
 #   5G   -> GWRT_5.2G_XXXX（信道 < 149）/ GWRT_5.8G_XXXX（>= 149）
-# 只改"默认/空"SSID，用户自定义的不动。幂等，可反复调用。
+#   6G   -> GWRT_6G_XXXX
+# 后缀取该 radio 自己的 MAC 后 4 位（ath11k 每个 phy 的出厂 MAC 不同），
+# 取不到时退回本机基础 MAC。只改"默认/空"SSID，用户自定义的不动。幂等。
 
 [ -f /etc/config/wireless ] || exit 0
 
-mac="$(cat /sys/class/net/eth0/address 2>/dev/null)"
-[ -n "$mac" ] || mac="$(cat /sys/class/net/br-lan/address 2>/dev/null)"
-[ -n "$mac" ] || mac="$(cat /sys/class/net/eth1/address 2>/dev/null)"
-[ -n "$mac" ] || mac="$(uci -q get network.lan.macaddr 2>/dev/null)"
-[ -n "$mac" ] || mac="$(cat /sys/class/ieee80211/phy0/macaddress 2>/dev/null)"
-mac4="$(printf '%s' "$mac" | tr -d ':' | tr 'a-f' 'A-F' | tail -c 4)"
-[ ${#mac4} -eq 4 ] || mac4="0000"
+base_mac="$(cat /sys/class/net/eth0/address 2>/dev/null)"
+[ -n "$base_mac" ] || base_mac="$(cat /sys/class/net/br-lan/address 2>/dev/null)"
+[ -n "$base_mac" ] || base_mac="$(cat /sys/class/net/eth1/address 2>/dev/null)"
+[ -n "$base_mac" ] || base_mac="$(uci -q get network.lan.macaddr 2>/dev/null)"
+[ -n "$base_mac" ] || base_mac="$(cat /sys/class/ieee80211/phy0/macaddress 2>/dev/null)"
+
+mac4_of() {
+	printf '%s' "$1" | tr -d ':' | tr 'a-f' 'A-F' | tail -c 4
+}
+
+valid_mac() {
+	case "$1" in
+		''|00:00:00:00:00:00|02:00:00:00:00:00) return 1 ;;
+		*:*) return 0 ;;
+	esac
+	return 1
+}
+
+# wireless.<dev>.path 形如 platform/soc@0/c000000.wifi 或 ...+1（同一器件的第 2 个 phy）。
+# 按中段序号取同一 device 下对应 phy 的出厂 MAC。
+radio_mac() {
+	_dev="$1"
+	set -- $(uci -q get "wireless.$_dev.macaddr" 2>/dev/null)
+	[ -n "$1" ] && { printf '%s' "$1"; return 0; }
+
+	_path="$(uci -q get "wireless.$_dev.path" 2>/dev/null)"
+	if [ -n "$_path" ]; then
+		_idx=0
+		case "$_path" in
+			*+*) _idx="${_path##*+}"; _path="${_path%+*}" ;;
+		esac
+		case "$_idx" in ''|*[!0-9]*) _idx=0 ;; esac
+		_n=0
+		for _p in $(ls -d /sys/class/ieee80211/phy* 2>/dev/null | sort -V); do
+			_d="$(readlink -f "$_p/device" 2>/dev/null)" || continue
+			case "$_d" in
+				*/"$_path") ;;
+				*) continue ;;
+			esac
+			if [ "$_n" = "$_idx" ]; then
+				_m="$(cat "$_p/macaddress" 2>/dev/null)"
+				valid_mac "$_m" && { printf '%s' "$_m"; return 0; }
+				break
+			fi
+			_n=$((_n + 1))
+		done
+	fi
+
+	valid_mac "$base_mac" && printf '%s' "$base_mac"
+}
 
 is_default_ssid() {
 	case "$1" in
 		""|GWRT|OpenWrt|ImmortalWrt|LEDE|GWRT-AX3000|GWRT-AX3000-5G) return 0 ;;
+		OpenWrt_2.4G|OpenWrt_5G|OpenWrt_6G|ImmortalWrt_2.4G|ImmortalWrt_5G|ImmortalWrt_6G) return 0 ;;
 		GWRT_2.4G_*|GWRT_5.2G_*|GWRT_5.8G_*|GWRT_5G_*|GWRT_6G_*)
-			# 只有后缀 = 本机 MAC4 才算默认名；别的后缀是主AP mesh 下发的
-			[ "$(printf '%s' "${1##*_}" | tr 'a-f' 'A-F')" = "$(printf '%s' "$mac4" | tr 'a-f' 'A-F')" ] && return 0
+			# 只有后缀 = 本机该 radio 的 MAC4 才算默认名；别的后缀是主AP mesh 下发的
+			[ "$(mac4_of "${1##*_}")" = "$(mac4_of "$2")" ] && return 0
 			return 1 ;;
 	esac
 	return 1
@@ -45,8 +91,11 @@ for iface in $(uci -q show wireless | sed -n 's/^wireless\.\([^.]*\)=wifi-iface$
 		6g) label="6G" ;;
 		*) label="5G" ;;
 	esac
+	mac="$(radio_mac "$dev")"
+	mac4="$(mac4_of "$mac")"
+	[ ${#mac4} -eq 4 ] || mac4=0000
 	cur="$(uci -q get "wireless.$iface.ssid")"
-	is_default_ssid "$cur" || continue
+	is_default_ssid "$cur" "$mac4" || continue
 	new="GWRT_${label}_${mac4}"
 	[ "$cur" = "$new" ] && continue
 	uci -q set "wireless.$iface.ssid=$new" || exit 1
@@ -55,7 +104,7 @@ done
 
 if [ "$changed" = "1" ]; then
 	uci -q commit wireless || exit 1
-	logger -t gwrt-ssid "SSID -> GWRT_<band>_$mac4"
+	logger -t gwrt-ssid "SSID -> GWRT_<band>_<radio mac4>"
 	[ "$1" = "--reload" ] && wifi reload >/dev/null 2>&1
 fi
 exit 0

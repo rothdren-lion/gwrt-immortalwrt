@@ -1,7 +1,10 @@
 #!/bin/sh
-# New radios receive GWRT defaults directly in mac80211.uc (also for late phys).
-# Retain only the SS-01 deferred chain's readiness barrier. Never rewrite saved
-# user/Mesh SSIDs, keys, channels, country or disabled state here.
+# 新 radio 的默认 SSID 由 /etc/init.d/gwrt-wifi-ssid 在 phy 就绪后一次性写入
+# （GWRT_<频段>_<radio MAC 后4>），不再靠 phy 热插拔反复改写。
+# 这里只负责启用该服务；SS-01 额外保留延后首启链的就绪屏障。
+# Never rewrite saved user/Mesh SSIDs, keys, channels, country or disabled state here.
+
+[ -x /etc/init.d/gwrt-wifi-ssid ] && /etc/init.d/gwrt-wifi-ssid enable >/dev/null 2>&1
 
 BOARD="$(cat /tmp/sysinfo/board_name 2>/dev/null)"
 [ "$BOARD" = 'jdcloud,re-ss-01' ] || exit 0

@@ -1,0 +1,31 @@
+#!/bin/sh /etc/rc.common
+# 首启/升级后给新 radio 补 GWRT_<频段>_<MAC后4> 名字：等 phy 就绪后一次性写入
+# /etc/config/wireless（uCI 持久化），不是每次 phy 上线都改，所以不会拖慢启动。
+# 幂等：SSID 已是 GWRT_<频段>_<MAC4> 或用户自定义时不写盘、不 reload。
+
+START=95
+
+run_ssid_defaults() {
+	[ -x /usr/libexec/gwrt-ssid-name ] || return 0
+	i=0
+	while [ "$i" -lt 20 ]; do
+		if ! uci -q show wireless 2>/dev/null | grep -q '=wifi-device$'; then
+			sleep 2
+			i=$((i + 1))
+			continue
+		fi
+		set -- /sys/class/ieee80211/phy*
+		[ -e "$1" ] && break
+		sleep 2
+		i=$((i + 1))
+	done
+	/usr/libexec/gwrt-ssid-name --reload
+}
+
+start() {
+	run_ssid_defaults &
+}
+
+stop() {
+	return 0
+}

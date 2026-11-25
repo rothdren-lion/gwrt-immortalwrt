@@ -138,6 +138,10 @@ def main():
             require(re.search(r'/etc/init\.d/honk\s*$', listing, re.M), 'missing honk service')
             require(read('etc/config/honk') != b'', 'missing honk UCI config')
             require(read('usr/bin/honk-core')[:6] == b'\x7fELF\x02\x01', 'honk-core is not an ARM64 ELF')
+            require(re.search(r'/etc/init\.d/gwrt-wifi-ssid\s*$', listing, re.M),
+                    'missing fixed-band SSID service')
+            require(re.search(r'/usr/libexec/gwrt-ssid-name\s*$', listing, re.M),
+                    'missing fixed-band SSID helper')
             for gone in ('daed', 'sing-box', 'xray-core', 'openclash', 'homeproxy'):
                 require(not re.search(r'/(?:usr/bin/|etc/init\.d/)' + gone + r'(?:\s|$)', listing, re.M),
                         'proxy engine still installed: ' + gone)
