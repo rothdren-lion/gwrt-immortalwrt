@@ -3,8 +3,9 @@
 #   2.4G -> GWRT_2.4G_XXXX
 #   5G   -> GWRT_5.2G_XXXX（信道 < 149）/ GWRT_5.8G_XXXX（>= 149）
 #   6G   -> GWRT_6G_XXXX
+# 取不到 MAC 时只写 GWRT_<频段>，下次开机拿到 MAC 再补后缀。
 # 后缀取该 radio 自己的 MAC 后 4 位（ath11k 每个 phy 的出厂 MAC 不同），
-# 取不到时退回本机基础 MAC。只改"默认/空"SSID，用户自定义的不动。幂等。
+# 取不到时退回本机基础 MAC。只改“默认/空”SSID，用户自定义的不动。幂等。
 
 [ -f /etc/config/wireless ] || exit 0
 
@@ -63,6 +64,7 @@ is_default_ssid() {
 	case "$1" in
 		""|GWRT|OpenWrt|ImmortalWrt|LEDE|GWRT-AX3000|GWRT-AX3000-5G) return 0 ;;
 		OpenWrt_2.4G|OpenWrt_5G|OpenWrt_6G|ImmortalWrt_2.4G|ImmortalWrt_5G|ImmortalWrt_6G) return 0 ;;
+		GWRT_2.4G|GWRT_5.2G|GWRT_5.8G|GWRT_5G|GWRT_6G) return 0 ;;
 		GWRT_2.4G_*|GWRT_5.2G_*|GWRT_5.8G_*|GWRT_5G_*|GWRT_6G_*)
 			# 只有后缀 = 本机该 radio 的 MAC4 才算默认名；别的后缀是主AP mesh 下发的
 			[ "$(mac4_of "${1##*_}")" = "$(mac4_of "$2")" ] && return 0
@@ -93,10 +95,12 @@ for iface in $(uci -q show wireless | sed -n 's/^wireless\.\([^.]*\)=wifi-iface$
 	esac
 	mac="$(radio_mac "$dev")"
 	mac4="$(mac4_of "$mac")"
-	[ ${#mac4} -eq 4 ] || mac4=0000
+	case "$mac4" in
+		????) new="GWRT_${label}_${mac4}" ;;
+		*) new="GWRT_${label}" ;;
+	esac
 	cur="$(uci -q get "wireless.$iface.ssid")"
 	is_default_ssid "$cur" "$mac4" || continue
-	new="GWRT_${label}_${mac4}"
 	[ "$cur" = "$new" ] && continue
 	uci -q set "wireless.$iface.ssid=$new" || exit 1
 	changed=1
@@ -104,7 +108,7 @@ done
 
 if [ "$changed" = "1" ]; then
 	uci -q commit wireless || exit 1
-	logger -t gwrt-ssid "SSID -> GWRT_<band>_<radio mac4>"
+	logger -t gwrt-ssid "SSID -> $new"
 	[ "$1" = "--reload" ] && wifi reload >/dev/null 2>&1
 fi
 exit 0

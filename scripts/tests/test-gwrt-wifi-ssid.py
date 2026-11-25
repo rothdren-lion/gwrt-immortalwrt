@@ -186,6 +186,33 @@ with tempfile.TemporaryDirectory(prefix='wifi-ssid-fallback-') as tmp:
     assert cfg['wireless.default_radio0.ssid'] == 'GWRT_5.8G_8413', cfg['wireless.default_radio0.ssid']
     assert cfg['wireless.default_radio1.ssid'] == 'GWRT_2.4G_8413'
 
+# 完全没有 MAC 时只写 GWRT_<频段>，拿到 MAC 后再补后缀
+with tempfile.TemporaryDirectory(prefix='wifi-ssid-nomac-') as tmp:
+    base = Path(tmp)
+    build_sandbox(base)
+    for phy in ('phy0', 'phy1', 'phy2'):
+        (base / 'sys/class/ieee80211' / phy / 'macaddress').write_text('00:00:00:00:00:00\n')
+    (base / 'sys/class/net/eth0/address').write_text('00:00:00:00:00:00\n')
+    env = os.environ.copy()
+    env.update(FAKE_ROOT=str(base), PATH=f'{base}/bin:/usr/bin:/bin')
+    result = run_helper(base, env)
+    assert result.returncode == 0, result.stderr
+    cfg = json.loads((base / 'uci.json').read_text())
+    assert cfg['wireless.default_radio0.ssid'] == 'GWRT_5.8G', cfg['wireless.default_radio0.ssid']
+    assert cfg['wireless.default_radio1.ssid'] == 'GWRT_2.4G'
+    assert cfg['wireless.default_radio2.ssid'] == 'GWRT_5.2G'
+
+    # 下次开机 phy MAC 可读，无后缀的默认名应该被补全
+    for name, mac in (('phy0', 'dc:d8:7c:59:b5:e0'), ('phy1', 'dc:d8:7c:59:b5:df'),
+                      ('phy2', 'dc:d8:7c:59:b5:c4')):
+        (base / 'sys/class/ieee80211' / name / 'macaddress').write_text(mac + '\n')
+    result = run_helper(base, env)
+    assert result.returncode == 0, result.stderr
+    cfg = json.loads((base / 'uci.json').read_text())
+    assert cfg['wireless.default_radio0.ssid'] == 'GWRT_5.8G_B5E0', cfg['wireless.default_radio0.ssid']
+    assert cfg['wireless.default_radio1.ssid'] == 'GWRT_2.4G_B5DF'
+    assert cfg['wireless.default_radio2.ssid'] == 'GWRT_5.2G_B5C4'
+
 # 无 band、只有旧 hwmode 的配置也要能命名
 with tempfile.TemporaryDirectory(prefix='wifi-ssid-hwmode-') as tmp:
     base = Path(tmp)
