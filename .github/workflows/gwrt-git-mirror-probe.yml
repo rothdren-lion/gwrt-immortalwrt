@@ -1,0 +1,63 @@
+name: gwrt-git-mirror-probe
+
+# 只测网络，不编译：验证 configs/gwrt-git-mirrors.conf 里每个镜像在 runner 上的
+# 可用性与速度，并确认 feeds 里 pin 的 commit 在镜像上取得到。
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'configs/gwrt-git-mirrors.conf'
+      - 'scripts/gwrt-feeds-update.sh'
+      - '.github/workflows/gwrt-git-mirror-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Probe mirrors
+        run: |
+          set -uo pipefail
+          pin_path="immortalwrt/packages.git"
+          pin_sha="$(sed -n 's|.*github.com/immortalwrt/packages.git\^\([0-9a-f]*\).*|\1|p' configs/ipq60xx-feeds.conf | head -1)"
+          echo "pinned packages commit: ${pin_sha:-none}"
+          printf '%-58s %-10s %-9s %-9s %s\n' MIRROR ls-remote clone_s rate B answer
+          while IFS= read -r tpl; do
+            case "$tpl" in ''|'#'*) continue;; esac
+            url="$(printf '%s' "$tpl" | sed "s|{path}|$pin_path|")"
+            lsr="-"; clone="-"; rate="-"; ans="-"
+            start=$(date +%s%N)
+            if timeout 30 git ls-remote --heads "$url" >/dev/null 2>&1; then
+              lsr="ok $(( ($(date +%s%N) - start) / 1000000 ))ms"
+            else
+              lsr="fail"
+            fi
+            if [ "$lsr" != "fail" ]; then
+              rm -rf /tmp/probe
+              start=$(date +%s%N)
+              if timeout 180 git clone --depth 1 --quiet "$url" /tmp/probe >/dev/null 2>&1; then
+                ms=$(( ($(date +%s%N) - start) / 1000000 ))
+                size=$(du -sm /tmp/probe 2>/dev/null | cut -f1)
+                clone="ok ${ms}ms"
+                [ "${ms:-0}" -gt 0 ] && rate="$(( ${size:-0} * 1000 / ms ))MB/s"
+              else
+                clone="fail"
+              fi
+              if [ -n "${pin_sha:-}" ]; then
+                rm -rf /tmp/pin; mkdir -p /tmp/pin
+                if git -C /tmp/pin init -q && \
+                   timeout 180 git -C /tmp/pin fetch --depth 1 --quiet "$url" "$pin_sha" >/dev/null 2>&1; then
+                  ans="yes"
+                else
+                  ans="no"
+                fi
+              fi
+            fi
+            printf '%-58s %-10s %-9s %-9s %s\n' "$tpl" "$lsr" "$clone" "$rate" "$ans"
+            rm -rf /tmp/probe /tmp/pin
+          done < configs/gwrt-git-mirrors.conf

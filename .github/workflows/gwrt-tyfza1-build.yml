@@ -169,7 +169,7 @@ jobs:
         run: |
           set -euo pipefail
           cp configs/tyfza1-feeds.conf feeds.conf
-          ./scripts/feeds update -a
+          sh scripts/gwrt-feeds-update.sh feeds.conf
           test -f feeds/daeuniverse/honk/Makefile
           rsync -a --delete --exclude=.git "$RUNNER_TEMP/honk-source/" feeds/daeuniverse/honk/src/
           for feed in feeds/*; do

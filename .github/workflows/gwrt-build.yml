@@ -148,7 +148,8 @@ jobs:
           case "${{ inputs.device }}" in
             ss01|cs02|cs02-gwrt2|cs07) cp configs/ipq60xx-feeds.conf feeds.conf ;;
           esac
-          ./scripts/feeds update -a
+          # 优先国内 GitHub 镜像（configs/gwrt-git-mirrors.conf），失败自动回退上游
+          sh scripts/gwrt-feeds-update.sh feeds.conf
           for feed in feeds/*; do
             [ -d "$feed/.git" ] || continue
             printf '%s %s\n' "$feed" "$(git -C "$feed" rev-parse HEAD)"
@@ -172,8 +173,8 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf "$RUNNER_TEMP/honk-source"
-          git clone --depth 1 --branch v0.1.0-beta.6 \
-            https://github.com/daeuniverse/honk.git "$RUNNER_TEMP/honk-source"
+          sh scripts/gwrt-git-clone.sh https://github.com/daeuniverse/honk.git \
+            "$RUNNER_TEMP/honk-source" --depth 1 --branch v0.1.0-beta.6
           source="$RUNNER_TEMP/honk-source"
           stable="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)"/\1/p' "$source/rust-toolchain.toml")"
           ebpf="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)"/\1/p' "$source/crates/honk-ebpf/rust-toolchain.toml")"
@@ -230,8 +231,12 @@ jobs:
           set -euo pipefail
           mkdir -p "${CARGO_HOME:-$HOME/.cargo}/bin"
           archive="$RUNNER_TEMP/bpf-linker.tar.zst"
-          curl -fsSL --retry 3 -o "$archive" \
-            "https://github.com/aya-rs/bpf-linker/releases/download/v${{ steps.honk_source.outputs.linker_version }}/bpf-linker-x86_64-unknown-linux-musl.tar.zst"
+          release="aya-rs/bpf-linker/releases/download/v${{ steps.honk_source.outputs.linker_version }}/bpf-linker-x86_64-unknown-linux-musl.tar.zst"
+          for base in https://ghfast.top/https://github.com https://gh-proxy.com/https://github.com https://github.com; do
+            echo "==> $base/$release"
+            curl -fsSL --retry 2 --connect-timeout 20 -o "$archive" "$base/$release" && break
+          done
+          test -s "$archive"
           echo "${{ steps.honk_source.outputs.linker_sha }}  $archive" | sha256sum -c -
           zstd -dc "$archive" | tar -xf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
           bpf-linker --version
