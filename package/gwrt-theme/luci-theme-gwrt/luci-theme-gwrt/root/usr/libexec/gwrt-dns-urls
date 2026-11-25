@@ -1,0 +1,9 @@
+#!/bin/sh
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+umask 077
+case "$1" in
+	read|daemon) ;;
+	*) exit 1 ;;
+esac
+exec /usr/bin/ucode /usr/share/gwrt/dns-urls.uc "$1"

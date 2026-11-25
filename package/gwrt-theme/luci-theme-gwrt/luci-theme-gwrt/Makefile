@@ -12,7 +12,7 @@ PKG_VERSION:=1.0
 # Keep this above the last field package (r111).  The theme owns a runtime
 # repair hook; a lower release would make apk/opkg keep the older package and
 # leave a luci-mod-status upgrade able to restore the stock dashboard.
-PKG_RELEASE:=126
+PKG_RELEASE:=127
 PKG_MAINTAINER:=GWRT
 PKG_LICENSE:=Apache-2.0
 
@@ -48,6 +48,9 @@ define Package/$(PKG_NAME)/postinst
 	chmod 755 /etc/init.d/gwrt-traffic-daily /usr/libexec/gwrt-traffic-daily 2>/dev/null || true
 	[ -x /etc/init.d/gwrt-traffic-daily ] && /etc/init.d/gwrt-traffic-daily enable >/dev/null 2>&1 || true
 	[ -x /etc/init.d/gwrt-traffic-daily ] && /etc/init.d/gwrt-traffic-daily restart >/dev/null 2>&1 || true
+	chmod 755 /etc/init.d/gwrt-dns-urls /usr/libexec/gwrt-dns-urls /usr/libexec/rpcd/gwrt-dns 2>/dev/null || true
+	[ -x /etc/init.d/gwrt-dns-urls ] && /etc/init.d/gwrt-dns-urls enable >/dev/null 2>&1 || true
+	[ -x /etc/init.d/gwrt-dns-urls ] && /etc/init.d/gwrt-dns-urls restart >/dev/null 2>&1 || true
 	rm -f /tmp/luci-indexcache /tmp/luci-modulecache/* 2>/dev/null || true
 }
 exit 0

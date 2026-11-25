@@ -185,6 +185,9 @@
      "status",
      "peers",
      "topology"
+    ],
+    "gwrt-dns": [
+     "urls"
     ]
    }
   },

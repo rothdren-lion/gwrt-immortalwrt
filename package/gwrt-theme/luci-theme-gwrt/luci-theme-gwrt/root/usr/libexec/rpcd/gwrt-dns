@@ -1,0 +1,12 @@
+#!/bin/sh
+case "$1" in
+	list)
+		echo '{"urls":{}}'
+		;;
+	call)
+		read -r method
+		case "$method" in
+			urls) cat /tmp/gwrt-theme/dns-urls.json 2>/dev/null || echo '{"ts":0,"devices":{}}' ;;
+		esac
+		;;
+esac
