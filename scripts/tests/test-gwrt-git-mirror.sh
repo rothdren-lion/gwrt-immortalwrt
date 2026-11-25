@@ -114,13 +114,13 @@ grep -q 'upstream_fallback=1' feeds-mirror.txt || fail "case3: fallback not logg
 
 # --- case 4: git-clone helper skips dead mirrors --------------------------
 cat >"$FAKE_GIT_OK" <<'EOF'
-https://kkgithub.com/daeuniverse/honk.git
+https://ghfast.top/https://github.com/daeuniverse/honk.git
 EOF
 cd "$WORK/tree"
 sh scripts/gwrt-git-clone.sh https://github.com/daeuniverse/honk.git "$WORK/honk" \
 	--depth 1 --branch v0.1.0-beta.6 >"$WORK/out4.txt" 2>&1 || fail "case4: clone helper failed"
 [ -d "$WORK/honk/.git" ] || fail "case4: destination not created"
-grep -q 'clone_source=https://kkgithub.com/daeuniverse/honk.git' "$WORK/out4.txt" ||
+grep -q 'clone_source=https://ghfast.top/https://github.com/daeuniverse/honk.git' "$WORK/out4.txt" ||
 	fail "case4: wrong clone source reported"
 
 # --- case 5: non-github URL cloned directly -------------------------------
