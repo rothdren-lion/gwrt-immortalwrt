@@ -64,6 +64,11 @@ def main():
                      'kmod-ath11k-pci', 'wpad-openssl', 'athena-led', 'luci-app-athena-led'):
             set_value('PACKAGE_' + name, 'y')
     elif args.preset == 'cs07':
+        # CS-07 has no radio (ipq6010-re-cs-07.dts enables neither &wifi nor
+        # &pcie0). wifi-scripts still returns from defconfig: the mandatory
+        # gwrt-device-defaults/theme stack depends on gwrt-wifi-defaults,
+        # which depends on it. It is inert without radios; the validator only
+        # forbids the actual radio drivers/firmware on this board.
         for name in re.findall(r'^CONFIG_PACKAGE_([^=]+)=y$', source, re.M):
             if name.startswith(('kmod-ath', 'ath11k-firmware-', 'ipq-wifi-')) or name in {
                 'kmod-cfg80211', 'kmod-mac80211', 'hostapd-common', 'wpad-openssl',

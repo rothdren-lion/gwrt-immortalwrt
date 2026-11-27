@@ -191,7 +191,6 @@ jobs:
         run: |
           set -euo pipefail
           sh scripts/tests/test-gwrt-socinfo.sh
-          python3 scripts/tests/test-gwrt-wifiroam.py
 
       - name: Build firmware
         id: build_firmware
@@ -209,6 +208,22 @@ jobs:
             REVISION="$(git rev-parse --short HEAD)" \
             CONFIG_VERSION_DIST=GWRT \
             CONFIG_VERSION_NUMBER="$VER" 2>&1 | tee -a logs/build.log
+
+      # wifiroam 的回归需要目标架构的 ucode + UCI，只能等固件编译出 staging
+      # rootfs 后用 qemu-user 跑（编译前的 runner 上没有 aarch64 ucode）。
+      - name: Test wifiroam helpers (qemu)
+        run: |
+          set -euo pipefail
+          if ! command -v qemu-aarch64 >/dev/null 2>&1; then
+            sudo apt-get update -y -o Acquire::Retries=5
+            sudo apt-get install -y -o Acquire::Retries=5 qemu-user-static
+          fi
+          sysroot="$(ls -d build_dir/target-aarch64_*/root-* 2>/dev/null | head -1)"
+          if [ -z "$sysroot" ] || [ ! -x "$sysroot/usr/bin/ucode" ]; then
+            echo "::error::no aarch64 staging root with usr/bin/ucode, cannot run wifiroam regression"
+            exit 1
+          fi
+          GWRT_TEST_SYSROOT="$PWD/$sysroot" python3 scripts/tests/test-gwrt-wifiroam.py
 
       - name: Verify image checksums
         run: |

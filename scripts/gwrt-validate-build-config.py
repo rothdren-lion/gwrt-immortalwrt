@@ -49,6 +49,86 @@ baseline = (ROOT / 'config.ss01-261101-01-nss').read_text()
 ss01_apps = {name for name in re.findall(r'^CONFIG_PACKAGE_([^=]+)=y$', baseline, re.M)
              if re.fullmatch(r'(?:luci-(?:app|i18n)-[a-z0-9+.-]+|gwrt-[a-z0-9+.-]+|daed(?:-[a-z0-9+.-]+)?)', name)}
 
+def _image_makefile_blocks():
+    blocks = {}
+    image_dir = ROOT / 'target/linux' / board / 'image'
+    if image_dir.is_dir():
+        for path in sorted(image_dir.iterdir()):
+            if not path.is_file():
+                continue
+            try:
+                blocks.update(dict(re.findall(r'^define Device/([^\n]+)\n(.*?)^endef',
+                                             path.read_text(), re.M | re.S)))
+            except OSError:
+                pass
+    return blocks
+
+
+_image_blocks = None
+
+
+def _device_block(device):
+    global _image_blocks
+    if _image_blocks is None:
+        _image_blocks = _image_makefile_blocks()
+
+    def expand(name, seen=()):
+        block = _image_blocks.get(name, '')
+        inherited = ''.join(expand(parent, seen + (name,))
+                            for parent in re.findall(r'\$\(call Device/([^),]+)', block)
+                            if parent not in seen)
+        return inherited + '\n' + block
+
+    return expand(device)
+
+
+def _dts_text(device, block):
+    match = re.search(r'^\s*DEVICE_DTS\s*:?=\s*(\S+)', block, re.M)
+    names = [match.group(1)] if match else [device]
+    if not match and '_' in device:
+        names.append(device.split('_', 1)[1])
+    dts_dir = ROOT / 'target/linux' / board / 'dts'
+    candidates = []
+    if dts_dir.is_dir():
+        files = sorted(dts_dir.glob('*.dts'))
+        for name in names:
+            candidates = [path for path in files
+                          if path.stem == name or path.stem.endswith('-' + name)]
+            if candidates:
+                break
+    seen = set()
+
+    def read(path):
+        if path in seen:
+            return ''
+        seen.add(path)
+        try:
+            text = path.read_text()
+        except OSError:
+            return ''
+        for include in re.findall(r'#include\s+"([^"]+)"', text):
+            child = path.parent / include
+            if child.is_file():
+                text += '\n' + read(child)
+        return text
+
+    return '\n'.join(read(path) for path in candidates)
+
+
+def device_has_emmc(device):
+    """Check the board, not the target.
+
+    qualcommax/qualcommbe/mediatek declare the 'emmc' feature for the whole
+    target, so CONFIG_EMMC_SUPPORT=y does not mean this board has eMMC.
+    """
+    block = _device_block(device)
+    if 'Device/EmmcImage' in block:
+        return True
+    return bool(re.search(
+        r'&(?:sdhc|sdhci|sdmmc|mmc)[\w-]*\s*\{[^}]*status\s*=\s*"okay"',
+        _dts_text(device, block), re.S))
+
+
 def requirements(device):
     required, forbidden = set(), set()
     if args.preset in jdc_presets:
@@ -58,7 +138,8 @@ def requirements(device):
             required |= {'kmod-qca-edma', 'kmod-qca-ppe'}
             forbidden |= {'kmod-qca-nss-dp', 'kmod-qca-nss-drv', 'kmod-qca-nss-ecm',
                           'kmod-qca-nss-drv-bridge-mgr', 'kmod-qca-ssdk'}
-    if values.get('EMMC_SUPPORT') == 'y' and 'gwrt-device-defaults' in packages:
+    if values.get('EMMC_SUPPORT') == 'y' and 'gwrt-device-defaults' in packages \
+            and device_has_emmc(device):
         required.add('sgdisk')
     if board == 'airoha' and 'emmc' in device:
         required.add('sgdisk')
@@ -92,8 +173,11 @@ def requirements(device):
         forbidden |= radio_packages
         forbidden.add('wpad-openssl')
         if device == 'jdcloud_re-cs-07':
+            # wifi-scripts is not a radio driver: gwrt-device-defaults (and the
+            # GWRT themes) depend on gwrt-wifi-defaults, which depends on it.
+            # CS-07 has no radio, so it is inert; drivers/firmware/wpad stay out.
             forbidden |= {'kmod-cfg80211', 'kmod-mac80211', 'kmod-ath', 'iw',
-                          'wifi-scripts', 'hostapd-common', 'wireless-regdb',
+                          'hostapd-common', 'wireless-regdb',
                           'athena-led', 'luci-app-athena-led'}
     elif args.preset in ('mt7981', 'mt7986'):
         soc = args.preset

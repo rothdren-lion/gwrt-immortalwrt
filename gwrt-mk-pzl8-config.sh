@@ -41,6 +41,8 @@ CONFIG_PACKAGE_pz-l8-wifi-board=y
 CONFIG_PACKAGE_kmod-zram=y
 CONFIG_PACKAGE_zram-swap=y
 # --- mesh 全套（漫游守护+LuCI 预置包，开箱即用）---
+# 128M NAND（UbiFit），无 eMMC：不装 sgdisk。CONFIG_EMMC_SUPPORT=y 是
+# qualcommax 目标级 FEATURES 带入的，校验器按板级 DTS/Device/EmmcImage 判定。
 CONFIG_PACKAGE_gwrt-agent=y
 CONFIG_PACKAGE_gwrt-device-defaults=y
 CONFIG_PACKAGE_gwrt-mesh-apmode=y

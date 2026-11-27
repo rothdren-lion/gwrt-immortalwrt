@@ -42,6 +42,8 @@ CONFIG_PACKAGE_gwrt-agent=y
 CONFIG_PACKAGE_gwrt-device-defaults=y
 CONFIG_PACKAGE_gwrt-mesh-apmode=y
 CONFIG_PACKAGE_gwrt-mesh-led=y
+# eMMC GPT（Device/EmmcImage + &sdhc_1）: 分区维护工具
+CONFIG_PACKAGE_sgdisk=y
 CONFIG_PACKAGE_gwrt-tv-adblock=y
 CONFIG_PACKAGE_luci-app-gwrt-tvadblock=y
 CONFIG_PACKAGE_ucode-mod-socket=y
