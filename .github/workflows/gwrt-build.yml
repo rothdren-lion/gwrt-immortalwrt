@@ -115,7 +115,7 @@ jobs:
           for t in llvm-strip llc opt llvm-dis; do
             [ -x "$LLVM_BIN/$t" ] && sudo ln -sf "$LLVM_BIN/$t" "/usr/local/bin/$t"
           done
-          command -v llvm-strip && llvm-strip --version | head -1
+          command -v llvm-strip && llvm-strip --version | sed -n '1p'
 
       - name: Cache downloads
         uses: actions/cache@v4

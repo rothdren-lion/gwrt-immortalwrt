@@ -53,7 +53,7 @@ jobs:
             ':(exclude)package/rtl9617c-*' ':(exclude)package/luci-app-rtl9617c-*' \
             ':(exclude)gwrt-mk-tyfza1-config.sh' ':(exclude)configs/tyfza1-feeds.conf'
           echo "=== shared layer synced from master ==="
-          git status --short | head -20
+          git status --short | sed -n '1,20p'
 
       - name: Free disk space
         run: |
