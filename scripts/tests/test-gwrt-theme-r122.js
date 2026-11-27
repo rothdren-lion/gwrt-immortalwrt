@@ -51,11 +51,13 @@ assert.match(css, /\.stat-card\[data-gwrt="netspeed"\],\.stat-card\[data-gwrt="d
 assert.match(css, /\.gwrt-wan-line-ipv4\{stroke:#22b8cf\}/);
 assert.match(css, /\.gwrt-wan-line-ipv6\{stroke:#a78bfa\}/);
 assert.match(header, /id="gwrtNavbarUptime"/);
-for (const asset of [header, headerLogin]) {
-  assert.match(asset, /20261120r127/, 'dashboard CSS must invalidate the r126 cache');
+const versions = new Set();
+for (const asset of [header, headerLogin, footer, footerLogin]) {
+  for (const m of asset.matchAll(/\?v=(20[0-9]{6}r[0-9]+)/g)) versions.add(m[1]);
 }
-assert.match(footer, /gwrt-navbar\.js\?v=20261118r124/, 'navbar monitor must invalidate its r123 cache');
-assert.match(footerLogin, /gwrt\.js\?v=20261118r123/, 'login page invalidates its updated runtime asset');
+assert.equal(versions.size, 1, 'header/footer assets must share one cache-bust version');
+const [themeVersion] = versions;
+assert.match(themeVersion, /^2026[0-9]{4}r1[0-9]{2}$/, 'cache-bust version must follow the 20261128rNNN scheme');
 
 assert.match(socinfo, /machine_file=.*device/);
 assert.match(socinfo, /compatible_file=.*device/);

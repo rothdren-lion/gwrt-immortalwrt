@@ -108,16 +108,25 @@ function sample_from_netdev(network, now, uptime, boot, prev) {
 	// /proc/net/dev 只有协议合并计数：把 Bandix 看得见的 WAN IPv6 累计值
 	// 拆出来，剩余（含硬件卸载的 v4 流量）归到 IPv4/合计。没有 Bandix WAN
 	// 数据时 ipv6 不可用，界面只显示一条合计曲线。
-	let v6 = bandix_wan_v6(now), up6 = 0, down6 = 0;
+	let v6 = bandix_wan_v6(now), up6 = 0, down6 = 0, v6_reset = false;
 	if (v6) {
-		up6 = v6.up6 <= c.tx ? v6.up6 : 0;
-		down6 = v6.down6 <= c.rx ? v6.down6 : 0;
+		// Bandix 重启后 IPv6 累计值从 0 重新开始。若照旧直接相减，历史 IPv6
+		// 字节会被一次性记到 IPv4/合计上；这里把本轮视为基线重置，合并计数
+		// 全额算 IPv4，并跳过本轮 v6 速率（不产生负增量）。
+		v6_reset = !!(prev && prev.source == source && prev.boot == boot &&
+			(v6.up6 < prev.bytes.up6 || v6.down6 < prev.bytes.down6));
+		if (v6_reset) {
+			up6 = 0; down6 = 0;
+		} else {
+			up6 = v6.up6 <= c.tx ? v6.up6 : 0;
+			down6 = v6.down6 <= c.rx ? v6.down6 : 0;
+		}
 	}
 	let up = 0, down = 0, r_up6 = 0, r_down6 = 0;
 	if (dt > 0) {
 		up = c.tx - up6 >= prev.bytes.up4 ? (c.tx - up6 - prev.bytes.up4) / dt : 0;
 		down = c.rx - down6 >= prev.bytes.down4 ? (c.rx - down6 - prev.bytes.down4) / dt : 0;
-		if (v6 && prev?.available?.ipv6 && up6 >= prev.bytes.up6 && down6 >= prev.bytes.down6) {
+		if (v6 && !v6_reset && prev?.available?.ipv6 && up6 >= prev.bytes.up6 && down6 >= prev.bytes.down6) {
 			r_up6 = (up6 - prev.bytes.up6) / dt;
 			r_down6 = (down6 - prev.bytes.down6) / dt;
 		}
@@ -125,7 +134,7 @@ function sample_from_netdev(network, now, uptime, boot, prev) {
 	return { now, uptime, boot, source,
 		bytes: { up4: c.tx - up6, down4: c.rx - down6, up6, down6 },
 		rates: { up4: up, down4: down, up6: r_up6, down6: r_down6 },
-		available: { ipv4: true, ipv6: !!v6 } };
+		available: { ipv4: true, ipv6: !!v6 }, v6_reset };
 }
 function probe(state) {
 	let network = ubus_call('network.interface', 'dump');
@@ -163,8 +172,15 @@ while (!stopping) {
 	if (adopt) {
 		state.totals = { up4: sample.bytes.up4, down4: sample.bytes.down4,
 			up6: sample.bytes.up6, down6: sample.bytes.down6 };
-		state.today = { up4: sample.bytes.up4, down4: sample.bytes.down4,
-			up6: sample.bytes.up6, down6: sample.bytes.down6 };
+		// 端口计数是开机以来的累计值，不能当成“今天”的增量。
+		state.today = empty_bytes();
+		state.last = sample;
+		state.sampled = now;
+		state.ok = true;
+		atomic_write(memory_file, state);
+	} else if (sample?.v6_reset) {
+		// IPv6 累计值复位：只重对齐基线，不把历史 IPv6 字节补记成 IPv4，
+		// 也不累加增量（代价是丢失本轮约 5 秒的流量）。
 		state.last = sample;
 		state.sampled = now;
 		state.ok = true;

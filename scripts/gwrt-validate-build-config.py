@@ -41,6 +41,10 @@ pci = {'kmod-ath11k-pci', 'ath11k-firmware-qcn9074', 'ath11k-firmware-qcn9074-dd
 ath12k = {'kmod-ath12k', 'wpad-openssl', 'ath12k-firmware-ipq5332-ddwrt', 'ath12k-firmware-qcn9274-ddwrt'}
 radio_packages = {p for p in packages if p.startswith(('kmod-ath11k', 'ath11k-firmware-', 'kmod-ath12k', 'ath12k-firmware-', 'kmod-mt79'))}
 jdc_presets = {'ss01', 'cs02', 'cs02-gwrt2', 'cs07'}
+daed_presets = jdc_presets | {'cs06', 'cs08', 'be6500', 'r68s'}
+no_daed_presets = {'an758x', 'an7583', 'tyfza1', 'xer5', 'sbe1v1k',
+                   'mt7981', 'mt7986', 'cp02', 'pzl8', 'nezha',
+                   'bdy-g98-direct', 'bdy-g98-uefi'}
 baseline = (ROOT / 'config.ss01-261101-01-nss').read_text()
 ss01_apps = {name for name in re.findall(r'^CONFIG_PACKAGE_([^=]+)=y$', baseline, re.M)
              if re.fullmatch(r'(?:luci-(?:app|i18n)-[a-z0-9+.-]+|gwrt-[a-z0-9+.-]+|daed(?:-[a-z0-9+.-]+)?)', name)}
@@ -153,12 +157,18 @@ if args.preset in jdc_presets:
         size = re.search(r'^\s*KERNEL_SIZE\s*:?=\s*([^\s]+)', block, re.M)
         if not size or size.group(1) != '12288k':
             fail('Device/' + device + ' must retain its recorded 12288k JDC layout')
-if 'daed' in packages:
-    check_packages(packages, {'kmod-sched-bpf', 'kmod-xdp-sockets-diag'}, (), 'daed')
+if args.preset in daed_presets:
+    check_packages(packages, {'daed', 'luci-app-daed', 'kmod-sched-bpf', 'kmod-xdp-sockets-diag'}, (), 'daed')
+    if values.get('KERNEL_XDP_SOCKETS') != 'y':
+        fail('daed requires CONFIG_KERNEL_XDP_SOCKETS=y (otherwise defconfig silently drops daed)')
     if values.get('aarch64') != 'y':
         fail('the selected daed runtime build requires aarch64')
     if values.get('KERNEL_DEBUG_INFO_BTF') != 'y' and 'vmlinux-btf' not in packages:
         fail('daed needs kernel BTF or vmlinux-btf')
+elif args.preset in no_daed_presets:
+    check_packages(packages, (), {'daed', 'luci-app-daed'}, 'daed')
+else:
+    fail('no daed package expectation defined for preset ' + args.preset)
 
 if args.manifests:
     manifests = list(args.manifests.rglob('*.manifest'))
@@ -177,8 +187,8 @@ if args.manifests:
             for manifest in matching:
                 installed = {line.split()[0] for line in manifest.read_text().splitlines() if line.strip()}
                 check_packages(installed, required, forbidden, manifest.name)
-                if 'daed' in packages:
-                    check_packages(installed, {'daed', 'kmod-sched-bpf'}, (), manifest.name)
+                if args.preset in daed_presets:
+                    check_packages(installed, {'daed', 'luci-app-daed', 'kmod-sched-bpf'}, (), manifest.name)
             continue
 
         # Multi-profile targets share a rootfs manifest; profiles.json records
@@ -205,8 +215,8 @@ if args.manifests:
         installed -= {p[1:] for p in device_packages if p.startswith('-')}
         installed |= {p for p in device_packages if not p.startswith('-')}
         check_packages(installed, required, forbidden, device)
-        if 'daed' in packages:
-            check_packages(installed, {'daed', 'kmod-sched-bpf'}, (), device)
+        if args.preset in daed_presets:
+            check_packages(installed, {'daed', 'luci-app-daed', 'kmod-sched-bpf'}, (), device)
 
 if errors:
     raise SystemExit('\n'.join('FAIL: ' + error for error in errors))

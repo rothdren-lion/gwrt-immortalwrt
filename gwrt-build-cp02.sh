@@ -5,6 +5,10 @@
 # 注意：本地树没有 .git 时 OpenWrt 的 REVISION 会取成 "unknown"，
 #       apk 打包时 "版本~unknown" 被判非法 → 显式传 REVISION。
 set -e
+# dash 不支持 pipefail；bash 下启用，避免 tee 吞掉 make 的失败
+if (set -o pipefail) 2>/dev/null; then
+	set -o pipefail
+fi
 TOP=$(cd "$(dirname "$0")" && pwd)
 cd "$TOP"
 JOBS=${1:-6}

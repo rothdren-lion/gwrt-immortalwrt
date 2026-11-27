@@ -88,6 +88,20 @@ function present(map, key) {
 	return length(map[key] ?? '') > 0;
 }
 
+// 凭据类配置项不能进入 latest.json 或 ubus 回传：只保留已配置/未配置。
+// 键名匹配 loid、*password*、*psk*（大小写不敏感）。
+function redact(map) {
+	let out = {};
+	for (let key, val in map) {
+		let name = lc(key);
+		if (match(name, /loid/) || match(name, /password/) || match(name, /psk/))
+			out[key] = length(val ?? '') > 0 ? '***' : '';
+		else
+			out[key] = val;
+	}
+	return out;
+}
+
 function pomap_option(pon, factory, key) {
 	return pon[key] ?? factory[key] ?? '';
 }
@@ -278,10 +292,10 @@ function collect() {
 		},
 		config: {
 			pon_enabled: (pon.enabled ?? '1') == '1',
-			pon: pon,
-			pon_wan: wan
+			pon: redact(pon),
+			pon_wan: redact(wan)
 		},
-		factory: factory,
+		factory: redact(factory),
 		identity: identity,
 		link: {
 			state: numbers(files.state),
@@ -386,7 +400,7 @@ function ensure_state_dir() {
 function write_history(records) {
 	let text = '';
 	for (let record in records)
-		text += sprintf('%J', record) + '\n';
+		text += sprintf('%J', redact(record)) + '\n';
 	ensure_state_dir();
 	writefile(HISTORY + '.new', text);
 	rename(HISTORY + '.new', HISTORY);
@@ -430,7 +444,7 @@ function history(limit) {
 	if (start < 0)
 		start = 0;
 	for (let i = start; i < length(records); i++)
-		push(out, records[i]);
+		push(out, redact(records[i]));
 	return out;
 }
 

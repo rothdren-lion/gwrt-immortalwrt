@@ -50,6 +50,7 @@ CONFIG_PACKAGE_luci-app-gwrt-tvadblock=y
 CONFIG_PACKAGE_ucode-mod-socket=y
 CONFIG_PACKAGE_uhttpd=y
 CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_coremark=y
 CONFIG_PACKAGE_luci-compat=y
 CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
 CONFIG_PACKAGE_luci-theme-gwrt-lite=y

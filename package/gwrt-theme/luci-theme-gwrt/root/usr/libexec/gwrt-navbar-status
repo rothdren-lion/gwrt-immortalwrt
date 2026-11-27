@@ -120,8 +120,9 @@ $top_lines
 EOF
 top_json="$top_json]"
 
-# Local resolver health. The answer must contain both a name and an address;
-# the server address alone is not considered a successful DNS answer.
+# Local resolver health. Judge nslookup by exit status and its failure text:
+# the "Server/Address" header is printed even for a failed lookup, so the old
+# address-line grep reported success while the resolver was broken.
 dns_target='example.com'
 dns_ok=null
 nslookup=''
@@ -129,9 +130,10 @@ for candidate in /usr/bin/nslookup /bin/nslookup /usr/sbin/nslookup; do
 	if [ -x "$candidate" ]; then nslookup="$candidate"; break; fi
 done
 if [ -n "$nslookup" ]; then
-	dns_output=$(run_timeout 5 "$nslookup" "$dns_target" 127.0.0.1 2>/dev/null || true)
-	if printf '%s\n' "$dns_output" | grep -Eiq '(^|[[:space:]])Name[[:space:]]*:' \
-		&& printf '%s\n' "$dns_output" | grep -Eiq '(^|[[:space:]])Address[^:]*:[[:space:]]*[0-9a-f:.]+'; then
+	dns_rc=0
+	dns_output=$(run_timeout 5 "$nslookup" "$dns_target" 127.0.0.1 2>&1) || dns_rc=$?
+	if [ "$dns_rc" -eq 0 ] \
+		&& ! printf '%s\n' "$dns_output" | grep -Eiq "can't resolve|can't find|timed out|no servers|connection refused|SERVFAIL|NXDOMAIN"; then
 		dns_ok=true
 	else
 		dns_ok=false
@@ -196,7 +198,7 @@ if [ -z "$public_ip" ] && { [ "$c_ip" != '-' ] || [ "$ip_age" -ge 120 ]; }; then
 			case "$ip_out" in
 				''|*[!0-9a-fA-F:.]*) continue ;;
 			esac
-			if printf '%s' "$ip_out" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$|^[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{0,4}){2,7}$'; then
+			if printf '%s' "$ip_out" | grep -Eq '^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$|^[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{0,4}){2,7}$'; then
 				public_ip=$ip_out
 				break
 			fi

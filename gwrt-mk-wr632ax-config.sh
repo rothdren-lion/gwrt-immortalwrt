@@ -31,6 +31,10 @@ cd "$TOP"
 
 VER=${VER:-$(date +%y%m%d)-01}
 OUT=${OUT:-$TOP/config.mt7981-wr632ax-$VER}
+case "$OUT" in
+	/*) ;;
+	*) OUT="$TOP/$OUT" ;;
+esac
 BAK="$TOP/.config.bak-$(date +%Y%m%d-%H%M%S)"
 
 echo "==> 输出: $OUT"
@@ -65,7 +69,7 @@ CONFIG_VERSION_NUMBER="$VER"
 CONFIG_VERSION_FILENAMES=y
 EOF
 
-cp "$OUT" "$TOP/.config"
+[ "$OUT" = "$TOP/.config" ] || cp "$OUT" "$TOP/.config"
 
 # --- 2. defconfig 展开 ------------------------------------------------------
 make defconfig >/dev/null
@@ -147,6 +151,18 @@ done
 echo "[wr632ax] 主题:"
 add_pkg luci-theme-gwrt
 
+echo "[wr632ax] CoreMark 跑分（仪表盘 SoC/主频/CPU 分数）:"
+add_pkg coremark
+
+echo "[wr632ax] GWRT 组件（首启默认值 / Mesh 状态灯 / AP 模式 / Agent）:"
+for p in \
+	gwrt-device-defaults \
+	gwrt-mesh-led \
+	gwrt-mesh-apmode \
+	gwrt-agent ; do
+	add_pkg "$p"
+done
+
 echo "[wr632ax] 清除（PON 及后期自装重包）:"
 for p in \
 	airoha-ponctl \
@@ -178,7 +194,6 @@ for p in \
 	kmod-inet-diag \
 	luci-app-bandix-plus \
 	bandix-plus \
-	coremark \
 	luci-app-ttyd \
 	ttyd \
 	appfilter \
@@ -196,7 +211,6 @@ for p in \
 	luci-app-openclash \
 	luci-app-bandix-plus \
 	bandix-plus \
-	coremark \
 	luci-app-ttyd \
 	ttyd \
 	appfilter \
@@ -207,7 +221,7 @@ for p in \
 	unset_pkg "$p"
 done
 
-cp "$TOP/.config" "$OUT"
+[ "$OUT" = "$TOP/.config" ] || cp "$TOP/.config" "$OUT"
 
 echo
 echo "==> 完成: $OUT"

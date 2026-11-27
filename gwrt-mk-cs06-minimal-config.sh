@@ -38,5 +38,6 @@ CONFIG_PACKAGE_gwrt-cs06-diag-defaults=y
 # CONFIG_PACKAGE_gwrt-mesh-led is not set
 # CONFIG_PACKAGE_gwrt-mesh-apmode is not set
 # CONFIG_PACKAGE_luci-theme-gwrt is not set
+# 诊断镜像不含 GWRT 主题/仪表盘，因此不需要 coremark（其它生成器均带）。
 EOF
 echo "Generated CS-06 minimal diagnostic config: $OUT ($VER)"

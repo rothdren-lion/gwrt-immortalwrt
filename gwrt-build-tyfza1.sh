@@ -27,7 +27,7 @@ echo "==> 编译（-j$JOBS, REVISION=$REV）"
 make -j"$JOBS" V=s REVISION="$REV" \
 	CONFIG_TARGET_rtl9617c=y \
 	CONFIG_TARGET_rtl9617c_generic=y \
-	CONFIG_TARGET_DEVICE_rtl9617c_generic_DEVICE_tianyi_tyfza1=y
+	CONFIG_TARGET_DEVICE_rtl9617c_generic_DEVICE_tianyi_tyfza1_2p5g=y
 
 echo "==> 产物："
 ls -1 bin/targets/rtl9617c/generic/*sysupgrade* bin/targets/rtl9617c/generic/*.itb 2>/dev/null || true

@@ -185,13 +185,13 @@ jobs:
           OUT=.config VER="$VER" sh gwrt-mk-sbe1v1k-config.sh
           make defconfig
           sh gwrt-check-target.sh .config sbe1v1k
-          grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)|^CONFIG_VERSION_NUMBER|^CONFIG_KERNEL_DEBUG_INFO_BTF|^CONFIG_PACKAGE_(honk|luci-app-honk|vmlinux-btf|luci-app-easytier|bandix-plus|ttyd|gwrt-wifiroam-v5|kmod-ath11k-ahb|kmod-ath12k)' .config || echo "(no matching config lines)"
+          grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)|^CONFIG_VERSION_NUMBER|^CONFIG_KERNEL_DEBUG_INFO_BTF|^CONFIG_PACKAGE_(honk|luci-app-honk|vmlinux-btf|luci-app-easytier|bandix-plus|ttyd|gwrt-wifiroam-v5|kmod-ath11k-ahb|kmod-ath12k)' .config
 
       - name: Test mesh helpers
         run: |
           set -euo pipefail
-          sh scripts/tests/test-gwrt-socinfo.sh || echo "socinfo test skipped"
-          python3 scripts/tests/test-gwrt-wifiroam.py || echo "wifiroam test skipped"
+          sh scripts/tests/test-gwrt-socinfo.sh
+          python3 scripts/tests/test-gwrt-wifiroam.py
 
       - name: Build firmware
         id: build_firmware
@@ -266,4 +266,5 @@ jobs:
           sha256sum release/* > release/sbe1v1k-${{ env.VER }}.sha256sums
           gh release create "gwrt-sbe1v1k-${{ env.VER }}" release/* \
             --title "GWRT SBE1V1K ${{ env.VER }}" \
-            --notes "SBE1V1K (Askey RTQ7300T, IPQ9570 eMMC) build: Honk v0.1.0-beta.6 (Doona Lite), mesh backhaul, bandix, ttyd."
+            --notes "SBE1V1K (Askey RTQ7300T, IPQ9570 eMMC) build: Honk v0.1.0-beta.6 (Doona Lite), mesh backhaul, bandix, ttyd." \
+            || gh release upload "gwrt-sbe1v1k-${{ env.VER }}" release/* --clobber

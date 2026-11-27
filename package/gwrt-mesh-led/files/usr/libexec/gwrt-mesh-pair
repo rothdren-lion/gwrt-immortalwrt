@@ -9,6 +9,13 @@
 
 log() { logger -t gwrt-mesh-pair "$@"; }
 
+# 只接受 ubus 返回的规范 MAC；未校验就拼进 JSON 会被引号/反斜杠注入。
+valid_mac() {
+	[ "${#1}" = 17 ] || return 1
+	case "$1" in *[!0-9a-fA-F:]*) return 1 ;; esac
+	printf '%s\n' "$1" | grep -Eq '^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$'
+}
+
 role="$(uci -q get wifiroam.core.role)"
 
 case "$role" in
@@ -20,6 +27,10 @@ case "$role" in
 			exit 0
 		fi
 		for m in $devs; do
+			if ! valid_mac "$m"; then
+				log "skip invalid mac: $m"
+				continue
+			fi
 			res="$(ubus call wifiroam pair "{\"mac\":\"$m\"}" 2>/dev/null)"
 			case "$res" in
 				*'"ok": true'*|*'"ok":true'*)

@@ -40,6 +40,7 @@ def main():
     set_value('PREINITOPT', 'y')
     set_value('TARGET_PREINIT_IP', '"192.168.3.3"')
     set_value('TARGET_PREINIT_BROADCAST', '"192.168.3.255"')
+    set_value('PACKAGE_coremark', 'y')
 
     if args.preset == 'ss01':
         # 新版 wifiroam v5 覆盖层：装到私有目录，由 97 首启脚本换上

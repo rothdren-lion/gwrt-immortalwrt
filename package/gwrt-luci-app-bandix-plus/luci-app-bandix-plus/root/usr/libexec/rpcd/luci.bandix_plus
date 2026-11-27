@@ -9,27 +9,54 @@ bplus_base() {
 	printf 'http://127.0.0.1:%s' "$p"
 }
 
-bplus_get() {
-	curl -s -g --connect-timeout 2 --max-time 15 -X GET "$1"
+# Percent-encode every byte except RFC 3986 unreserved characters.  Only
+# printf/od are used so this keeps working without extra packages.
+urlencode() {
+	local hex b
+	hex="$(printf %s "$1" | od -An -v -tx1 | tr -d ' \n')"
+	while [ -n "$hex" ]; do
+		b="${hex%"${hex#??}"}"
+		hex="${hex#??}"
+		case "$b" in
+			3[0-9]|4[1-9a-f]|5[0-9a]|6[1-9a-f]|7[0-9a]|2d|2e|5f|7e)
+				printf "\\$(printf '%03o' "$((0x$b))")" ;;
+			*) printf '%%%s' "$b" ;;
+		esac
+	done
 }
 
+# Failures must still return valid JSON: LuCI parses the ubus reply, and an
+# empty body makes it report a generic error instead of the real cause.
+bplus_curl() {
+	local method="$1" timeout="$2" out rc
+	shift 2
+	out="$(curl -s -f -g --connect-timeout 2 --max-time "$timeout" "$@" 2>/dev/null)"
+	rc=$?
+	if [ "$rc" -ne 0 ]; then
+		printf '{"ok":false,"data":null,"error":"bandix-plus API %s failed (curl exit %s)"}\n' \
+			"$method" "$rc"
+		return 0
+	fi
+	printf '%s' "$out"
+}
+
+bplus_get() { bplus_curl GET 15 -X GET "$1"; }
+
 bplus_put_json() {
-	curl -s -g --connect-timeout 2 --max-time 20 -X PUT -H "Content-Type: application/json" -d "$1" "$2"
+	bplus_curl PUT 20 -X PUT -H "Content-Type: application/json" -d "$1" "$2"
 }
 
 bplus_post_json() {
-	curl -s -g --connect-timeout 2 --max-time 20 -X POST -H "Content-Type: application/json" -d "$1" "$2"
+	bplus_curl POST 20 -X POST -H "Content-Type: application/json" -d "$1" "$2"
 }
 
-bplus_delete() {
-	curl -s -g --connect-timeout 2 --max-time 20 -X DELETE "$1"
-}
+bplus_delete() { bplus_curl DELETE 20 -X DELETE "$1"; }
 
 bplus_delete_json() {
-	curl -s -g --connect-timeout 2 --max-time 20 -X DELETE -H "Content-Type: application/json" -d "$1" "$2"
+	bplus_curl DELETE 20 -X DELETE -H "Content-Type: application/json" -d "$1" "$2"
 }
 
-uripart() { printf %s "$1" | sed 's/+/%2B/g'; }
+uripart() { urlencode "$1"; }
 
 # LuCI rpc.declare(..., params: ['payload']) sends {"payload": <API JSON>} — curl must use inner body only.
 bplus_unwrap_payload() {
@@ -151,21 +178,21 @@ case "$1" in
 			getSnapshot) bplus_get "$BASE/api/snapshot" ;;
 			getOverview)
 				input=""
-				read -t 1 -r input || true
+				read -r input || true
 				period="${3:-}"
 				if [ -n "$input" ]; then
 					[ -z "$period" ] && period="$(echo "$input" | jsonfilter -e '$.period' 2>/dev/null)"
 					[ -z "$period" ] && period="$(echo "$input" | jsonfilter -e '$[0]' 2>/dev/null)"
 				fi
 				if [ -n "$period" ]; then
-					bplus_get "$BASE/api/overview?period=$(printf %s "$period" | sed 's/ /%20/g')"
+					bplus_get "$BASE/api/overview?period=$(urlencode "$period")"
 				else
 					bplus_get "$BASE/api/overview"
 				fi
 				;;
 			getDevices)
 				input=""
-				read -t 1 -r input || true
+				read -r input || true
 				iface="${3:-}"; pperiod="${4:-}"
 				if [ -n "$input" ]; then
 					[ -z "$iface" ] && iface="$(echo "$input" | jsonfilter -e '$.iface' 2>/dev/null)"
@@ -174,14 +201,14 @@ case "$1" in
 					[ -z "$pperiod" ] && pperiod="$(echo "$input" | jsonfilter -e '$[1]' 2>/dev/null)"
 				fi
 				qs=""
-				[ -n "$iface" ] && qs="${qs}iface=$(printf %s "$iface" | sed 's/ /%20/g')&"
-				[ -n "$pperiod" ] && qs="${qs}period=$(printf %s "$pperiod" | sed 's/ /%20/g')&"
-				qs="${qs#}"; qs="${qs%&}"
+				[ -n "$iface" ] && qs="${qs}iface=$(urlencode "$iface")&"
+				[ -n "$pperiod" ] && qs="${qs}period=$(urlencode "$pperiod")&"
+				qs="${qs%&}"
 				[ -n "$qs" ] && bplus_get "$BASE/api/devices?$qs" || bplus_get "$BASE/api/devices"
 				;;
 			getTrend)
 				input=""
-				read -t 1 -r input || true
+				read -r input || true
 				iface="${3:-}"; mac="${4:-}"; ttype="${5:-}"; ddir="${6:-}"
 				if [ -n "$input" ]; then
 					[ -z "$iface" ] && iface="$(echo "$input" | jsonfilter -e '$.iface' 2>/dev/null)"
@@ -194,15 +221,15 @@ case "$1" in
 					[ -z "$ddir" ] && ddir="$(echo "$input" | jsonfilter -e '$[3]' 2>/dev/null)"
 				fi
 				qs=""
-				[ -n "$iface" ] && qs="iface=$(printf %s "$iface" | sed 's/ /%20/g')"
-				[ -n "$mac" ] && qs="${qs}${qs:+&}mac=$(printf %s "$mac" | sed 's/ /%20/g')"
-				[ -n "$ttype" ] && qs="${qs}${qs:+&}traffic_type=$(printf %s "$ttype" | sed 's/ /%20/g')"
-				[ -n "$ddir" ] && qs="${qs}${qs:+&}direction=$(printf %s "$ddir" | sed 's/ /%20/g')"
+				[ -n "$iface" ] && qs="iface=$(urlencode "$iface")"
+				[ -n "$mac" ] && qs="${qs}${qs:+&}mac=$(urlencode "$mac")"
+				[ -n "$ttype" ] && qs="${qs}${qs:+&}traffic_type=$(urlencode "$ttype")"
+				[ -n "$ddir" ] && qs="${qs}${qs:+&}direction=$(urlencode "$ddir")"
 				[ -n "$qs" ] && bplus_get "$BASE/api/trend?$qs" || bplus_get "$BASE/api/trend"
 				;;
 			getHistogram)
 				input=""
-				read -t 1 -r input || true
+				read -r input || true
 				iface="${3:-}"; mac="${4:-}"; ttype="${5:-}"; s_ms="${6:-}"; e_ms="${7:-}"; bucket="${8:-}"
 				if [ -n "$input" ]; then
 					[ -z "$iface" ] && iface="$(echo "$input" | jsonfilter -e '$.iface' 2>/dev/null)"
@@ -214,9 +241,9 @@ case "$1" in
 					[ -z "$bucket" ] && bucket="$(echo "$input" | jsonfilter -e '$.bucket' 2>/dev/null)"
 				fi
 				qs=""
-				[ -n "$iface" ] && qs="iface=$(printf %s "$iface" | sed 's/ /%20/g')"
-				[ -n "$mac" ] && qs="${qs}${qs:+&}mac=$(printf %s "$mac" | sed 's/ /%20/g')"
-				[ -n "$ttype" ] && qs="${qs}${qs:+&}traffic_type=$(printf %s "$ttype" | sed 's/ /%20/g')"
+				[ -n "$iface" ] && qs="iface=$(urlencode "$iface")"
+				[ -n "$mac" ] && qs="${qs}${qs:+&}mac=$(urlencode "$mac")"
+				[ -n "$ttype" ] && qs="${qs}${qs:+&}traffic_type=$(urlencode "$ttype")"
 				[ -n "$s_ms" ] && qs="${qs}${qs:+&}start_ms=$s_ms"
 				[ -n "$e_ms" ] && qs="${qs}${qs:+&}end_ms=$e_ms"
 				[ -n "$bucket" ] && qs="${qs}${qs:+&}bucket=$bucket"
@@ -224,7 +251,7 @@ case "$1" in
 				;;
 			getUsageRanking)
 				input=""
-				read -t 1 -r input || true
+				read -r input || true
 				iface="${3:-}"; ttype="${4:-}"; s_ms="${5:-}"; e_ms="${6:-}"; lim="${7:-}"
 				if [ -n "$input" ]; then
 					[ -z "$iface" ] && iface="$(echo "$input" | jsonfilter -e '$.iface' 2>/dev/null)"
@@ -235,8 +262,8 @@ case "$1" in
 					[ -z "$lim" ] && lim="$(echo "$input" | jsonfilter -e '$.limit' 2>/dev/null)"
 				fi
 				qs=""
-				[ -n "$iface" ] && qs="iface=$(printf %s "$iface" | sed 's/ /%20/g')"
-				[ -n "$ttype" ] && qs="${qs}${qs:+&}traffic_type=$(printf %s "$ttype" | sed 's/ /%20/g')"
+				[ -n "$iface" ] && qs="iface=$(urlencode "$iface")"
+				[ -n "$ttype" ] && qs="${qs}${qs:+&}traffic_type=$(urlencode "$ttype")"
 				[ -n "$s_ms" ] && qs="${qs}${qs:+&}start_ms=$s_ms"
 				[ -n "$e_ms" ] && qs="${qs}${qs:+&}end_ms=$e_ms"
 				[ -n "$lim" ] && qs="${qs}${qs:+&}limit=$lim"
@@ -246,7 +273,7 @@ case "$1" in
 			getSchedules) bplus_get "$BASE/api/rate_limit/schedules" ;;
 			createSchedule)
 				input=""
-				read -r -t 5 input || true
+				read -r input || true
 				js="${3:-}"
 				if [ -n "$input" ]; then
 					js="$(bplus_unwrap_payload "$input")"
@@ -261,7 +288,7 @@ case "$1" in
 				;;
 			updateSchedule)
 				input=""
-				read -r -t 5 input || true
+				read -r input || true
 				pair="${3:-}"
 				if [ -n "$input" ]; then
 					pair="$(bplus_unwrap_pair "$input")"
@@ -275,7 +302,7 @@ case "$1" in
 				;;
 			deleteSchedule)
 				input=""
-				read -r -t 5 input || true
+				read -r input || true
 				rid="${3:-}"
 				if [ -z "$rid" ] && [ -n "$input" ]; then
 					rid="$(echo "$input" | jsonfilter -e '$.id' 2>/dev/null)"
@@ -286,7 +313,7 @@ case "$1" in
 			getIfaceLimits) bplus_get "$BASE/api/rate_limit/iface_limits" ;;
 			setIfaceLimit)
 				input=""
-				read -r -t 5 input || true
+				read -r input || true
 				js="${3:-}"
 				if [ -n "$input" ]; then
 					js="$(bplus_unwrap_payload "$input")"
@@ -301,13 +328,13 @@ case "$1" in
 				;;
 			deleteIfaceLimit)
 				iface="${3:-}"
-				[ -z "$iface" ] && { read -t 1 -r input || true; iface="$(echo "$input" | jsonfilter -e '$[0]')"; [ -z "$iface" ] && iface="$(echo "$input" | jsonfilter -e '$.iface' 2>/dev/null)"; }
+				[ -z "$iface" ] && { read -r input || true; iface="$(echo "$input" | jsonfilter -e '$[0]')"; [ -z "$iface" ] && iface="$(echo "$input" | jsonfilter -e '$.iface' 2>/dev/null)"; }
 				bplus_delete "$BASE/api/rate_limit/iface_limits/$(uripart "$iface")"
 				;;
 			getGuestDefaults) bplus_get "$BASE/api/rate_limit/guest_defaults" ;;
 			setGuestDefault)
 				input=""
-				read -r -t 5 input || true
+				read -r input || true
 				js="${3:-}"
 				if [ -n "$input" ]; then
 					js="$(bplus_unwrap_payload "$input")"
@@ -322,7 +349,7 @@ case "$1" in
 				;;
 			setGuestDefaultEnabled)
 				input=""
-				read -r -t 5 input || true
+				read -r input || true
 				js="${3:-}"
 				if [ -n "$input" ]; then
 					js="$(bplus_unwrap_payload "$input")"
@@ -349,13 +376,13 @@ case "$1" in
 				;;
 			deleteGuestDefault)
 				iface="${3:-}"
-				[ -z "$iface" ] && { read -t 1 -r input || true; iface="$(echo "$input" | jsonfilter -e '$[0]')"; [ -z "$iface" ] && iface="$(echo "$input" | jsonfilter -e '$.iface' 2>/dev/null)"; }
+				[ -z "$iface" ] && { read -r input || true; iface="$(echo "$input" | jsonfilter -e '$[0]')"; [ -z "$iface" ] && iface="$(echo "$input" | jsonfilter -e '$.iface' 2>/dev/null)"; }
 				bplus_delete "$BASE/api/rate_limit/guest_defaults/$(uripart "$iface")"
 				;;
 			getGuestWhitelist) bplus_get "$BASE/api/rate_limit/guest_whitelist" ;;
 			addGuestWhitelist)
 				input=""
-				read -r -t 5 input || true
+				read -r input || true
 				js="${3:-}"
 				if [ -n "$input" ]; then
 					js="$(bplus_unwrap_payload "$input")"
@@ -370,7 +397,7 @@ case "$1" in
 				;;
 			removeGuestWhitelist)
 				input=""
-				read -r -t 5 input || true
+				read -r input || true
 				js="${3:-}"
 				if [ -n "$input" ]; then
 					js="$(bplus_unwrap_payload "$input")"
@@ -386,7 +413,7 @@ case "$1" in
 			setDeviceHostname)
 				# LuCI RPC 与 luci.bandix setHostname 一致：stdin 为 JSON 数组 [iface,mac,hostname] 或对象 {iface,mac,hostname}
 				input=""
-				read -r -t 5 input || true
+				read -r input || true
 				iface="${3:-}"; mac="${4:-}"; hn="${5:-}"
 				if [ -n "$input" ]; then
 					iobj="$(echo "$input" | jsonfilter -e '$.iface' 2>/dev/null)"

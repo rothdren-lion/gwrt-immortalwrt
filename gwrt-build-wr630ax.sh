@@ -6,6 +6,10 @@
 #       而 apk 打包时 "版本~unknown" 会被判为非法版本（package/base-files 首先报错）。
 #       所以这里显式传 REVISION。
 set -e
+# dash 不支持 pipefail；bash 下启用，避免 tee 吞掉 make 的失败
+if (set -o pipefail) 2>/dev/null; then
+	set -o pipefail
+fi
 TOP=$(cd "$(dirname "$0")" && pwd)
 cd "$TOP"
 JOBS=${1:-6}

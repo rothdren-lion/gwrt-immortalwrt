@@ -39,11 +39,16 @@
 set -e
 
 TOP=$(cd "$(dirname "$0")" && pwd)
-SRC=${SRC:-$TOP/config.ss01-261018-01}
+SRC=${SRC:-$TOP/config.ss01-261101-01-nss}
 OUT=${OUT:-$TOP/config.cs07-261021-01}
 VER=${VER:-261021-01}
 
-[ -f "$SRC" ] || { echo "missing source config: $SRC" >&2; exit 1; }
+if [ ! -f "$SRC" ]; then
+	echo "missing source config: $SRC" >&2
+	echo "available seeds:" >&2
+	ls "$TOP"/config.ss01-* 2>/dev/null >&2 || true
+	exit 1
+fi
 
 cp "$SRC" "$OUT"
 

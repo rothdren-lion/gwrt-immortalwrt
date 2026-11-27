@@ -18,12 +18,13 @@ TOP=$(cd "$(dirname "$0")" && pwd)
 cd "$TOP"
 
 JOBS=${JOBS:-4}
+REV=${REVISION:-$(git -C "$TOP" rev-parse --short HEAD 2>/dev/null || echo 8dff4aa)}
 PROFILE=$(grep -E "^CONFIG_TARGET_PROFILE=" .config 2>/dev/null | cut -d'"' -f2)
 
 echo "==> 目标机型: ${PROFILE:-未知}"
 echo "==> 并行度: $JOBS (nice 15)"
 
-nice -n 15 make -j"$JOBS"
+nice -n 15 make -j"$JOBS" REVISION="$REV"
 
 echo
 echo "==> 产物:"

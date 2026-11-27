@@ -49,7 +49,9 @@ jobs:
           set -euo pipefail
           git fetch origin master --depth=1
           git checkout origin/master -- \
-            package/ gwrt-theme-V3/ docs/ scripts/ configs/ .github/ AGENTS.md 'gwrt-*.sh'
+            package/ gwrt-theme-V3/ docs/ scripts/ configs/ .github/ AGENTS.md 'gwrt-*.sh' \
+            ':(exclude)package/rtl9617c-*' ':(exclude)package/luci-app-rtl9617c-*' \
+            ':(exclude)gwrt-mk-tyfza1-config.sh' ':(exclude)configs/tyfza1-feeds.conf'
           echo "=== shared layer synced from master ==="
           git status --short | head -20
 
@@ -199,13 +201,13 @@ jobs:
           OUT=.config VER="$VER" sh gwrt-mk-tyfza1-config.sh
           make defconfig
           sh gwrt-check-target.sh .config tyfza1
-          grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)|^CONFIG_VERSION_NUMBER|^CONFIG_PACKAGE_(honk|luci-app-honk|vmlinux-btf|luci-app-easytier|bandix-plus|ttyd|gwrt-wifiroam-v5|luci-app-pon-info)' .config || echo "(no matching config lines)"
+          grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)|^CONFIG_VERSION_NUMBER|^CONFIG_PACKAGE_(honk|luci-app-honk|vmlinux-btf|luci-app-easytier|bandix-plus|ttyd|gwrt-wifiroam-v5|luci-app-pon-info)' .config
 
       - name: Test mesh / pon-info helpers
         run: |
           set -euo pipefail
-          sh scripts/tests/test-gwrt-socinfo.sh || echo "socinfo test skipped"
-          python3 scripts/tests/test-gwrt-wifiroam.py || echo "wifiroam test skipped"
+          sh scripts/tests/test-gwrt-socinfo.sh
+          python3 scripts/tests/test-gwrt-wifiroam.py
 
       - name: Build firmware
         id: build_firmware
@@ -282,4 +284,5 @@ jobs:
           sha256sum release/* > release/tyfza1-${{ env.VER }}.sha256sums
           gh release create "gwrt-tyfza1-${{ env.VER }}" release/* \
             --title "GWRT TYFZA1 ${{ env.VER }}" \
-            --notes "TYFZA1 (RTL9617C) build: Honk v0.1.0-beta.6 (Doona Lite), mesh backhaul, bandix, ttyd, PON info recorder."
+            --notes "TYFZA1 (RTL9617C) build: Honk v0.1.0-beta.6 (Doona Lite), mesh backhaul, bandix, ttyd, PON info recorder." \
+            || gh release upload "gwrt-tyfza1-${{ env.VER }}" release/* --clobber

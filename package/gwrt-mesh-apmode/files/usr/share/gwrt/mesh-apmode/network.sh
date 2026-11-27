@@ -3,6 +3,7 @@
 AP_OFF="dnsmasq odhcpd turboacc eqos daed homeproxy shadowsocksr microsocks easytier bandix-plus appfilter ttyd"
 RELAY_NAME=gwrt-mesh-relay
 HNAT_KNOB=/sys/kernel/debug/hnat/hook_toggle
+STATE=/etc/gwrt-apmode.state
 
 active_hnat() {
 	[ ! -w "$HNAT_KNOB" ] || printf '%s\n' "$1" >"$HNAT_KNOB" 2>/dev/null
@@ -173,6 +174,19 @@ wait_wan_detached() {
 	! wan_is_bridged
 }
 
+# Runtime marker consumed by gwrt-agent and mesh_status.sh.  It must not be
+# mistaken for the legacy committed-router snapshot (legacy_migrate sources
+# that file), hence the explicit key below.
+mark_apmode() {
+	mkdir -p /etc/gwrt || return 1
+	printf 'gwrt_apmode_runtime=1\nphase=%s\n' "$1" >"$STATE.new" &&
+		mv -f "$STATE.new" "$STATE"
+}
+
+clear_apmode() {
+	rm -f "$STATE" "$STATE.new"
+}
+
 enter_search() {
 	stop_relay && mesh_firewall off || return 1
 	suspend_router_services || return 1
@@ -197,6 +211,7 @@ enter_search() {
 	if configure_sta "$search_band"; then sta_dhcp || return 1
 	else sta_disable; uci -q revert "network.$STA_NET"; fi
 	restore_management
+	mark_apmode search
 	network_reload
 }
 
@@ -229,12 +244,14 @@ enter_wired() {
 	for k in ipaddr netmask gateway dns; do uci -q delete "network.lan.$k"; done
 	disable_local_dhcp || return 1
 	restore_management
+	mark_apmode wired
 	network_reload
 }
 
 restore_router() {
 	local k
 	stop_relay && mesh_firewall off || return 1
+	clear_apmode
 	[ -z "$brsec" ] || uci -q revert "network.$brsec.ports"
 	for k in lan.proto lan.ipaddr lan.netmask lan.gateway lan.dns wan.proto \
 		wan.defaultroute wan.peerdns wan.metric wan6.proto "$STA_NET"; do
@@ -255,7 +272,12 @@ bridge_port_configured() {
 }
 
 legacy_migrate() {
-	local STATE=/etc/gwrt-apmode.state
+	if grep -qx 'gwrt_apmode_runtime=1' "$STATE" 2>/dev/null; then
+		# Volatile marker from a live AP session: the network changes are
+		# uncommitted, so there is no legacy snapshot to restore.
+		clear_apmode
+		return 0
+	fi
 	if [ ! -f "$STATE" ]; then
 		# Old wireless discovery committed this section even before pairing.
 		# Keep unrelated WAN/WWAN settings and CAP backhaul AP sections intact.

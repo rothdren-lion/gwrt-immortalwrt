@@ -160,7 +160,7 @@ setup_aria2() {
 	[ -n "$(get aria2.main.enabled)" ] || set_value aria2.main.enabled 0
 }
 setup_samba() {
-	local section=samba4.smb_share
+	local section=samba4.smb_share pwfile=/etc/gwrt/samba-password
 	[ -f /etc/config/samba4 ] || return 0
 	# Only maintain our own share. Preserve administrator paths and options.
 	if [ -n "$(get "$section")" ]; then
@@ -175,6 +175,9 @@ setup_samba() {
 	if [ "$(get gwrt.storage.smb_account_ready)" != 1 ]; then
 		if ! pdbedit -L 2>/dev/null | grep -q '^gwrt:'; then
 			printf 'gwrt\ngwrt\n' | smbpasswd -s -a gwrt >/dev/null 2>&1 || return 1
+			mkdir -p /etc/gwrt || return 1
+			(umask 077; printf 'gwrt\n' >"$pwfile") || return 1
+			log "created SMB user gwrt; password kept in $pwfile"
 		fi
 		set_value gwrt.storage.smb_account_ready 1 || return 1
 	fi
@@ -185,10 +188,10 @@ setup_samba() {
 	set_value "$section.gwrt_path" "$store_mount" &&
 	set_value "$section.guest_ok" no &&
 	set_value "$section.read_only" no &&
-	set_value "$section.force_root" 1 &&
+	set_value "$section.force_root" 0 &&
 	set_value "$section.users" gwrt &&
-	set_value "$section.create_mask" 0666 &&
-	set_value "$section.dir_mask" 0777
+	set_value "$section.create_mask" 0644 &&
+	set_value "$section.dir_mask" 0755
 }
 lan_network() {
 	local ip mask

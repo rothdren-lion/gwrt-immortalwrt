@@ -186,13 +186,13 @@ jobs:
           DEVICE=xfinity_xer5 OUT=.config VER="$VER" sh gwrt-mk-sbe1v1k-config.sh
           make defconfig
           sh gwrt-check-target.sh .config xer5
-          grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)|^CONFIG_VERSION_NUMBER|^CONFIG_KERNEL_DEBUG_INFO_BTF|^CONFIG_PACKAGE_(honk|luci-app-honk|vmlinux-btf|luci-app-easytier|bandix-plus|ttyd|gwrt-wifiroam-v5|kmod-ath11k-ahb|kmod-ath12k)' .config || echo "(no matching config lines)"
+          grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)|^CONFIG_VERSION_NUMBER|^CONFIG_KERNEL_DEBUG_INFO_BTF|^CONFIG_PACKAGE_(honk|luci-app-honk|vmlinux-btf|luci-app-easytier|bandix-plus|ttyd|gwrt-wifiroam-v5|kmod-ath11k-ahb|kmod-ath12k)' .config
 
       - name: Test mesh helpers
         run: |
           set -euo pipefail
-          sh scripts/tests/test-gwrt-socinfo.sh || echo "socinfo test skipped"
-          python3 scripts/tests/test-gwrt-wifiroam.py || echo "wifiroam test skipped"
+          sh scripts/tests/test-gwrt-socinfo.sh
+          python3 scripts/tests/test-gwrt-wifiroam.py
 
       - name: Build firmware
         id: build_firmware
@@ -267,4 +267,5 @@ jobs:
           sha256sum release/* > release/xer5-${{ env.VER }}.sha256sums
           gh release create "gwrt-xer5-${{ env.VER }}" release/* \
             --title "GWRT XER5 ${{ env.VER }}" \
-            --notes "XER5 (Xfinity, IPQ9574 eMMC) build: SBE1V1K plugin profile, Honk v0.1.0-beta.6 (Doona Lite), mesh backhaul, bandix, ttyd."
+            --notes "XER5 (Xfinity, IPQ9574 eMMC) build: SBE1V1K plugin profile, Honk v0.1.0-beta.6 (Doona Lite), mesh backhaul, bandix, ttyd." \
+            || gh release upload "gwrt-xer5-${{ env.VER }}" release/* --clobber

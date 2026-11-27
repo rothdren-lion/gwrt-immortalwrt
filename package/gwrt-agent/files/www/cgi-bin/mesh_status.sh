@@ -72,8 +72,11 @@ for MAC in $PEER_MACS; do
 		plink="$(echo "$LINE" | cut -d'|' -f3)"
 		ct="$(echo "$LINE" | cut -d'|' -f4)"
 	fi
-	# 只保留合法数值，避免 JSON 注入
-	case "$sig" in ''|*[!0-9-]*) sig="";; esac
+	# 只保留合法数值，避免 JSON 注入；单独一个 "-" 不是数字
+	case "$sig" in
+		-[0-9]|-[0-9][0-9]|-[0-9][0-9][0-9]|[0-9]|[0-9][0-9]|[0-9][0-9][0-9]) ;;
+		*) sig="" ;;
+	esac
 	case "$ct" in ''|*[!0-9]*) ct="";; esac
 	LAST=0
 	[ -n "$sig" ] && LAST="$NOW"

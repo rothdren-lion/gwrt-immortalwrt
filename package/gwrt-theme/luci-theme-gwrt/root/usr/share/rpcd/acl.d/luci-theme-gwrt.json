@@ -238,9 +238,15 @@
     ],
     "/usr/libexec/pon-wan-apply apply": [
      "exec"
+    ],
+    "/sbin/reboot": [
+     "exec"
     ]
    },
    "ubus": {
+    "system": [
+     "reboot"
+    ],
     "uci": [
      "get",
      "set",

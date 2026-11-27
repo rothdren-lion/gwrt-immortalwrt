@@ -28,7 +28,8 @@
 #   固件外（后期设备自行安装）：gecoosac(15.6MB)、openclash 面板(带 ruby)、
 #   openclash/easytier 本体、docker/podman、kmod-wireguard。
 #   注意：gwrt-theme-V3/manifest/config.fragment 里带 openclash/bandix/
-#   coremark/ttyd，本脚本不并入该 fragment，避免顶破体积预算。
+#   coremark/ttyd，本脚本不并入该 fragment；coremark 由本脚本显式加入，
+#   其余重包不装，避免顶破体积预算。
 #
 # 【不覆盖隔壁编译】
 #   本脚本只写自己的 .config（先备份现有 .config），不改动 feeds/ 与其它
@@ -200,6 +201,9 @@ for p in \
 	add_pkg "$p"
 done
 
+echo "[an7581] CoreMark 跑分（仪表盘 SoC/主频/CPU 分数）:"
+add_pkg coremark
+
 echo "[an7581] 主题:"
 for p in \
 	luci-theme-gwrt ; do
@@ -208,8 +212,6 @@ done
 
 echo "[an7581] 清除（后期设备自行安装，固件不带）:"
 for p in \
-	openclash \
-	luci-app-openclash \
 	easytier \
 	easytier-noweb \
 	gecoosac \
@@ -222,11 +224,15 @@ for p in \
 	kmod-tun \
 	kmod-nft-tproxy \
 	kmod-inet-diag \
-	coremark \
 	luci-app-ttyd \
 	ttyd ; do
 	unset_pkg "$p"
 done
+
+if [ "${WITH_OPENCLASH}" != "1" ]; then
+	unset_pkg openclash
+	unset_pkg luci-app-openclash
+fi
 
 if [ "${WITH_SMB}" = "1" ]; then
 	echo "[$SUB] Samba4:"
@@ -251,17 +257,19 @@ fi
 make defconfig >/dev/null
 
 # 主题整合脚本（gwrt-theme-V3/scripts/integrate.sh）会把 manifest/config.fragment
-# 并进 .config，里面带 openclash / bandix-plus / coremark / ttyd / oaf。
-# 本固件要控体积，这些一律不留，defconfig 之后再清一遍并复检。
+# 并进 .config，里面带 openclash / bandix-plus / ttyd / oaf。
+# 本固件要控体积，这些一律不留；coremark 由前面显式加入并保留。
 echo "[an7581] defconfig 后复检（主题 fragment 带入的重包）:"
 OC_KEEP=""
 [ "${WITH_OPENCLASH}" = "1" ] && OC_KEEP="1"
 for p in \
 	openclash \
 	luci-app-openclash \
-	coremark \
 	luci-app-ttyd \
 	ttyd \
+	kmod-tun \
+	kmod-nft-tproxy \
+	kmod-inet-diag \
 	gecoosac \
 	luci-app-gecoosac ; do
 	case "$p" in

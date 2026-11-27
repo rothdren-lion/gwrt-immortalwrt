@@ -36,12 +36,17 @@
 set -e
 
 TOP=$(cd "$(dirname "$0")" && pwd)
-SRC=${SRC:-$TOP/config.ss01-261018-01}
+SRC=${SRC:-$TOP/config.ss01-261101-01-nss}
 OUT=${OUT:-$TOP/config.cs02-gwrt2-261021-01}
 PROFILE=${PROFILE:-DEVICE_jdcloud_re-cs-02-gwrt2}
 VER=${VER:-261021-01}
 
-[ -f "$SRC" ] || { echo "missing source config: $SRC" >&2; exit 1; }
+if [ ! -f "$SRC" ]; then
+	echo "missing source config: $SRC" >&2
+	echo "available seeds:" >&2
+	ls "$TOP"/config.ss01-* 2>/dev/null >&2 || true
+	exit 1
+fi
 
 cp "$SRC" "$OUT"
 
@@ -50,7 +55,7 @@ cp "$SRC" "$OUT"
 # 会 select 下面这些 DEFAULT_*，配置层只需把名字对上。
 sed -i \
   -e 's|^# CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-02-gwrt2 is not set$|CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-02-gwrt2=y|' \
-  -e 's|^# CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_jdcloud_re-ss-01 is not set$|CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_jdcloud_re-ss-01=y|' \
+  -e 's|^CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_jdcloud_re-ss-01=y$|# CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_jdcloud_re-ss-01 is not set|' \
   -e "s|^CONFIG_TARGET_PROFILE=\"DEVICE_jdcloud_re-ss-01\"$|CONFIG_TARGET_PROFILE=\"$PROFILE\"|" \
   "$OUT"
 
@@ -139,7 +144,7 @@ done
 # gwrt-device-defaults 随固件预置 wifiroam 离线 APK，首启安装 + 打补丁；
 # SS-01/CS-02 的「joy」键在 DTS 里已改名为 mesh，短按开、长按关。
 echo "[cs02] adding GWRT mesh stack (wifiroam):"
-for p in gwrt-device-defaults gwrt-mesh-led gwrt-mesh-apmode; do
+for p in gwrt-device-defaults gwrt-mesh-led gwrt-mesh-apmode gwrt-agent; do
   set_pkg "$p"
 done
 

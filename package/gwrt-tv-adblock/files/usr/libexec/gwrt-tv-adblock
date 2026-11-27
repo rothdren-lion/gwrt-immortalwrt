@@ -153,9 +153,24 @@ do_update() {
 		echo "  uci set ${CFG}.config.library_url='https://.../ads-library.txt'"
 		exit 1
 	fi
-	local tmp="/tmp/ads-library.new.$$"
-	if ! wget -q -O "$tmp" "$url"; then
-		echo "下载失败: $url"
+	local tmp="/tmp/ads-library.new.$$" size try
+	# BusyBox wget has no -t, so retry here.  The read timeout and the size
+	# check keep a hung or hostile server from stalling or filling /tmp.
+	try=1
+	while :; do
+		wget -q -T 20 -O "$tmp" "$url" && break
+		rm -f "$tmp"
+		if [ "$try" -ge 2 ]; then
+			echo "下载失败: $url"
+			exit 1
+		fi
+		try=$((try + 1))
+		sleep 2
+	done
+	size=$(wc -c <"$tmp" 2>/dev/null | tr -d ' ')
+	case "$size" in ''|*[!0-9]*) size=0 ;; esac
+	if [ "$size" -eq 0 ] || [ "$size" -gt 2097152 ]; then
+		echo "下载内容异常 (${size} 字节), 保留原库"
 		rm -f "$tmp"
 		exit 1
 	fi

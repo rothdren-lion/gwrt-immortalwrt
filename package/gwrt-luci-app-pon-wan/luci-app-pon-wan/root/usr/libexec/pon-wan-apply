@@ -17,6 +17,11 @@
 ACTION="${1:-apply}"
 CONFIG="pon_wan"
 DEVICE_SECTION="pon_wan_vlan"
+# Snapshot of the WAN interface options as they were before this package
+# rewrote them.  Kept in its own UCI file so disabling the service can put the
+# original values back instead of guessing a default uplink.
+ORIG="gwrt_pon_wan_orig"
+ORIG_IFACE_OPTS="device ifname proto ipaddr netmask gateway dns username password"
 
 ENABLED=0
 UPLINK="pon0"
@@ -96,43 +101,110 @@ validate_config() {
 	fi
 }
 
-write_network() {
-	uci -q delete "network.${DEVICE_SECTION}"
+orig_section() {
+	printf 'orig_%s\n' "$(printf '%s' "$IFACE" | sed 's/[^A-Za-z0-9]/_/g')"
+}
 
-	if [ "$ENABLED" -eq 1 ]; then
-		# The 802.1q device is the netifd way of creating pon0.<vid>.
-		uci set "network.${DEVICE_SECTION}=device"
-		uci set "network.${DEVICE_SECTION}.type=8021q"
-		uci set "network.${DEVICE_SECTION}.ifname=${UPLINK}"
-		uci set "network.${DEVICE_SECTION}.vid=${VLAN}"
-		uci set "network.${DEVICE_SECTION}.name=${UPLINK}.${VLAN}"
+save_originals() {
+	local opt item val present section
 
-		uci set "network.${IFACE}=interface"
-		uci set "network.${IFACE}.device=${UPLINK}.${VLAN}"
-		uci set "network.${IFACE}.proto=${PROTO}"
-		uci -q delete "network.${IFACE}.ifname"
+	section="$(orig_section)"
+	[ "$(uci -q get "$ORIG.$section")" = interface ] && return 0
 
-		case "$PROTO" in
-		static)
-			uci set "network.${IFACE}.ipaddr=${IPADDR}"
-			uci set "network.${IFACE}.netmask=${NETMASK}"
-			[ -n "$GATEWAY" ] && uci set "network.${IFACE}.gateway=${GATEWAY}"
-			[ -n "$DNS" ] && uci add_list "network.${IFACE}.dns=${DNS}"
+	uci set "$ORIG.$section=interface"
+	present=""
+	for opt in $ORIG_IFACE_OPTS; do
+		val="$(uci -q get "network.$IFACE.$opt")"
+		[ -n "$val" ] || continue
+		present="$present $opt"
+		if [ "$opt" = dns ]; then
+			for item in $val; do uci add_list "$ORIG.$section.dns=$item"; done
+		else
+			uci set "$ORIG.$section.$opt=$val"
+		fi
+	done
+	[ -n "$present" ] && uci set "$ORIG.$section.present=${present# }"
+	uci commit "$ORIG" || return 1
+}
+
+restore_originals() {
+	local opt item val present section changed=0
+
+	section="$(orig_section)"
+	present=" $(uci -q get "$ORIG.$section.present") "
+
+	for opt in $ORIG_IFACE_OPTS; do
+		case "$present" in
+		*" $opt "*)
+			val="$(uci -q get "$ORIG.$section.$opt")"
+			if [ "$opt" = dns ]; then
+				[ "$(uci -q get "network.$IFACE.dns")" = "$val" ] || changed=1
+				uci -q delete "network.$IFACE.dns"
+				for item in $val; do uci add_list "network.$IFACE.dns=$item"; done
+			else
+				[ "$(uci -q get "network.$IFACE.$opt")" = "$val" ] || changed=1
+				uci set "network.$IFACE.$opt=$val"
+			fi
 			;;
-		pppoe)
-			[ -n "$PPPOE_USER" ] && uci set "network.${IFACE}.username=${PPPOE_USER}"
-			[ -n "$PPPOE_PASS" ] && uci set "network.${IFACE}.password=${PPPOE_PASS}"
+		*)
+			if uci -q get "network.$IFACE.$opt" >/dev/null; then
+				uci -q delete "network.$IFACE.$opt"
+				changed=1
+			fi
 			;;
 		esac
-	else
-		# Restore the plain PON uplink if this interface was previously
-		# bound to a service VLAN device, but never create an interface
-		# that the default network configuration did not define.
-		if uci -q get "network.${IFACE}" >/dev/null; then
-			uci set "network.${IFACE}.device=${UPLINK}"
-			uci -q delete "network.${IFACE}.ifname"
-		fi
+	done
+
+	if uci -q get "network.$DEVICE_SECTION" >/dev/null; then
+		uci -q delete "network.$DEVICE_SECTION"
+		changed=1
 	fi
+
+	if [ "$changed" -eq 1 ]; then
+		uci commit network || fail "Cannot restore the network configuration"
+	fi
+
+	uci -q delete "$ORIG.$section"
+	uci -q commit "$ORIG" 2>/dev/null
+}
+
+write_network() {
+	if [ "$ENABLED" -ne 1 ]; then
+		# Disabled: never rewrite the WAN interface.  Only undo a previous
+		# rewrite of ours, using the values saved before the first one.
+		[ "$(uci -q get "$ORIG.$(orig_section)")" = interface ] || return 0
+		restore_originals
+		return $?
+	fi
+
+	save_originals || fail "Cannot save the original network configuration"
+
+	uci -q delete "network.${DEVICE_SECTION}"
+
+	# The 802.1q device is the netifd way of creating pon0.<vid>.
+	uci set "network.${DEVICE_SECTION}=device"
+	uci set "network.${DEVICE_SECTION}.type=8021q"
+	uci set "network.${DEVICE_SECTION}.ifname=${UPLINK}"
+	uci set "network.${DEVICE_SECTION}.vid=${VLAN}"
+	uci set "network.${DEVICE_SECTION}.name=${UPLINK}.${VLAN}"
+
+	uci set "network.${IFACE}=interface"
+	uci set "network.${IFACE}.device=${UPLINK}.${VLAN}"
+	uci set "network.${IFACE}.proto=${PROTO}"
+	uci -q delete "network.${IFACE}.ifname"
+
+	case "$PROTO" in
+	static)
+		uci set "network.${IFACE}.ipaddr=${IPADDR}"
+		uci set "network.${IFACE}.netmask=${NETMASK}"
+		[ -n "$GATEWAY" ] && uci set "network.${IFACE}.gateway=${GATEWAY}"
+		[ -n "$DNS" ] && uci add_list "network.${IFACE}.dns=${DNS}"
+		;;
+	pppoe)
+		[ -n "$PPPOE_USER" ] && uci set "network.${IFACE}.username=${PPPOE_USER}"
+		[ -n "$PPPOE_PASS" ] && uci set "network.${IFACE}.password=${PPPOE_PASS}"
+		;;
+	esac
 
 	uci commit network || fail "Cannot save the network configuration"
 }
@@ -198,7 +270,9 @@ reload_runtime() {
 load_config
 validate_config
 write_network
-write_firewall
+# Disabled: write_network only restored the original WAN settings, so leave the
+# firewall alone (a leftover zone member for a removed VLAN device is harmless).
+[ "$ENABLED" -eq 1 ] && write_firewall
 reload_runtime
 
 logger -t pon-wan "PON WAN service applied (enabled=${ENABLED} uplink=${UPLINK} vlan=${VLAN:-none} iface=${IFACE} proto=${PROTO})"

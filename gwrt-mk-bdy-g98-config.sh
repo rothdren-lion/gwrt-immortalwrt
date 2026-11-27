@@ -39,6 +39,7 @@ CONFIG_PACKAGE_gwrt-mesh-led=y
 CONFIG_PACKAGE_luci-theme-gwrt=y
 CONFIG_PACKAGE_luci-compat=y
 CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_coremark=y
 CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
 CONFIG_PACKAGE_uhttpd=y
 CONFIG_PACKAGE_curl=y
@@ -67,7 +68,7 @@ CONFIG_PACKAGE_kmod-usb-storage-uas=y
 CONFIG_PACKAGE_kmod-scsi-core=y
 CONFIG_PACKAGE_kmod-ata-ahci=y
 CONFIG_PACKAGE_kmod-ata-core=y
-CONFIG_PACKAGE_kmod-nvme-core=y
+CONFIG_PACKAGE_kmod-nvme=y
 CONFIG_PACKAGE_blkid=y
 CONFIG_PACKAGE_lsblk=y
 CONFIG_PACKAGE_fdisk=y
@@ -157,7 +158,6 @@ CONFIG_PACKAGE_luci-app-filebrowser=y
 CONFIG_PACKAGE_luci-i18n-filebrowser-zh-cn=y
 CONFIG_PACKAGE_luci-app-easytier=y
 CONFIG_PACKAGE_luci-i18n-easytier-zh-cn=y
-CONFIG_PACKAGE_luci-app-argon-config=y
 CONFIG_PACKAGE_odhcp6c=y
 EOF
 

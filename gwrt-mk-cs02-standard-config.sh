@@ -20,4 +20,11 @@ for p in gwrt-tv-adblock luci-app-gwrt-tvadblock; do
 	sed -i "/^# CONFIG_PACKAGE_${p} is not set$/d" "$out"
 	echo "CONFIG_PACKAGE_${p}=y" >> "$out"
 done
+
+# 仪表盘 SoC 分数需要 CoreMark；CI seed 已含时保持
+for p in coremark; do
+	grep -q "^CONFIG_PACKAGE_${p}=y$" "$out" && continue
+	sed -i "/^# CONFIG_PACKAGE_${p} is not set$/d" "$out"
+	echo "CONFIG_PACKAGE_${p}=y" >> "$out"
+done
 echo "generated standard CS-02: $out"

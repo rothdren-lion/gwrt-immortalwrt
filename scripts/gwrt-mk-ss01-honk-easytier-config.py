@@ -105,6 +105,7 @@ def main() -> int:
     ):
         source = set_value(source, "PACKAGE_" + name, "y")
     source = set_value(source, "EASYTIER_INCLUDE_WEBCONSOLE", "y")
+    source = set_value(source, "PACKAGE_coremark", "y")
 
     # Honk's Makefile depends on the virtual vmlinux-btf provider. ImmortalWrt
     # already puts BTF in the kernel, so the empty builtin provider is correct;

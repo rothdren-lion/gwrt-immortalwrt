@@ -10,13 +10,13 @@
 # 【与 an7581 序列对齐】
 #   内核线同为 6.18（CONFIG_LINUX_6_18），插件集沿用 gwrt-mk-an7581-config.sh：
 #   GWRT mesh 四件套、广告拦截、主题、zram/NAND 工具链、网络基础。
-#   PON 用户态换成 TYFZA1 自有实现（tyfza1-pon-control / tyfza1-storage /
-#   luci-app-tyfza1-pon）+ 通用 luci-app-pon-wan。
+#   PON 用户态换成 TYFZA1 自有实现（rtl9617c-pon-control / tyfza1-storage /
+#   luci-app-rtl9617c-pon / luci-app-rtl9617c-qos）+ 通用 luci-app-pon-wan。
 #
 # 【无线栈】
-#   rtl9617c 目标把 cfg80211/mac80211 与 rtl_ax_ap 编译进内核树，
-#   kmod-rtl-ax-ap 直接打包这些 .ko；因此必须关闭 backports 版
-#   kmod-mac80211 / kmod-cfg80211，否则同名模块冲突。
+#   rtl9617c 目标把 cfg80211/mac80211 与 rtw89 编译进内核树，
+#   因此必须关闭 backports 版 kmod-mac80211 / kmod-cfg80211，否则同名
+#   模块冲突。
 #
 # 【不影响其它 SoC】
 #   脚本只写自己的 .config（先备份现有），不改 feeds/、不改其它 target。
@@ -34,7 +34,7 @@ case "$OUT" in
 	*) OUT="$TOP/$OUT" ;;
 esac
 BAK="$TOP/.config.bak-$(date +%Y%m%d-%H%M%S)"
-DEVICE=${DEVICE:-tianyi_tyfza1}
+DEVICE=${DEVICE:-tianyi_tyfza1_2p5g}
 WITH_SMB=${WITH_SMB:-0}
 
 echo "==> 目标: rtl9617c / $DEVICE"
@@ -87,10 +87,8 @@ unset_pkg() {
 	echo "  - $sym"
 }
 
-echo "[tyfza1] 无线栈（内核内 mac80211 + rtl_ax_ap，关闭 backports 版）:"
+echo "[tyfza1] 无线栈（内核内 mac80211 + rtw89，关闭 backports 版）:"
 for p in \
-	kmod-rtl-ax-ap \
-	kmod-tyfza1-usb-led \
 	wpad-mbedtls \
 	wifi-scripts \
 	iw \
@@ -103,9 +101,10 @@ done
 
 echo "[tyfza1] PON 用户态:"
 for p in \
-	tyfza1-pon-control \
+	rtl9617c-pon-control \
 	tyfza1-storage \
-	luci-app-tyfza1-pon \
+	luci-app-rtl9617c-pon \
+	luci-app-rtl9617c-qos \
 	luci-app-pon-wan \
 	luci-app-pon-info ; do
 	add_pkg "$p"
@@ -222,8 +221,7 @@ for p in \
 	podman \
 	kmod-wireguard \
 	kmod-nft-tproxy \
-	kmod-inet-diag \
-	luci-theme-argon ; do
+	kmod-inet-diag ; do
 	unset_pkg "$p"
 done
 
@@ -246,8 +244,8 @@ fi
 echo
 echo "==> 完成: $OUT"
 echo "==> 设备: $(grep -c "^CONFIG_TARGET_DEVICE_rtl9617c_generic_DEVICE_.*=y$" "$OUT") 个"
-echo "==> 无线: $(grep -E '^CONFIG_PACKAGE_(kmod-rtl-ax-ap|wpad-mbedtls|wifi-scripts)=y$' "$OUT" | tr '\n' ' ')"
-echo "==> PON:  $(grep -E '^CONFIG_PACKAGE_(tyfza1|luci-app-tyfza1|luci-app-pon)' "$OUT" | tr '\n' ' ')"
+echo "==> 无线: $(grep -E '^CONFIG_PACKAGE_(wpad-mbedtls|wifi-scripts)=y$' "$OUT" | tr '\n' ' ')"
+echo "==> PON:  $(grep -E '^CONFIG_PACKAGE_(rtl9617c|luci-app-rtl9617c|luci-app-pon)' "$OUT" | tr '\n' ' ')"
 echo "==> 主题: $(grep -E '^CONFIG_PACKAGE_luci-theme-gwrt=y$' "$OUT" || echo '缺失')"
 echo "==> honk: $(grep -E '^CONFIG_PACKAGE_(honk|luci-app-honk|vmlinux-btf)' "$OUT" | tr '\n' ' ')"
 echo "==> 进阶: $(grep -E '^CONFIG_PACKAGE_(bandix-plus|luci-app-bandix-plus|ttyd|luci-app-ttyd)=y$' "$OUT" | tr '\n' ' ')"

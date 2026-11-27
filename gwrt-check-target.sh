@@ -22,7 +22,7 @@ mt7981            mt7981         mediatek     filogic    any
 mt7986            mt7986         mediatek     filogic    any
 an758x            an7581         airoha       an7581     any
 an7583            an7583         airoha       an7583     any
-tyfza1            rtl9617c       rtl9617c     generic    any
+tyfza1            rtl9617c       rtl9617c     generic    DEVICE_tianyi_tyfza1_2p5g
 bdy-g98-direct    rk3588         rockchip     armv8      DEVICE_bdy_g98
 bdy-g98-uefi      arm64-efi      armsr        armv8      DEVICE_generic
 r68s              rk3568         rockchip     armv8      DEVICE_lunzn_fastrhino-r68s
@@ -100,7 +100,10 @@ for d in $devs; do
 done
 
 # --- 4. 设备符号真实存在 ---------------------------------------------------
-if [ -f tmp/.config-target.in ]; then
+# --pre 用于 defconfig 前的种子，此时 tmp/.config-target.in 还未生成。
+if [ "$PRE" -eq 0 ]; then
+	[ -f tmp/.config-target.in ] ||
+		die "tmp/.config-target.in 不存在（先跑 make defconfig 生成 target metadata）"
 	for d in $devs; do
 		grep -qx "config TARGET_$d" tmp/.config-target.in ||
 			grep -qx "menuconfig TARGET_$d" tmp/.config-target.in ||
@@ -124,6 +127,9 @@ if [ -n "$PRESET" ]; then
 	if [ "$4" != "any" ] && [ "$PRE" -eq 0 ]; then
 		[ "$prof" = "$4" ] ||
 			die "预设 $PRESET 应编 profile $4，实际 '${prof:-<空>}'"
+	elif [ "$4" = "any" ]; then
+		[ "$ndevs" -gt 0 ] ||
+			die "预设 $PRESET 的 profile=any 仍要求至少选中一个 device"
 	fi
 fi
 

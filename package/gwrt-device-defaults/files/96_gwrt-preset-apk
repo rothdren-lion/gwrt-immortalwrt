@@ -46,17 +46,28 @@ failed=0
 	done
 	for f in "$@"; do
 		echo "--- retry $(basename "$f")"
-		if apk add --allow-untrusted --force-non-repository --network=no "$f" 2>&1; then
+		out="$(apk add --allow-untrusted --force-non-repository --network=no "$f" 2>&1)"
+		rc=$?
+		if [ "$rc" = 0 ]; then
+			printf '%s\n' "$out"
 			continue
 		fi
-		# The bundled offline APKs are built for aarch64_cortex-a53, but some
-		# targets (e.g. Realtek RTL9617C) report aarch64_cortex-a55.  a53 and
-		# a55 are both ARMv8-A, so the payload is compatible; only apk's arch
-		# gate rejects it.  Fall back to the known APK build arch before
-		# giving up.  Pure-script packages and matching-arch targets never
-		# reach this branch, so their behaviour is unchanged.
-		echo "--- retry $(basename "$f") with --arch aarch64_cortex-a53"
-		apk add --arch aarch64_cortex-a53 --allow-untrusted --force-non-repository --network=no "$f" 2>&1 || failed=1
+		printf '%s\n' "$out"
+		# Some targets (e.g. Realtek RTL9617C) report aarch64_cortex-a55
+		# while the bundled APKs were built for aarch64_cortex-a53.  Both are
+		# ARMv8-A and the payload runs, but apk's arch gate rejects the file.
+		# Retry with the arch apk reports for the package itself, and only
+		# when that arch is actually the reason; every other failure stays a
+		# failure with its real message.
+		pkgarch="$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*arch:[[:space:]]*\([A-Za-z0-9_.-]*\).*$/\1/p' | head -n 1)"
+		sysarch="$(apk --print-arch 2>/dev/null)"
+		[ -n "$sysarch" ] || sysarch="$(cat /etc/apk/arch 2>/dev/null)"
+		if [ -n "$pkgarch" ] && [ "$pkgarch" != "$sysarch" ]; then
+			echo "--- retry $(basename "$f") with --arch $pkgarch"
+			apk add --arch "$pkgarch" --allow-untrusted --force-non-repository --network=no "$f" 2>&1 || failed=1
+		else
+			failed=1
+		fi
 	done
 } >"$LOG" 2>&1
 

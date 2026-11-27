@@ -65,7 +65,29 @@ function initI18n(){var controls=document.querySelector('.navbar-controls');if(!
 if(!controls.querySelector('.gwrt-reboot-btn')){var rb=document.createElement('button');rb.type='button';rb.className='lang-toggle gwrt-reboot-btn';rb.id='gwrtRebootBtn';rb.title='重启路由';rb.setAttribute('aria-label','重启路由');rb.textContent='\u21bb';controls.appendChild(rb);}
 controls.querySelectorAll('.gwrt-lang-toggle').forEach(function(langBtn){langBtn.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();toggleLang();});});var rebootBtn=controls.querySelector('.gwrt-reboot-btn');if(rebootBtn&&!rebootBtn._gwrtBound){rebootBtn._gwrtBound=true;rebootBtn.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();gwrtRebootRouter(rebootBtn);});}
 applyLang(getSavedLang());observeVisibleTranslations();}
-function gwrtRebootRouter(btn){if(!window.confirm('\u786e\u5b9a\u91cd\u542f\u8def\u7531\u5668\uff1f\u91cd\u542f\u671f\u95f4\u4f1a\u65ad\u7f51\uff0c\u8bf7\u52ff\u65ad\u7535\u3002'))return;btn.disabled=true;btn.classList.add('is-busy');var sid=(window.L&&L.env&&L.env.sessionid)?L.env.sessionid:'';var call=function(object,method,params){return fetch('/ubus',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'call',params:[sid,object,method,params||{}]})}).then(function(r){return r.json();}).catch(function(){return null;});};Promise.resolve().then(function(){return call('system','reboot',{}).then(function(j){var code=j&&j.result&&j.result[0];if(code!==0)return call('file','exec',{command:'/sbin/reboot'});});});var ov=document.createElement('div');ov.className='gwrt-reboot-overlay';ov.innerHTML='<div class="gwrt-reboot-box"><span class="gwrt-reboot-spin" aria-hidden="true"></span><p>\u8def\u7531\u5668\u6b63\u5728\u91cd\u542f\u2026</p><small>\u8bf7\u52ff\u65ad\u7535\uff0c\u6062\u590d\u540e\u9875\u9762\u5c06\u81ea\u52a8\u5237\u65b0</small></div>';document.body.appendChild(ov);var tries=0,hits=0;(function ping(){tries++;fetch(location.pathname+'?gwrt_reboot_ping='+Date.now(),{cache:'no-store'}).then(function(r){hits=r.ok?hits+1:0;if(hits>=3){window.location.reload();return;}setTimeout(ping,3000);}).catch(function(){hits=0;setTimeout(ping,3000);});})();}
+function gwrtRebootToast(msg){var t=document.getElementById('gwrtRebootToast');if(!t){t=document.createElement('div');t.id='gwrtRebootToast';t.setAttribute('role','alert');t.style.cssText='position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:10000;max-width:80vw;padding:10px 16px;border:1px solid var(--border-primary,#333);border-radius:8px;background:var(--bg-card,#1b1b1b);color:var(--text-primary,#eee);font-size:13px;box-shadow:0 6px 20px rgba(0,0,0,.45)';document.body.appendChild(t);}t.textContent=msg;clearTimeout(t._gwrtTimer);t._gwrtTimer=setTimeout(function(){if(t.parentNode)t.parentNode.removeChild(t);},5000);}
+function gwrtRebootRouter(btn){
+  if(!window.confirm('\u786e\u5b9a\u91cd\u542f\u8def\u7531\u5668\uff1f\u91cd\u542f\u671f\u95f4\u4f1a\u65ad\u7f51\uff0c\u8bf7\u52ff\u65ad\u7535\u3002'))return;
+  btn.disabled=true;btn.classList.add('is-busy');
+  var sid=(window.L&&L.env&&L.env.sessionid)?L.env.sessionid:'';
+  var call=function(object,method,params){return fetch('/ubus',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'call',params:[sid,object,method,params||{}]})}).then(function(r){return r.json().catch(function(){return null;});}).catch(function(){return null;});};
+  var accepted=function(j){return !!(j&&j.result&&j.result[0]===0);};
+  var refused=function(j){return !!(j&&j.error);};
+  var fail=function(){btn.disabled=false;btn.classList.remove('is-busy');gwrtRebootToast('\u91cd\u542f\u547d\u4ee4\u672a\u6267\u884c\uff1a\u8bf7\u786e\u8ba4\u5f53\u524d\u8d26\u53f7\u6709\u91cd\u542f\u6743\u9650\uff0c\u6216\u68c0\u67e5 rpcd \u6743\u9650\u914d\u7f6e\u3002');};
+  var rebooting=function(){
+    var ov=document.createElement('div');ov.className='gwrt-reboot-overlay';ov.innerHTML='<div class="gwrt-reboot-box"><span class="gwrt-reboot-spin" aria-hidden="true"></span><p>\u8def\u7531\u5668\u6b63\u5728\u91cd\u542f\u2026</p><small>\u8bf7\u52ff\u65ad\u7535\uff0c\u6062\u590d\u540e\u9875\u9762\u5c06\u81ea\u52a8\u5237\u65b0</small></div>';
+    document.body.appendChild(ov);
+    var hits=0;(function ping(){fetch(location.pathname+'?gwrt_reboot_ping='+Date.now(),{cache:'no-store'}).then(function(r){hits=r.ok?hits+1:0;if(hits>=3){window.location.reload();return;}setTimeout(ping,3000);}).catch(function(){hits=0;setTimeout(ping,3000);});})();
+  };
+  call('system','reboot',{}).then(function(j){
+    if(accepted(j))return rebooting();
+    return call('file','exec',{command:'/sbin/reboot'}).then(function(k){
+      if(accepted(k))return rebooting();
+      if(refused(j)&&refused(k))return fail();
+      return rebooting();
+    });
+  },fail);
+}
 visibleTranslations['保存']='Save';visibleTranslations['容器']='Containers';visibleTranslationKeys=Object.keys(visibleTranslations).sort(function(a,b){return b.length-a.length;});function createElement(tag,className){var el=document.createElement(tag);if(className)el.className=className;return el;}
 function gwrtHideNativeModal(){if(typeof L!=="undefined"&&L.ui&&L.ui.hideModal){try{L.ui.hideModal();}catch(e){}}}
 function injectModalCloseBtn(){var overlay=document.getElementById("modal_overlay");if(!overlay)return;var h4=overlay.querySelector(".modal > h4:first-child");if(h4&&!h4.querySelector(".modal-close")){var btn=document.createElement("button");btn.className="modal-close";btn.innerHTML="\u00d7";btn.setAttribute("title","Close");btn.setAttribute("aria-label","Close dialog");btn.addEventListener("click",function(ev){ev.preventDefault();ev.stopPropagation();gwrtHideNativeModal();});h4.style.position="relative";h4.style.paddingRight="36px";h4.appendChild(btn);}
