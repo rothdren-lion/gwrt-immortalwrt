@@ -131,6 +131,10 @@ def device_has_emmc(device):
 
 def requirements(device):
     required, forbidden = set(), set()
+    # 除 cs06-minimal（诊断镜像不带主题/仪表盘）外，所有机型都要能跑 CoreMark：
+    # 主题首页的 CM 值由 /etc/coremark.sh 写 /etc/bench.log，coremark 包是唯一来源。
+    if args.preset != 'cs06-minimal':
+        required.add('coremark')
     if args.preset in jdc_presets:
         required |= ss01_apps | {'daed', 'sgdisk'}
         forbidden |= {'luci-app-homeproxy', 'luci-i18n-homeproxy-zh-cn'}
