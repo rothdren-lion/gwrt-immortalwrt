@@ -953,7 +953,7 @@ body[data-page="admin-system-package-manager"] #packages .cbi-section-actions .b
 .gwrt-public-ip-label{font-size:9px;font-weight:700;letter-spacing:.04em;color:var(--text-tertiary);flex:0 0 auto}
 .gwrt-public-ip b{font:600 11px/1 var(--font-mono);color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .gwrt-public-ip[data-state="unknown"] b{color:var(--text-tertiary)}
-.gwrt-logout-btn{display:inline-flex;align-items:center;gap:3px;height:28px;padding:0 8px;border:1px solid var(--border-secondary);border-radius:8px;background:var(--bg-tertiary);color:var(--text-secondary);font-size:11px;font-weight:600;text-decoration:none;white-space:nowrap;flex:0 0 auto;transition:background .15s,border-color .15s,color .15s}
+.gwrt-logout-btn{display:inline-flex;align-items:center;justify-content:center;gap:0;height:28px;width:28px;padding:0;border:1px solid var(--border-secondary);border-radius:8px;background:var(--bg-tertiary);color:var(--text-secondary);font-size:11px;font-weight:600;text-decoration:none;white-space:nowrap;flex:0 0 auto;transition:background .15s,border-color .15s,color .15s}
 .gwrt-logout-btn:hover,.gwrt-logout-btn:focus-visible{color:var(--accent-danger);border-color:var(--accent-danger);background:color-mix(in srgb,var(--accent-danger) 12%,transparent);outline:none}
-.gwrt-logout-icon{font-size:12px;line-height:1}
-@media (max-width:520px){.gwrt-public-ip{padding:0 5px;max-width:120px}.gwrt-public-ip-label{display:none}.gwrt-logout-btn{padding:0 6px;font-size:0}.gwrt-logout-icon{font-size:13px}}
+.gwrt-logout-icon{font-size:13px;line-height:1}
+@media (max-width:520px){.gwrt-public-ip{padding:0 5px;max-width:120px}.gwrt-public-ip-label{display:none}.gwrt-logout-btn{padding:0;width:28px;font-size:0}.gwrt-logout-icon{font-size:13px}}
