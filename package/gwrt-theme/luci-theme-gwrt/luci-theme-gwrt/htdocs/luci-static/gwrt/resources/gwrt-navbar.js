@@ -137,6 +137,19 @@
       var dnsOk = typeof dns.ok === 'boolean' ? dns.ok : null;
       var externalOk = typeof external.ok === 'boolean' ? external.ok : null;
       setItem('gwrtNavbarDns', dnsOk === true ? '正常' : (dnsOk === false ? '故障' : '未知'), dnsOk === true ? 'ok' : (dnsOk === false ? 'bad' : 'unknown'), dnsOk === true ? '本机 DNS 查询正常' : (dnsOk === false ? '本机 DNS 查询失败' : '本机 DNS 状态未知'));
+      var publicIp = data.public_ip;
+      var ipNode = byId('gwrtPublicIp'), ipText = byId('gwrtPublicIpText');
+      if (ipNode && ipText) {
+        if (typeof publicIp === 'string' && publicIp) {
+          ipText.textContent = publicIp;
+          ipNode.setAttribute('data-state', 'ok');
+          ipNode.title = '当前出口公网 IP：' + publicIp;
+        } else {
+          ipText.textContent = '—';
+          ipNode.setAttribute('data-state', 'unknown');
+          ipNode.title = '出口公网 IP 暂时不可用（外网探测失败）';
+        }
+      }
       setItem('gwrtNavbarExternal', externalOk === true ? '通' : (externalOk === false ? '断' : '未知'), externalOk === true ? 'ok' : (externalOk === false ? 'bad' : 'unknown'), externalOk === true ? '对外网络可达（' + String(external.method || '探针') + '）' : (externalOk === false ? '对外网络探测失败' : '对外网络状态未知'));
 
       var processes = Number(data.process_count);
@@ -182,6 +195,7 @@
         if(total===undefined){total=0;['up4','down4','up6','down6'].forEach(function(k){total+=Number(bytes[k])||0;});}
         var item=document.createElement('span'),label=document.createElement('span'),value=document.createElement('b');
         item.className='gwrt-navbar-period';
+        item.setAttribute('data-state',data.ok?'ok':'unknown');
         label.className='gwrt-navbar-period-label';
         label.textContent=p.label;
         value.textContent=trafficBytes(total);item.appendChild(label);item.appendChild(value);

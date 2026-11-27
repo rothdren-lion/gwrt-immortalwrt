@@ -37,20 +37,109 @@ if has_path \
 fi
 
 # There is no common NPU module name across the supported targets, so check
-# the known module and platform/debug node spellings.  A row is shown only
-# when one of these concrete nodes exists.
+# the known module and platform/debug node spellings.  Airoha AN758x/EN758x
+# uses the built-in "airoha-npu" platform driver with the NPU device under
+# the SoC simple-bus (/sys/devices/platform/soc/1e900000.npu), so also probe
+# the soc bus level and bound driver devices.  A row is shown only when one
+# of these concrete nodes exists.
 npu=false
 if has_path \
 	/sys/module/qca_npu \
 	/sys/module/npu \
 	/sys/module/qca_nss_npu \
+	/sys/module/airoha_npu \
+	/sys/module/airoha-npu \
 	/sys/kernel/debug/qca-npu \
-	/sys/kernel/debug/npu; then
+	/sys/kernel/debug/npu \
+	/sys/kernel/debug/airoha-npu \
+	/sys/kernel/debug/airoha_npu; then
 	npu=true
 else
-	for path in /sys/devices/platform/*npu* /sys/devices/platform/*NPU*; do
+	for path in /sys/devices/platform/*npu* /sys/devices/platform/*NPU* \
+		/sys/devices/platform/soc/*npu* /sys/devices/platform/soc/*NPU* \
+		/sys/devices/platform/soc@0/*npu* /sys/devices/platform/soc@0/*NPU* \
+		/sys/bus/platform/drivers/airoha-npu/*.npu \
+		/sys/bus/platform/drivers/airoha_npu/*.npu; do
 		if [ -e "$path" ]; then npu=true; break; fi
 	done
 fi
 
-printf '{"nss":%s,"ppe":%s,"npu":%s}\n' "$nss" "$ppe" "$npu"
+# ---------------------------------------------------------------------------
+# Numeric identity for the dashboard tiles.  Every value is best effort: a
+# missing or unparsable node leaves the field null and the theme hides that
+# sub-line instead of printing a placeholder word.
+
+num_only() {
+	case "$1" in
+		'' | *[!0-9]*) printf '' ;;
+		*) printf '%s' "$1" ;;
+	esac
+}
+
+jnum() {
+	if [ -n "$1" ]; then printf '%s' "$1"; else printf 'null'; fi
+}
+
+jstr() {
+	if [ -n "$1" ]; then printf '"%s"' "$1"; else printf 'null'; fi
+}
+
+cpu_cores=''
+[ -r /proc/cpuinfo ] && cpu_cores=$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)
+cpu_cores=$(num_only "$cpu_cores")
+
+load1=''
+if [ -r /proc/loadavg ]; then
+	load1=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null)
+fi
+case "$load1" in '' | *[!0-9.]*) load1='' ;; esac
+
+npu_cores=''
+npu_fw=''
+if [ "$npu" = true ]; then
+	for f in /sys/kernel/debug/airoha-npu/npu_cores \
+		/sys/kernel/debug/airoha_npu/npu_cores \
+		/sys/kernel/debug/npu/npu_cores; do
+		[ -r "$f" ] || continue
+		npu_cores=$(tr -s ' \n\t' '  ' 2>/dev/null <"$f" | awk '{print $1}')
+		break
+	done
+	if [ -z "$npu_cores" ]; then
+		npu_cores=$(ls -d /sys/kernel/debug/*npu*/core* \
+			/sys/kernel/debug/*npu*/npu_core* 2>/dev/null | wc -l)
+		[ "$npu_cores" = 0 ] && npu_cores=''
+	fi
+	npu_cores=$(num_only "$npu_cores")
+	npu_fw=$(dmesg 2>/dev/null |
+		sed -n 's/.*[Nn][Pp][Uu] fw version: *\([0-9][0-9.]*\).*/\1/p' | tail -1)
+	case "$npu_fw" in '' | *[!0-9.]*) npu_fw='' ;; esac
+fi
+
+nss_cores=''
+nss_freq=''
+if [ "$nss" = true ]; then
+	nss_cores=$(ls -d /sys/kernel/debug/qca-nss-drv/cores/* 2>/dev/null | wc -l)
+	[ "$nss_cores" = 0 ] && nss_cores=''
+	nss_cores=$(num_only "$nss_cores")
+	for f in /sys/kernel/debug/clk/nss*/clk_rate \
+		/sys/kernel/debug/clk/*nss*/clk_rate; do
+		[ -r "$f" ] || continue
+		v=$(num_only "$(cat "$f" 2>/dev/null)")
+		if [ -n "$v" ] && [ "$v" -gt 1000000 ] 2>/dev/null; then
+			nss_freq=$v
+			break
+		fi
+	done
+	if [ -z "$nss_freq" ] && [ -r /sys/kernel/debug/clk/clk_summary ]; then
+		nss_freq=$(awk '$1 ~ /nss/ {for (i = 1; i <= NF; i++)
+			if ($i + 0 > 1000000) {print $i + 0; exit}}' \
+			/sys/kernel/debug/clk/clk_summary 2>/dev/null)
+		nss_freq=$(num_only "$nss_freq")
+	fi
+fi
+
+printf '{"nss":%s,"ppe":%s,"npu":%s,"cpu_cores":%s,"load1":%s,"npu_cores":%s,"npu_fw":%s,"nss_cores":%s,"nss_freq":%s}\n' \
+	"$nss" "$ppe" "$npu" \
+	"$(jnum "$cpu_cores")" "$(jnum "$load1")" \
+	"$(jnum "$npu_cores")" "$(jstr "$npu_fw")" \
+	"$(jnum "$nss_cores")" "$(jnum "$nss_freq")"

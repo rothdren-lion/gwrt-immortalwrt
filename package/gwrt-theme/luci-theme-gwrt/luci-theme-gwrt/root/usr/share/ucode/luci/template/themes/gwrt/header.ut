@@ -80,7 +80,7 @@
 	</script>
 
 	<!-- Main Stylesheet -->
-	<link rel="stylesheet" href="/luci-static/gwrt/css/cascade.css?v=20261118r123">
+	<link rel="stylesheet" href="/luci-static/gwrt/css/cascade.css?v=20261128r130">
 
 	<!-- Stylesheets -->
 	{% if (node?.css): %}
@@ -139,6 +139,10 @@
 						</div>
 							<div class="navbar-controls">
 								<a class="gwrt-native-link" href="#" title="原生 LuCI · 81" aria-label="打开原生 LuCI · 81" onclick="var p=location.port||(location.protocol==='https:'?'443':'80');var secure=location.protocol==='https:'||p==='444'||p==='443';location.href=(secure?'https':'http')+'://'+location.hostname+':'+(secure?'444':'81')+location.pathname+location.search+location.hash;return false;"><span class="gwrt-go-badge" aria-hidden="true">G/O</span></a>
+								<span class="gwrt-public-ip" id="gwrtPublicIp" data-state="loading" title="当前出口公网 IP">
+									<span class="gwrt-public-ip-label">公网</span><b id="gwrtPublicIpText">—</b>
+								</span>
+								<a class="gwrt-logout-btn" id="gwrtLogoutBtn" href="{{ dispatcher.build_url('admin/logout') }}" title="退出登录" aria-label="退出登录"><span class="gwrt-logout-icon" aria-hidden="true">&#9211;</span>登出</a>
 								<button type="button" class="theme-toggle gwrt-theme-toggle" data-gwrt>
 								<span class="theme-toggle-icon theme-toggle-icon-dark" aria-hidden="true">&#9790;</span>
 								<span class="theme-toggle-icon theme-toggle-icon-light" aria-hidden="true">&#9728;</span>

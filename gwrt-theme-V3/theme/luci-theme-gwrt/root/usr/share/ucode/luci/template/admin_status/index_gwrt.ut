@@ -78,9 +78,9 @@
 					<div class="gwrt-accel-bar"><i id="gwrtCpuBar" style="width:0"></i></div>
 				</div>
 				<div class="gwrt-accel-tile" id="gwrtTempTile">
-					<div class="gwrt-accel-k">温度<em>SoC / WiFi</em></div>
+					<div class="gwrt-accel-k">温度<em id="gwrtTempSubLabel">SoC</em></div>
 					<div class="gwrt-accel-v"><b id="gwrtTemp">-</b><u>°C</u></div>
-					<div class="gwrt-accel-sub">WiFi <b id="gwrtWifiTemp">-</b> °C</div>
+					<div class="gwrt-accel-sub"><span id="gwrtWifiTempWrap" hidden>WiFi <b id="gwrtWifiTemp">-</b></span></div>
 					<div class="gwrt-accel-bar"><i id="gwrtTempBar" style="width:0"></i></div>
 				</div>
 			</div>
@@ -107,12 +107,12 @@
 		<div class="stat-card gwrt-click-card" data-gwrt="netspeed" id="gwrtEqosCard" title="点击进入 EQoS 控速">
 			<div class="gwrt-netspeed-head">
 				<div class="stat-card-label">WAN <span id="gwrtWanProto">-</span><span id="gwrtWanSampleState" class="gwrt-wan-sample-state" aria-live="polite">采样中</span><span class="gwrt-netspeed-runtime" title="当前 WAN 接口连接时长">已连接 <span id="gwrtWanUptime">-</span></span></div>
-				<div class="gwrt-netspeed-meta"><span class="gwrt-netspeed-address"><span class="gwrt-netspeed-address-label">IPv4</span><span id="gwrtWanAddr">-</span></span><span class="gwrt-netspeed-address"><span class="gwrt-netspeed-address-label">IPv6</span><span id="gwrtWan6Addr" class="gwrt-wan-ipv6">-</span></span></div>
+				<div class="gwrt-netspeed-meta"><span class="gwrt-netspeed-address"><span class="gwrt-netspeed-address-label">IPv4</span><span id="gwrtWanAddr">-</span></span><span class="gwrt-netspeed-address" id="gwrtWan6AddrChip" hidden><span class="gwrt-netspeed-address-label">IPv6</span><span id="gwrtWan6Addr" class="gwrt-wan-ipv6">-</span></span></div>
 			</div>
 			<div class="gwrt-wan-traffic" aria-label="WAN IPv4 与 IPv6 流量">
-				<div class="gwrt-wan-traffic-row gwrt-wan-ipv4"><strong>IPv4</strong><span>↑ <b id="gwrtWan4Up">-</b></span><span>↓ <b id="gwrtWan4Down">-</b></span><span class="gwrt-wan-total">总 <b id="gwrtWan4Total">-</b></span></div>
-				<div class="gwrt-wan-traffic-row gwrt-wan-ipv6"><strong>IPv6</strong><span>↑ <b id="gwrtWan6Up">-</b></span><span>↓ <b id="gwrtWan6Down">-</b></span><span class="gwrt-wan-total">总 <b id="gwrtWan6Total">-</b></span></div>
-				<div class="gwrt-wan-trend" id="gwrtWanTrend" aria-label="IPv4 和 IPv6 上下行合计速率曲线"></div>
+				<div class="gwrt-wan-traffic-row gwrt-wan-ipv4"><strong id="gwrtWanMainLabel">IPv4</strong><span>↑ <b id="gwrtWan4Up">-</b></span><span>↓ <b id="gwrtWan4Down">-</b></span><span class="gwrt-wan-total">总 <b id="gwrtWan4Total">-</b></span></div>
+				<div class="gwrt-wan-traffic-row gwrt-wan-ipv6" id="gwrtWan6Row" hidden><strong>IPv6</strong><span>↑ <b id="gwrtWan6Up">-</b></span><span>↓ <b id="gwrtWan6Down">-</b></span><span class="gwrt-wan-total">总 <b id="gwrtWan6Total">-</b></span></div>
+				<div class="gwrt-wan-trend" id="gwrtWanTrend" aria-label="WAN 上下行速率曲线"></div>
 			</div>
 		</div>
 
@@ -3767,8 +3767,18 @@ function gwrtWanTrafficSave(){
 function gwrtWanTrafficLoad(){
   try{var d=JSON.parse(localStorage.getItem('gwrt_wan_traffic_v2')||'null');if(wanTrafficValid(d)){gwrtWanTraffic=d;gwrtWanTraffic.ok=false;renderWanTraffic();}}catch(e){}
 }
+function wanTrafficDual(d){
+  var v6=d&&d.families&&d.families.ipv6;
+  if(!v6||!v6.available)return false;
+  var h=(d&&d.history)||[];
+  for(var i=0;i<h.length;i++)if(wanFamilyPoint(h[i].ipv6)!=null)return true;
+  return !!(wanNumber(v6.up)||wanNumber(v6.down));
+}
 function renderWanTraffic(){
   var d=gwrtWanTraffic,fresh=!!(d&&d.ok&&Math.abs(Date.now()/1000-Number(d.sampled))<=20);
+  var dual=wanTrafficDual(d);
+  var mainLabel=document.getElementById('gwrtWanMainLabel');if(mainLabel)mainLabel.textContent=dual?'IPv4':'合计';
+  var row6=document.getElementById('gwrtWan6Row');if(row6)row6.hidden=!dual;
   var status=document.getElementById('gwrtWanSampleState');
   if(status){status.textContent=d?(fresh?'':'稍早数据'):'采样中';status.title=d?'最近有效采样：'+new Date(Number(d.sampled)*1000).toLocaleString():'等待后台采样';}
   ['ipv4','ipv6'].forEach(function(f){
@@ -3782,11 +3792,12 @@ function renderWanTraffic(){
 }
 function renderWanTrend(){
   var el=document.getElementById('gwrtWanTrend');if(!el)return;
+  var dual=wanTrafficDual(gwrtWanTraffic),fams=dual?['ipv4','ipv6']:['ipv4'];
   var h=gwrtWanTraffic&&gwrtWanTraffic.history||[];
   h=h.filter(function(p){return p&&wanNumber(p.t);}).slice(-60);
-  if(!h.length){el.innerHTML='<span class="gwrt-wan-trend-empty">等待双栈流量采样…</span>';return;}
+  if(!h.length){el.innerHTML='<span class="gwrt-wan-trend-empty">'+(dual?'等待双栈流量采样…':'等待 WAN 流量采样…')+'</span>';return;}
   var max=1,w=el.clientWidth||320,hh=el.clientHeight||46,first=Number(h[0].t),last=Number(h[h.length-1].t),span=Math.max(1000,last-first);
-  h.forEach(function(p){['ipv4','ipv6'].forEach(function(f){max=Math.max(max,wanFamilyPoint(p[f])||0);});});
+  h.forEach(function(p){fams.forEach(function(f){max=Math.max(max,wanFamilyPoint(p[f])||0);});});
   function path(f){
     var prev=null,out='';
     h.forEach(function(p){
@@ -3801,14 +3812,18 @@ function renderWanTrend(){
   el.innerHTML='<svg class="gwrt-wan-trend-svg" viewBox="0 0 '+w+' '+hh+'" preserveAspectRatio="none" aria-hidden="true">'
     +'<path d="M0,'+(hh/2)+' H'+w+' M0,'+(hh-1)+' H'+w+'" class="gwrt-wan-trend-grid"/>'
     +'<path data-family="ipv4" d="'+path('ipv4')+'" class="gwrt-wan-line gwrt-wan-line-ipv4"/>'
-    +'<path data-family="ipv6" d="'+path('ipv6')+'" class="gwrt-wan-line gwrt-wan-line-ipv6"/></svg>'
+    +(dual?'<path data-family="ipv6" d="'+path('ipv6')+'" class="gwrt-wan-line gwrt-wan-line-ipv6"/>':'')+'</svg>'
     +'<span class="gwrt-wan-trend-tip"></span>';
   var svg=el.querySelector('svg'),tip=el.querySelector('.gwrt-wan-trend-tip');
   if(svg&&tip){
     svg.addEventListener('mousemove',function(e){
       var r=svg.getBoundingClientRect(),x=e.clientX-r.left,t=first+x/Math.max(1,r.width)*span,nearest=h[0];
       h.forEach(function(p){if(Math.abs(Number(p.t)-t)<Math.abs(Number(nearest.t)-t))nearest=p;});
-      tip.textContent=['ipv4','ipv6'].map(function(f){var p=nearest[f];return (f==='ipv4'?'IPv4':'IPv6')+' ↑'+(p&&wanNumber(p.up)?fmtSpeed(Number(p.up)):'-')+' ↓'+(p&&wanNumber(p.down)?fmtSpeed(Number(p.down)):'-');}).join(' · ');
+      if(dual){
+        tip.textContent=fams.map(function(f){var p=nearest[f];return (f==='ipv4'?'IPv4':'IPv6')+' ↑'+(p&&wanNumber(p.up)?fmtSpeed(Number(p.up)):'-')+' ↓'+(p&&wanNumber(p.down)?fmtSpeed(Number(p.down)):'-');}).join(' · ');
+      }else{
+        var np=nearest.ipv4;tip.textContent='WAN ↑'+(np&&wanNumber(np.up)?fmtSpeed(Number(np.up)):'-')+' ↓'+(np&&wanNumber(np.down)?fmtSpeed(Number(np.down)):'-');
+      }
       tip.style.opacity='1';
     });
     svg.addEventListener('mouseleave',function(){tip.style.opacity='0';});
@@ -4013,9 +4028,10 @@ function refresh(){
       if(typeof setUsageBar==='function')setUsageBar('gwrtTempBar',Math.max(0,Math.min(100,Math.round(tn))));    /* 满量程 100°C */
     }
     function gwrtApplyWifiTemp(v){
-      var wn=parseFloat(v)||0;
-      S('gwrtWifiTemp',wn>0?wn.toFixed(1):'-');
-      if(typeof setUsageBar==='function')setUsageBar('gwrtWifiTempBar',Math.max(0,Math.min(100,Math.round(wn))));  /* 满量程 100°C */
+      var wn=parseFloat(v)||0,has=wn>0;
+      S('gwrtWifiTemp',has?wn.toFixed(1):'-');
+      var wrap=document.getElementById('gwrtWifiTempWrap');if(wrap)wrap.hidden=!has;
+      var sub=document.getElementById('gwrtTempSubLabel');if(sub)sub.textContent=has?'SoC / WiFi':'SoC';
     }
     var cpuV=ct?parseFloat(ct[1]):0,wifiV=0;
     if(wifiPart){

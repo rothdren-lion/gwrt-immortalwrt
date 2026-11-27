@@ -42,17 +42,50 @@
 			<div class="stat-row gwrt-ota-row"><span class="stat-row-label" data-i18n="固件">固件</span><span class="stat-row-val" id="gwrtFirmware">-</span><button type="button" class="gwrt-ota-btn gwrt-ota-busy" id="gwrtOtaBtn" disabled>检查中</button></div>
 		</div>
 
-		<div class="stat-card gwrt-menu-card-link" data-gwrt="cpu_temp" data-gwrt-menu-target="overview" aria-label="处理器状态，按回车打开概述菜单" tabindex="0">
-			<div class="stat-card-label" id="gwrtAccelCardTitle" data-i18n="CPU · 温度">CPU · 温度</div>
-			<div class="stat-row stat-meter-row"><span class="stat-row-label">CPU</span><div class="mini-bar usage-bar"><div class="mini-bar-fill" id="gwrtCpuBar" style="width:0"></div></div><span class="stat-row-val" id="gwrtCpu">-</span></div>
-			<div class="stat-row stat-meter-row" id="gwrtAccelRow" style="display:none"><span class="stat-row-label" id="gwrtAccelLabel">NSS</span><div class="mini-bar usage-bar"><div class="mini-bar-fill" id="gwrtAccelBar" style="width:0"></div></div><span class="stat-row-val" id="gwrtNss">-</span></div>
-			<div class="dev-summary-row gwrt-nss-traffic-row" id="gwrtNssTrafficRow" style="display:none"><span class="dev-summary-label">RX</span><span class="dev-summary-num left"><strong id="gwrtNssRx">-</strong></span><span class="dev-summary-sep">|</span><span class="dev-summary-num right"><strong id="gwrtNssTx">-</strong></span><span class="dev-summary-label">TX</span></div>
-			<div class="stat-row stat-meter-row" id="gwrtPpeRow" style="display:none"><span class="stat-row-label" data-i18n="PPE">PPE</span><div class="mini-bar usage-bar"><div class="mini-bar-fill" id="gwrtPpeBar" style="width:0"></div></div><span class="stat-row-val" id="gwrtPpe">-</span></div>
-			<div class="stat-row stat-meter-row" id="gwrtNpuRow" style="display:none"><span class="stat-row-label" data-i18n="NPU">NPU</span><div class="mini-bar usage-bar"><div class="mini-bar-fill" id="gwrtNpuBar" style="width:0"></div></div><span class="stat-row-val" id="gwrtNpu">-</span></div>
-			<div class="stat-row stat-meter-row"><span class="stat-row-label">SoC</span><div class="mini-bar usage-bar"><div class="mini-bar-fill" id="gwrtTempBar" style="width:0"></div></div><span class="stat-row-val" id="gwrtTemp">-</span></div>
-			<div class="stat-row stat-meter-row"><span class="stat-row-label">WiFi</span><div class="mini-bar usage-bar"><div class="mini-bar-fill" id="gwrtWifiTempBar" style="width:0"></div></div><span class="stat-row-val" id="gwrtWifiTemp">-</span></div>
+		<div class="stat-card gwrt-menu-card-link gwrt-accel-card" data-gwrt="cpu_temp" data-gwrt-menu-target="overview" aria-label="处理器与硬件加速状态，按回车打开概述菜单" tabindex="0">
+			<div class="gwrt-accel-head">
+				<span class="stat-card-label" id="gwrtAccelCardTitle" data-i18n="加速">加速</span>
+				<span class="gwrt-accel-engines" id="gwrtAccelEngines" hidden></span>
+			</div>
+			<div class="gwrt-accel-grid" id="gwrtAccelGrid">
+				<div class="gwrt-accel-tile" id="gwrtPpeTile" hidden>
+					<div class="gwrt-accel-k">PPE<em id="gwrtPpeEngines"></em></div>
+					<div class="gwrt-accel-v"><b id="gwrtPpe">-</b><u>条</u></div>
+					<div class="gwrt-accel-sub" id="gwrtPpeSub"></div>
+					<div class="gwrt-accel-bar"><i id="gwrtPpeBar" style="width:0"></i></div>
+				</div>
+				<div class="gwrt-accel-tile" id="gwrtNpuTile" hidden>
+					<div class="gwrt-accel-k">NPU<em id="gwrtNpuFw"></em></div>
+					<div class="gwrt-accel-v"><b id="gwrtNpu">-</b><u id="gwrtNpuUnit">核</u></div>
+					<div class="gwrt-accel-sub" id="gwrtNpuSub"></div>
+					<div class="gwrt-accel-bar"><i id="gwrtNpuBar" style="width:0"></i></div>
+				</div>
+				<div class="gwrt-accel-tile" id="gwrtNssTile" hidden>
+					<div class="gwrt-accel-k">NSS<em id="gwrtNssCores"></em></div>
+					<div class="gwrt-accel-v"><b id="gwrtNss">-</b><u id="gwrtNssUnit">GHz</u></div>
+					<div class="gwrt-accel-sub" id="gwrtNssSub"></div>
+					<div class="gwrt-accel-bar"><i id="gwrtAccelBar" style="width:0"></i></div>
+				</div>
+				<div class="gwrt-accel-tile" id="gwrtNssTrafficTile" hidden>
+					<div class="gwrt-accel-k">NSS 流量</div>
+					<div class="gwrt-accel-v"><b id="gwrtNssRx">-</b><u>↓</u></div>
+					<div class="gwrt-accel-sub">↑ <b id="gwrtNssTx">-</b></div>
+				</div>
+				<div class="gwrt-accel-tile" id="gwrtCpuTile">
+					<div class="gwrt-accel-k">CPU<em id="gwrtCpuCores"></em></div>
+					<div class="gwrt-accel-v"><b id="gwrtCpuFreq">-</b><u id="gwrtCpuFreqUnit"></u></div>
+					<div class="gwrt-accel-sub">负载 <b id="gwrtCpu">-</b><span id="gwrtCpuLoad"></span></div>
+					<div class="gwrt-accel-bar"><i id="gwrtCpuBar" style="width:0"></i></div>
+				</div>
+				<div class="gwrt-accel-tile" id="gwrtTempTile">
+					<div class="gwrt-accel-k">温度<em id="gwrtTempSubLabel">SoC</em></div>
+					<div class="gwrt-accel-v"><b id="gwrtTemp">-</b><u>°C</u></div>
+					<div class="gwrt-accel-sub"><span id="gwrtWifiTempWrap" hidden>WiFi <b id="gwrtWifiTemp">-</b></span></div>
+					<div class="gwrt-accel-bar"><i id="gwrtTempBar" style="width:0"></i></div>
+				</div>
+			</div>
+			<div class="gwrt-accel-note" id="gwrtAccelNote" hidden>软件转发 · 未检测到 PPE / NSS / NPU</div>
 				<div class="dev-summary-row"><span class="dev-summary-label" data-i18n="SoC">SoC</span><span class="dev-summary-num left"><strong id="gwrtSocModel">-</strong></span><span class="dev-summary-sep">|</span><span class="dev-summary-num right"><strong id="gwrtCoremark" class="gwrt-coremark-run" role="button" tabindex="0" title="点击运行 CoreMark" aria-label="运行 CoreMark 跑分">-</strong></span><span class="dev-summary-label" title="CoreMark">CM</span></div>
-			<div class="stat-row"><span class="stat-row-label" data-i18n="频率">频率</span><span class="stat-row-val" id="gwrtCpuFreq">-</span></div>
 		</div>
 
 		<div class="stat-card gwrt-menu-card-link" data-gwrt="memstore" data-gwrt-menu-target="store" aria-label="运行存储，按回车打开存储菜单" tabindex="0">
@@ -74,12 +107,12 @@
 		<div class="stat-card gwrt-click-card" data-gwrt="netspeed" id="gwrtEqosCard" title="点击进入 EQoS 控速">
 			<div class="gwrt-netspeed-head">
 				<div class="stat-card-label">WAN <span id="gwrtWanProto">-</span><span id="gwrtWanSampleState" class="gwrt-wan-sample-state" aria-live="polite">采样中</span><span class="gwrt-netspeed-runtime" title="当前 WAN 接口连接时长">已连接 <span id="gwrtWanUptime">-</span></span></div>
-				<div class="gwrt-netspeed-meta"><span class="gwrt-netspeed-address"><span class="gwrt-netspeed-address-label">IPv4</span><span id="gwrtWanAddr">-</span></span><span class="gwrt-netspeed-address"><span class="gwrt-netspeed-address-label">IPv6</span><span id="gwrtWan6Addr" class="gwrt-wan-ipv6">-</span></span></div>
+				<div class="gwrt-netspeed-meta"><span class="gwrt-netspeed-address"><span class="gwrt-netspeed-address-label">IPv4</span><span id="gwrtWanAddr">-</span></span><span class="gwrt-netspeed-address" id="gwrtWan6AddrChip" hidden><span class="gwrt-netspeed-address-label">IPv6</span><span id="gwrtWan6Addr" class="gwrt-wan-ipv6">-</span></span></div>
 			</div>
 			<div class="gwrt-wan-traffic" aria-label="WAN IPv4 与 IPv6 流量">
-				<div class="gwrt-wan-traffic-row gwrt-wan-ipv4"><strong>IPv4</strong><span>↑ <b id="gwrtWan4Up">-</b></span><span>↓ <b id="gwrtWan4Down">-</b></span><span class="gwrt-wan-total">总 <b id="gwrtWan4Total">-</b></span></div>
-				<div class="gwrt-wan-traffic-row gwrt-wan-ipv6"><strong>IPv6</strong><span>↑ <b id="gwrtWan6Up">-</b></span><span>↓ <b id="gwrtWan6Down">-</b></span><span class="gwrt-wan-total">总 <b id="gwrtWan6Total">-</b></span></div>
-				<div class="gwrt-wan-trend" id="gwrtWanTrend" aria-label="IPv4 和 IPv6 上下行合计速率曲线"></div>
+				<div class="gwrt-wan-traffic-row gwrt-wan-ipv4"><strong id="gwrtWanMainLabel">IPv4</strong><span>↑ <b id="gwrtWan4Up">-</b></span><span>↓ <b id="gwrtWan4Down">-</b></span><span class="gwrt-wan-total">总 <b id="gwrtWan4Total">-</b></span></div>
+				<div class="gwrt-wan-traffic-row gwrt-wan-ipv6" id="gwrtWan6Row" hidden><strong>IPv6</strong><span>↑ <b id="gwrtWan6Up">-</b></span><span>↓ <b id="gwrtWan6Down">-</b></span><span class="gwrt-wan-total">总 <b id="gwrtWan6Total">-</b></span></div>
+				<div class="gwrt-wan-trend" id="gwrtWanTrend" aria-label="WAN 上下行速率曲线"></div>
 			</div>
 		</div>
 
@@ -153,7 +186,7 @@
 	</div>
 </div>
 
-<script src="/luci-static/gwrt/resources/router-models.js?v=20261118r123"></script>
+<script src="/luci-static/gwrt/resources/router-models.js?v=20261119r126"></script>
 <script>
 (function(){
 function S(id,t){var e=document.getElementById(id);if(e)e.textContent=t;}
@@ -2002,47 +2035,57 @@ function ppeUplinkIf(){
   }
   return '';
 }
-function renderPpe(enabled){
-  var row=document.getElementById('gwrtPpeRow');
-  if(!row)return;
-  if(!enabled){
-    row.style.display='none';window._gwrtPpePrev=null;return;
-  }
-  /* Capability detection is independent of link state.  Keep the PPE row
-   * visible when WAN is unplugged and show a dash until counters are usable. */
-  row.style.display='';
-  var ifn=window._gwrtPpeIf||ppeUplinkIf();
-  if(!ifn){
-    window._gwrtPpePrev=null;
-    if(typeof setUsageBar==='function')setUsageBar('gwrtPpeBar',0);
-    S('gwrtPpe','-');return;
-  }
-  window._gwrtPpeIf=ifn;
-  rpcD('network.device','status',{name:ifn}).then(function(r){
-    var d=(r&&r.result&&r.result[1])||r||{},st=d.statistics||{};
-    if(d.__rpcError!==undefined||(!d.up&&!d.carrier)){
-      window._gwrtPpePrev=null;
-      if(typeof setUsageBar==='function')setUsageBar('gwrtPpeBar',0);
-      S('gwrtPpe','-');return;
+function compactNum(n){
+  var v=Number(n)||0;
+  if(v>=1000000)return (v/1000000).toFixed(v%1000000?1:0)+'M';
+  if(v>=1000)return (v/1000).toFixed(v%1000?1:0)+'K';
+  return String(v);
+}
+/* 硬件加速瓦片：PPE / NPU 的条目与绑定关系来自 gwrt-ppe-stats。
+ * 无数据时保留瓦片并显示 "-"，不输出任何文字状态。 */
+function renderAccelEngines(caps,detected){
+  var d=detected||{},nums=(caps&&typeof caps==='object')?caps:{};
+  var ppeTile=document.getElementById('gwrtPpeTile'),npuTile=document.getElementById('gwrtNpuTile');
+  if(ppeTile)ppeTile.hidden=!d.ppe;
+  if(npuTile)npuTile.hidden=!d.npu;
+  if(!d.ppe&&!d.npu)return;
+  rpcD('file','exec',{command:'/usr/libexec/gwrt-ppe-stats',params:[]}).then(function(ps){
+    var st=null;
+    try{st=JSON.parse(String((ps&&ps.stdout)||''));}catch(e){st=null;}
+    var ok=!!(st&&st.available);
+    var used=ok?Number(st.used||0):0,cap=ok?Number(st.capacity||0):0;
+    var eng=ok?Number(st.num_ppe||0):0,bound=ok?Number(st.bound||0):0;
+    var pct=cap>0?Math.min(100,Math.round(used/cap*100)):0;
+    if(d.ppe){
+      S('gwrtPpe',ok?String(used):'-');
+      S('gwrtPpeEngines',eng>0?(eng+' 颗 · 表 '+compactNum(cap)):'');
+      var ppeSub=[];
+      if(ok)ppeSub.push('占用 '+((pct<10&&used>0)?(Math.round(used/cap*1000)/10).toFixed(1):pct)+'%');
+      if(bound>0)ppeSub.push('NPU 接管 '+bound);
+      S('gwrtPpeSub',ppeSub.join(' · '));
+      setUsageBar('gwrtPpeBar',pct);
     }
-    var rx=Number(st.rx_bytes||0),tx=Number(st.tx_bytes||0);
-    var sp=parseInt(String(d.speed||'').replace(/F$/,''),10)||0;   /* Mbps */
-    var bps=sp>0?sp*1000000/8:0;                                   /* 字节/秒 */
-    var now=Date.now(),prev=window._gwrtPpePrev,el=prev?(now-prev.t)/1000:0;
-    row.style.display='';
-    if(prev&&el>0.2&&el<30){
-      var rr=rx>=prev.rx?(rx-prev.rx)/el:null,trr=tx>=prev.tx?(tx-prev.tx)/el:null;
-      var peak=Math.max(rr||0,trr||0);
-      var pct=bps>0?Math.min(100,Math.round(peak/bps*100)):0;
-      setUsageBar('gwrtPpeBar',bps>0?pct:0);
-      S('gwrtPpe',(bps>0?pct+'%':'-'));
-    }else{
-      if(typeof setUsageBar==='function')setUsageBar('gwrtPpeBar',0);
-      var cap=sp>0?((sp>=1000?((sp/1000).toFixed(sp%1000?1:0)):'0')+'G'):(sp+'M');
-      S('gwrtPpe',sp>0?cap:'-');
-
+    if(d.npu){
+      var cores=Number(nums.npu_cores||0),fw=nums.npu_fw||'';
+      var unitEl=document.getElementById('gwrtNpuUnit');
+      if(cores>0){S('gwrtNpu',String(cores));if(unitEl)unitEl.textContent='核';}
+      else if(ok){S('gwrtNpu',String(bound));if(unitEl)unitEl.textContent='条';}
+      else {S('gwrtNpu','-');if(unitEl)unitEl.textContent='';}
+      S('gwrtNpuFw',fw?('fw '+fw):'');
+      var npuSub=[];
+      if(eng>0)npuSub.push('绑 '+eng+' PPE');
+      if(ok)npuSub.push('共 '+used+' 条');
+      S('gwrtNpuSub',npuSub.join(' · '));
+      var npuBar=document.getElementById('gwrtNpuBar');
+      if(npuBar){
+        var bindPct=used>0?Math.min(100,Math.round(bound/Math.max(used,1)*100)):0;
+        npuBar.style.width=bindPct+'%';
+        npuBar.className=bindPct>0?'gwrt-accel-bind':'';
+      }
     }
-    window._gwrtPpePrev={t:now,rx:rx,tx:tx};
+  }).catch(function(){
+    if(d.ppe){S('gwrtPpe','-');S('gwrtPpeSub','');setUsageBar('gwrtPpeBar',0);}
+    if(d.npu){S('gwrtNpu','-');S('gwrtNpuSub','');}
   });
 }
 function nssStatValue(text,family,name){
@@ -2484,7 +2527,8 @@ function renderMeshSummary(){
     +'<button type="button" class="gwrt-mesh-manage">管理 Mesh</button>'
     +(devices.length?'<div class="gwrt-mesh-discovery"><span>局域网发现 '+devices.length+' 台待添加 AP</span>'+devices.map(function(d){
       var key=gwrtMeshNodeKey(d),busy=!!gwrtMeshPending[key];
-      return '<div class="gwrt-mesh-discovered"><span><strong>'+esc(d.name||d.model||'GWRT AP')+'</strong><small>'+esc(d.ip||d.mac||'')+(d.model?' · '+esc(d.model):'')+'</small></span>'
+      return '<div class="gwrt-mesh-discovered"><span class="gwrt-mesh-discovered-device">'+gwrtProductIcon(d,'')
+        +'<span><strong>'+esc(d.name||d.model||'GWRT AP')+'</strong><small>'+esc(d.ip||d.mac||'')+(d.model?' · '+esc(d.model):'')+'</small></span></span>'
         +'<button type="button" data-gwrt-mesh-add="'+key+'"'+(busy?' disabled':'')+'>'+(busy?'等待入网…':'添加')+'</button></div>';
     }).join('')+'</div>':'');
   el.querySelector('.gwrt-mesh-manage').onclick=function(){gwrtOpenModal('/cgi-bin/luci/admin/services/wifiroam/pairing','Mesh 配对');};
@@ -2574,6 +2618,18 @@ function ponMetricText(frontend,key,digits,unit){
   var v=ponMetric(frontend,key,digits);
   return v==null?'--':v+' '+unit;
 }
+/* 接收光功率颜色：强绿 / 中黄 / 弱红。GPON/XG-PON 典型接收范围约 -8~-28 dBm。 */
+function ponRxColor(rx){
+  if(rx==null)return {cls:'muted',color:'#9ca3af',label:'无信号'};
+  if(rx>=-15)return {cls:'ok',color:'#22c55e',label:'强'};
+  if(rx>=-22)return {cls:'warn',color:'#eab308',label:'中'};
+  return {cls:'danger',color:'#ef4444',label:'弱'};
+}
+function ponSignalBar(pct){
+  pct=Math.max(0,Math.min(100,Number(pct)||0));
+  var cls=pct>=60?'gwrt-sig-ok':(pct>=30?'gwrt-sig-warn':'gwrt-sig-danger');
+  return '<div class="gwrt-sig-bar"><div class="gwrt-sig-fill '+cls+'" style="width:'+pct+'%"></div></div>';
+}
 function ponStatusText(pon){
   var line=(pon&&pon.line)||{},reg=(pon&&pon.registration)||{};
   var regState=reg.onu_state||reg.mpcp_state;
@@ -2639,6 +2695,15 @@ function fetchPonStatus(force){
     return fetchPonInfoFallback(force);
   }).catch(function(){return fetchPonInfoFallback(force);});
 }
+/* 抓取完整 PON 详情（身份/链路/计数器/OMCI），供详情面板与身份欺骗配置用。 */
+function fetchPonDetail(force){
+  var job=force?rpcD('luci.pon-info','status',{}):rpcCached('ponDetailStatus',10000,'luci.pon-info','status',{});
+  return job.then(function(s){
+    if(!s||s.__rpcError!==undefined)return null;
+    window._gwrtPonDetail=s;
+    return s;
+  }).catch(function(){return null;});
+}
 function ponCardHtml(p,st){
   var now=Date.now(),stat=(st&&st.statistics)||{};
   var rx=Number(stat.rx_bytes||0),tx=Number(stat.tx_bytes||0);
@@ -2652,13 +2717,15 @@ function ponCardHtml(p,st){
   var state=operational?'up':(hasSignal?'warn':((st&&st.carrier)?'warn':'down'));
   var mode=ponModeLabel(line.active_mode||line.configured_mode||'');
   var rxv=ponMetric(fe,'rx_power_dbm',2),txv=ponMetric(fe,'tx_power_dbm',2),temp=ponMetric(fe,'temperature_celsius',1);
-  var rxHtml='RX <b>'+(rxv==null?'--':esc(rxv))+'</b>'+(rxv==null?'':' dBm');
+  var rxc=ponRxColor(rxv);
+  var rxHtml='RX <b style="color:'+rxc.color+';">'+(rxv==null?'--':esc(rxv))+'</b>'+(rxv==null?'':' dBm')+' <span class="gwrt-pon-rx-label gwrt-'+rxc.cls+'">'+rxc.label+'</span>';
   var txHtml='TX <b>'+(txv==null?'--':esc(txv))+'</b>'+(txv==null?'':' dBm');
   var tempHtml=temp==null?'--':esc(temp)+' \u00b0C';
+  var dotColor=pon&&rxv!=null?rxc.color:'';
   return '<div class="gwrt-port pon '+state+'" data-gwrt-port-name="'+esc(p.name)+'" data-gwrt-port-role="wan" data-gwrt-pon="1" title="'+esc(p.label)+' \u5149\u94fe\u8def / PON WAN \u8bbe\u7f6e" role="button" tabindex="0">'
-    +'<div class="gwrt-port-top"><span class="gwrt-port-title"><span class="gwrt-port-dot"></span><span class="gwrt-port-name">PON</span><span class="gwrt-pon-mode">'+esc(mode)+'</span></span><span class="gwrt-port-gear">\u2699</span></div>'
+    +'<div class="gwrt-port-top"><span class="gwrt-port-title"><span class="gwrt-port-dot" style="'+(dotColor?'background-color:'+dotColor+';':'')+'"></span><span class="gwrt-port-name">PON</span><span class="gwrt-pon-mode">'+esc(mode)+'</span></span><span class="gwrt-port-gear">\u2699</span></div>'
     +'<div class="gwrt-pon-optics"><span>'+rxHtml+'</span><span>'+txHtml+'</span></div>'
-    +'<div class="gwrt-pon-meta"><span>\ud83c\udf21 '+tempHtml+'</span><span class="gwrt-pon-rate">\u2193 '+esc(fmtSpeed(drx))+' \u2191 '+esc(fmtSpeed(dtx))+'</span></div>'
+    +'<div class="gwrt-pon-meta"><span>\u5149\u6a21 '+tempHtml+'</span><span class="gwrt-pon-rate">\u2193 '+esc(fmtSpeed(drx))+' \u2191 '+esc(fmtSpeed(dtx))+'</span></div>'
     +'<div class="gwrt-pon-state">'+esc(ponStatusText(pon))+'</div>'
     +'</div>';
 }
@@ -2670,27 +2737,174 @@ function renderPonPanel(){
   var modeEl=document.getElementById('gwrtPonPanelMode');
   if(modeEl)modeEl.textContent=ponModeLabel(line.active_mode||line.configured_mode||'');
   var statusEl=document.getElementById('gwrtPonPanelStatus');
-  if(statusEl)statusEl.textContent=pon?ponStatusText(pon):'\u5149\u6a21\u5757\u72b6\u6001\u8bfb\u53d6\u5931\u8d25\uff08ponctl \u4e0d\u53ef\u7528\u6216 pon0 \u672a\u542f\u52a8\uff09';
+  if(statusEl){
+    var txt=pon?ponStatusText(pon):'\u5149\u6a21\u5757\u72b6\u6001\u8bfb\u53d6\u5931\u8d25\uff08ponctl \u4e0d\u53ef\u7528\u6216 pon0 \u672a\u542f\u52a8\uff09';
+    var cls='idle';
+    if(!pon)cls='warn';
+    else if(line.lifecycle==='operational'&&(reg.onu_state==='O5'||reg.mpcp_state==='registered'))cls='ok';
+    else if(!line.optical_signal||(reg.onu_state&&reg.onu_state!=='O5'))cls='warn';
+    statusEl.className='gwrt-pon-status '+cls;
+    statusEl.innerHTML='<span class="dot"></span>'+esc(txt);
+  }
+  /* 先把映射后的光模块/注册数据渲染出来，再抓完整详情填充身份与计数器区块。 */
+  renderPonRows(line,fe,reg);
+  fetchPonDetail(true).then(function(detail){
+    if(detail)renderPonDetail(detail,line,fe,reg,ctr);
+    renderPonTraffic();
+  });
+}
+function renderPonRows(line,fe,reg){
+  var el=document.getElementById('gwrtPonOptics');
+  if(!el)return;
+  var dim=(!line.optical_signal)?' muted':'';
+  var onuCls=(reg.onu_state==='O5')?' ok':(reg.onu_state?' warn':' muted');
+  var rxv=ponMetric(fe,'rx_power_dbm',2);
+  var rxc=ponRxColor(rxv);
   var rows=[
-    ['\u63a5\u6536\u5149\u529f\u7387',ponMetricText(fe,'rx_power_dbm',2,'dBm')],
-    ['\u53d1\u9001\u5149\u529f\u7387',ponMetricText(fe,'tx_power_dbm',2,'dBm')],
-    ['\u6a21\u5757\u6e29\u5ea6',ponMetricText(fe,'temperature_celsius',1,'\u00b0C')],
-    ['\u5de5\u4f5c\u7535\u538b',ponMetricText(fe,'voltage_volts',2,'V')],
-    ['TX Bias',ponMetricText(fe,'tx_bias_ma',1,'mA')],
-    ['ONU \u72b6\u6001',ponOnuLabel(reg.onu_state)],
-    ['MPCP \u72b6\u6001',ponMpcpLabel(reg.mpcp_state)],
-    ['ONU ID',reg.onu_id!=null?String(reg.onu_id):'--']
+    {s:'\u5149\u6a21\u5757',items:[
+      ['\u63a5\u6536\u5149\u529f\u7387',(rxv==null?'--':esc(rxv)+' dBm')+' <span class="gwrt-pon-rx-label gwrt-'+rxc.cls+'">'+rxc.label+'</span>',dim],
+      ['\u53d1\u9001\u5149\u529f\u7387',ponMetricText(fe,'tx_power_dbm',2,'dBm'),dim],
+      ['\u6a21\u5757\u6e29\u5ea6',ponMetricText(fe,'temperature_celsius',1,'\u00b0C'),''],
+      ['\u5de5\u4f5c\u7535\u538b',ponMetricText(fe,'voltage_volts',2,'V'),''],
+      ['TX Bias',ponMetricText(fe,'tx_bias_ma',1,'mA'),dim],
+      ['\u4fe1\u53f7\u6761',ponSignalBar(rxv!=null?Math.round((rxv+30)/15*100):0),'']
+    ]},
+    {s:'\u6ce8\u518c\u72b6\u6001',items:[
+      ['ONU \u72b6\u6001',ponOnuLabel(reg.onu_state),onuCls],
+      ['MPCP \u72b6\u6001',ponMpcpLabel(reg.mpcp_state),(reg.mpcp_state==='not-applicable')?' muted':''],
+      ['ONU ID',reg.onu_id!=null?String(reg.onu_id):'--',reg.onu_id!=null?'':' muted']
+    ]}
   ];
-  el.innerHTML=rows.map(function(r){return '<div><span>'+esc(r[0])+'</span><b>'+esc(r[1])+'</b></div>';}).join('');
+  el.innerHTML=rows.map(function(sec){
+    return '<div class="gwrt-pon-section">'+sec.s+'</div><div class="gwrt-pon-grid">'
+      +sec.items.map(function(r){return '<div><span class="k">'+esc(r[0])+'</span><b class="v'+(r[2]||'')+'">'+esc(r[1])+'</b></div>';}).join('')
+      +'</div>';
+  }).join('');
+}
+function renderPonDetail(detail,line,fe,reg,ctr){
+  var base=document.getElementById('gwrtPonOptics');
+  if(!base)return;
+  var ident=detail.identity||{}, link=detail.link||{}, omci=detail.omci||{}, net=detail.net||{};
+  var optical=link.optical||{}, state=link.state||{}, transceiver=link.transceiver||{};
+  var auth=ident.auth||{};
+  var ponCls=function(cond){return cond?' ok':'';};
+  var rows=[
+    {s:'\u94fe\u63a5\u4e0e\u8ba1\u6570',items:[
+      ['PON \u53f3\u72b6\u6001',net.pon0&&net.pon0.operstate?net.pon0.operstate:'--',''],
+      ['\u534e\u8bdd\u65cf',state.family||'--',''],
+      ['\u5149\u4fe1\u53f7 LOS',String(optical.rx_los==='1'||optical.rx_los==1?'\u6709':'\u65e0'),optical.rx_los==='1'||optical.rx_los==1?' warn':''],
+      ['\u6a21\u5757\u7f34\u5931',String(optical.module_absent==='1'||optical.module_absent==1?'\u662f':'\u5426'),optical.module_absent==='1'||optical.module_absent==1?' warn':''],
+      ['\u53d1\u9001\u6548\u969c',String(optical.tx_fault==='1'||optical.tx_fault==1?'\u662f':'\u5426'),optical.tx_fault==='1'||optical.tx_fault==1?' warn':''],
+      ['FEC \u6821\u6b63',link.fec&&link.fec.corrected!=null?String(link.fec.corrected):'--',''],
+      ['FEC \u9519\u8bef',link.fec&&link.fec.errors!=null?String(link.fec.errors):'--',''],
+      ['PLOAM RX',link.ploam&&link.ploam.rx!=null?String(link.ploam.rx):'--',''],
+      ['XGEM RX',ctr&&ctr.xgem_rx!=null?String(ctr.xgem_rx):'--',''],
+      ['XGEM TX',ctr&&ctr.xgem_tx!=null?String(ctr.xgem_tx):'--',''],
+      ['pon0 RX',net.pon0&&net.pon0.statistics&&net.pon0.statistics.rx_bytes!=null?F(net.pon0.statistics.rx_bytes):'--',''],
+      ['pon0 TX',net.pon0&&net.pon0.statistics&&net.pon0.statistics.tx_bytes!=null?F(net.pon0.statistics.tx_bytes):'--','']
+    ]},
+    {s:'\u8eab\u4ef6\u4e0e\u6b21\u5c31',items:[
+      ['SN \u751f\u6548',ident.serial_number_active||'--',''],
+      ['SN \u914d\u7f6e',ident.serial_number||'--',''],
+      ['SN \u5341\u516d\u8fde\u5143',ident.serial_number_hex||'--',''],
+      ['\u8bbe\u5907\u578b\u53f7',ident.equipment_id||'--',''],
+      ['\u79ed\u4ef6\u7248\u672c',ident.hardware_version||'--',''],
+      ['\u8f6f\u4ef6\u7248\u672c',ident.software_version||'--',''],
+      ['\u5382\u5546 ID',ident.vendor_id||'--',''],
+      ['OMCC \u7248\u672c',ident.omcc_version||'--',''],
+      ['\u8fd0\u5546 ID',ident.operator_id||'--',''],
+      ['ONU MAC',ident.onu_mac||'--',''],
+      ['\u6570\u636e MAC',ident.data_mac||'--',''],
+      ['LOID',auth.loid?'\u5df2\u8bbe':'\u672a\u8bbe',''],
+      ['PLoAM \u5bc6\u7801',auth.ploam_password?'\u5df2\u8bbe':'\u672a\u8bbe',''],
+      ['\u6ce8\u518c ID',auth.registration_id?'\u5df2\u8bbe':'\u672a\u8bbe',''],
+      ['OMCI PSK',auth.omci_psk?'\u5df2\u8bbe':'\u672a\u8bbe','']
+    ]}
+  ];
+  var html=rows.map(function(sec){
+    return '<div class="gwrt-pon-section">'+sec.s+'</div><div class="gwrt-pon-grid">'
+      +sec.items.map(function(r){return '<div><span class="k">'+esc(r[0])+'</span><b class="v'+(r[2]||'')+'">'+esc(r[1])+'</b></div>';}).join('')
+      +'</div>';
+  }).join('');
+  html+='<div class="gwrt-pon-section" style="cursor:pointer" id="gwrtPonIdEditHead">\u8eab\u4ef6\u6b21\u5c31\u7f16\u8f91\u2026</div>'
+    +'<div id="gwrtPonIdEdit" style="display:none;border:1px solid var(--border-primary);border-radius:var(--radius-lg);padding:10px 12px;background:var(--bg-tertiary);margin-top:8px">'
+    +'<div class="gwrt-pon-grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">'
+    +identityInput('\u6a21\u5757','gwrt_pon_id_mode',ident.mode||'')
+    +identityInput('SN \u914d\u7f6e','gwrt_pon_id_serial',ident.serial_number||'')
+    +identityInput('SN \u5341\u516d\u8fde\u5143','gwrt_pon_id_serial_hex',ident.serial_number_hex||'')
+    +identityInput('\u8bbe\u5907\u578b\u53f7','gwrt_pon_id_equipment',ident.equipment_id||'')
+    +identityInput('\u79ed\u4ef6\u7248\u672c','gwrt_pon_id_hw',ident.hardware_version||'')
+    +identityInput('\u8f6f\u4ef6\u7248\u672c','gwrt_pon_id_sw',ident.software_version||'')
+    +identityInput('\u5382\u5546 ID','gwrt_pon_id_vendor',ident.vendor_id||'')
+    +identityInput('\u8fd0\u5546 ID','gwrt_pon_id_operator',ident.operator_id||'')
+    +identityInput('ONU MAC','gwrt_pon_id_onu_mac',ident.onu_mac||'')
+    +identityInput('\u6570\u636e MAC','gwrt_pon_id_data_mac',ident.data_mac||'')
+    +identityInput('LOID','gwrt_pon_id_loid',auth.loid||'')
+    +identityInput('LOID \u5bc6\u7801','gwrt_pon_id_loid_pw',auth.loid_password||'')
+    +identityInput('PLoAM \u5bc6\u7801','gwrt_pon_id_ploam_pw',auth.ploam_password||'')
+    +identityInput('\u6ce8\u518c ID','gwrt_pon_id_reg_id',auth.registration_id||'')
+    +identityInput('OMCI PSK','gwrt_pon_id_omci_psk',auth.omci_psk||'')
+    +identityCheckbox('\u5173\u95ed\u589e\u52a0\u5b89\u5168','gwrt_pon_id_no_sec',(auth.enhanced_security_disabled?'1':'0')==='1')
+    +'</div>'
+    +'<div style="margin-top:8px;text-align:right"><button id="gwrtPonIdSave" class="gwrt-sf-btn gwrt-sf-btn-save" style="padding:6px 14px;font-size:12px">\u4fdd\u5b58\u534f\u5c14\u503c\u5230 /etc/config/pon</button>'
+    +'<button id="gwrtPonIdCancel" style="padding:6px 14px;font-size:12px;margin-left:6px">\u53d6\u6d88</button></div>'
+    +'<div id="gwrtPonIdMsg" style="margin-top:6px;font-size:12px"></div>'
+    +'</div>';
+  base.innerHTML=base.innerHTML+html;
+  document.getElementById('gwrtPonIdEditHead').onclick=function(){
+    var e=document.getElementById('gwrtPonIdEdit');
+    e.style.display=e.style.display==='none'?'block':'none';
+  };
+  document.getElementById('gwrtPonIdSave').onclick=savePonIdentity;
+  document.getElementById('gwrtPonIdCancel').onclick=function(){document.getElementById('gwrtPonIdEdit').style.display='none';};
+}
+function identityInput(label,id,value){
+  return '<div><label class="k" style="display:block;font-size:11px;margin-bottom:2px">'+esc(label)+'</label>'
+    +'<input id="'+id+'" style="width:100%;font-size:12px;padding:4px 6px;border:1px solid var(--border-primary);border-radius:6px;background:var(--bg-card)" value="'+esc(value||'')+'"></div>';
+}
+function identityCheckbox(label,id,checked){
+  return '<div style="display:flex;align-items:center;gap:8px"><label class="k" style="margin:0;font-size:12px"><input type="checkbox" id="'+id+'"'+(checked?' checked':'')+'> '+esc(label)+'</label></div>';
+}
+function renderPonTraffic(){
   var traffic=document.getElementById('gwrtPonTraffic');
   if(!traffic)return;
+  var p=window._gwrtPonPort||{name:'pon0'};
   var st=(window._gwrtPortStates||{})[p.name]||{},stat=st.statistics||{};
   var rx=Number(stat.rx_bytes||0),tx=Number(stat.tx_bytes||0);
   var prev=portPrev[p.name],dt=prev?(Date.now()-prev.ts)/1000:0,drx=0,dtx=0;
   if(prev&&dt>0&&dt<30){drx=Math.max(0,rx-prev.rx)/dt;dtx=Math.max(0,tx-prev.tx)/dt;}
-  traffic.innerHTML='<div class="gwrt-pon-traffic-row"><span>\u672c\u6b21\u8fd0\u884c</span><b>\u2193 '+esc(F(rx))+' \u00b7 \u2191 '+esc(F(tx))+'</b></div>'
-    +'<div class="gwrt-pon-traffic-row"><span>\u5b9e\u65f6\u901f\u7387</span><b>\u2193 '+esc(fmtSpeed(drx))+' \u00b7 \u2191 '+esc(fmtSpeed(dtx))+'</b></div>'
-    +'<div class="gwrt-pon-traffic-row"><span>XGEM \u5e27</span><b>RX '+esc(ctr.xgem_rx!=null?String(ctr.xgem_rx):'--')+' \u00b7 TX '+esc(ctr.xgem_tx!=null?String(ctr.xgem_tx):'--')+'</b></div>';
+  traffic.innerHTML='<div class="gwrt-pon-traffic-row"><span class="k">\u672c\u6b21\u8fd0\u884c</span><b class="v">\u2193 '+esc(F(rx))+' \u2191 '+esc(F(tx))+'</b></div>'
+    +'<div class="gwrt-pon-traffic-row"><span class="k">\u5b9e\u65f6\u901f\u7387</span><b class="v">\u2193 '+esc(fmtSpeed(drx))+' \u2191 '+esc(fmtSpeed(dtx))+'</b></div>';
+}
+function loadPonIdentity(){
+  rpcD('uci','get',{config:'pon'}).then(function(r){
+    var v=(r&&r.values&&r.values.pon)||{};
+    ['mode','serial','serial_hex','equipment','hw','sw','vendor','operator','onu_mac','data_mac','loid','loid_pw','ploam_pw','reg_id','omci_psk'].forEach(function(k){
+      var el=document.getElementById('gwrt_pon_id_'+k);
+      if(el)el.value=v[k]||'';
+    });
+    var sec=document.getElementById('gwrt_pon_id_no_sec');
+    if(sec)sec.checked=String(v.disable_enhanced_security||'0')==='1';
+  }).catch(function(){});
+}
+function savePonIdentity(){
+  var btn=document.getElementById('gwrtPonIdSave'),msg=document.getElementById('gwrtPonIdMsg');
+  var vals={};
+  ['mode','serial','serial_hex','equipment','hw','sw','vendor','operator','onu_mac','data_mac','loid','loid_pw','ploam_pw','reg_id','omci_psk'].forEach(function(k){
+    var el=document.getElementById('gwrt_pon_id_'+k);
+    if(el)vals[k]=el.value||'';
+  });
+  vals.disable_enhanced_security=document.getElementById('gwrt_pon_id_no_sec').checked?'1':'0';
+  if(btn)btn.disabled=true;if(msg){msg.textContent='\u4fdd\u5b58\u4e2d...';msg.style.color='';}
+  rpcMust('uci','set',{config:'pon',section:'pon',values:vals})
+  .then(function(){return rpcMust('uci','commit',{config:'pon'});})
+  .then(function(){
+    if(btn)btn.disabled=false;if(msg){msg.textContent='\u2713 \u5df2\u5199\u5165 /etc/config/pon';msg.style.color='#22c55e';}
+    setTimeout(function(){if(msg)msg.textContent='';},1500);
+  })
+  .catch(function(e){
+    if(btn)btn.disabled=false;if(msg){msg.textContent='\u4fdd\u5b58\u5931\u8d25: '+(e&&e.message||e);msg.style.color='#ef4444';}
+  });
 }
 function togglePonWanFields(proto){
   var ppp=proto==='pppoe',st=proto==='static';
@@ -2715,6 +2929,32 @@ function loadPonWanSettings(){
     togglePonWanFields(proto?proto.value:'dhcp');
   }).catch(function(){togglePonWanFields('dhcp');});
 }
+function loadPonIdentity(){
+  return rpcD('uci','get',{config:'pon'}).then(function(r){
+    var vals=(r&&r.values)||{},omci=null,xpon=null;
+    Object.keys(vals).forEach(function(k){
+      var sec=vals[k]||{};
+      if(!omci&&sec['.type']==='omci')omci=sec;
+      if(!xpon&&sec['.type']==='xpon')xpon=sec;
+    });
+    var g=function(id){return document.getElementById(id);};
+    if(g('gwrt_pon_id_loid'))g('gwrt_pon_id_loid').value=(omci&&omci.loid)||'';
+    if(g('gwrt_pon_id_loid_pw'))g('gwrt_pon_id_loid_pw').placeholder=(omci&&omci.loid_password)?'\u5df2\u8bbe\uff0c\u7559\u7a7a\u8868\u793a\u4e0d\u53d8\u66f4':'\u7559\u7a7a\u8868\u793a\u4e0d\u6539\u53d8';
+    if(g('gwrt_pon_id_sn'))g('gwrt_pon_id_sn').value=(xpon&&xpon.serial_number)||'';
+    if(g('gwrt_pon_id_regid')){var rid=(xpon&&xpon.registration_id)||'';if(rid==='default'||rid==='default-zero')rid='';g('gwrt_pon_id_regid').placeholder=rid?'\u5df2\u8bbe\uff0c\u7559\u7a7a\u8868\u793a\u4e0d\u53d8\u66f4':'\u7559\u7a7a\u8868\u793a\u4e0d\u6539\u53d8';}
+  }).catch(function(){});
+}
+function savePonIdentity(){
+  var g=function(id){var el=document.getElementById(id);return el?(String(el.value||'').trim()):'';};
+  var params=[];
+  var loid=g('gwrt_pon_id_loid'),loidPw=g('gwrt_pon_id_loid_pw'),sn=g('gwrt_pon_id_sn'),rid=g('gwrt_pon_id_regid');
+  if(loid!=='')params.push('--loid',loid);
+  if(loidPw!=='')params.push('--loid-password',loidPw);
+  if(sn!=='')params.push('--serial',sn);
+  if(rid!=='')params.push('--registration-id',rid);
+  if(!params.length)return Promise.resolve(null);
+  return rpcMust('file','exec',{command:'/usr/libexec/pon-identity-apply',params:params});
+}
 function savePonWan(){
   var btn=document.getElementById('gwrtPonSave'),sp=document.getElementById('gwrtPonSpinner'),txt=document.getElementById('gwrtPonSaveText');
   var enabled=document.getElementById('gwrt_pon_wan_enabled').checked;
@@ -2734,6 +2974,7 @@ function savePonWan(){
   rpcMust('uci','set',{config:'pon_wan',section:'settings',values:vals})
   .then(function(){return rpcMust('uci','commit',{config:'pon_wan'});})
   .then(function(){return rpcMust('file','exec',{command:'/usr/libexec/pon-wan-apply',params:['apply']});})
+  .then(function(){return savePonIdentity().catch(function(e){gwrtToast('PON \u8eab\u4efd\u672a\u5e94\u7528: '+(e&&e.message||e),'error');});})
   .then(function(){
     gwrtToast('\u2713 PON WAN \u5df2\u4fdd\u5b58\u5e76\u5e94\u7528','success');
     setTimeout(function(){closePonOverlay();refresh();},700);
@@ -2764,6 +3005,13 @@ function showPonPanel(p){
     +'<div class="gwrt-pon-note">\u542f\u7528\u540e\u4f1a\u521b\u5efa <code>pon0.&lt;VLAN&gt;</code> \u5e76\u7ed1\u5b9a\u5230 <code>wan</code> \u63a5\u53e3\uff1b\u5173\u95ed\u540e\u6062\u590d pon0 \u76f4\u8fde\u3002\u5e94\u7528\u65f6\u4f1a\u91cd\u8f7d network/firewall\uff0cWAN \u53ef\u80fd\u77ed\u6682\u4e2d\u65ad\u3002</div>'
     +'<div class="gwrt-pon-links"><a href="#" id="gwrtPonLineBtn">\u7ebf\u8def\u6a21\u5f0f / SN / LOID \u8bbe\u7f6e \u2192</a></div>'
     +gwrtSectionEnd()
+    +gwrtSection('PON \u8eab\u4efd\uff08LOID / SN\uff09')
+    +'<div class="gwrt-sf"><label>LOID</label><input id="gwrt_pon_id_loid" placeholder="LOID \u903b\u8f91\u6807\u8bc6"></div>'
+    +'<div class="gwrt-sf"><label>LOID \u5bc6\u7801</label><input id="gwrt_pon_id_loid_pw" type="password" placeholder="\u7559\u7a7a\u8868\u793a\u4e0d\u6539\u53d8"></div>'
+    +'<div class="gwrt-sf"><label>SN\uff08\u5e8f\u5217\u53f7\uff09</label><input id="gwrt_pon_id_sn" placeholder="\u5982 46485454C1A18461"></div>'
+    +'<div class="gwrt-sf"><label>Registration-ID</label><input id="gwrt_pon_id_regid" placeholder="\u7559\u7a7a\u8868\u793a\u4e0d\u6539\u53d8"></div>'
+    +'<div class="gwrt-pon-note">\u4fdd\u5b58\u540e\u5199\u5165 <code>/etc/config/pon</code> \u5e76\u91cd\u542f PON \u5b88\u62a4\u8fdb\u7a0b\uff0cONU \u4f1a\u91cd\u65b0\u6ce8\u518c\uff0c\u5149\u94fe\u8def\u77ed\u6682\u4e2d\u65ad\u3002</div>'
+    +gwrtSectionEnd()
     +'<div class="gwrt-sf-footer"><button id="gwrtPonCancel" class="gwrt-sf-btn gwrt-sf-btn-cancel">\u53d6\u6d88</button><button id="gwrtPonSave" class="gwrt-sf-btn gwrt-sf-btn-save"><span id="gwrtPonSpinner" style="display:none" class="gwrt-spinner"></span><span id="gwrtPonSaveText">\u4fdd\u5b58\u5e76\u5e94\u7528</span></button></div>';
   overlay.appendChild(panel);document.body.appendChild(overlay);
   document.getElementById('gwrtPonClose').onclick=closePonOverlay;
@@ -2778,6 +3026,7 @@ function showPonPanel(p){
   if(proto)proto.onchange=function(){togglePonWanFields(this.value);};
   renderPonPanel();
   loadPonWanSettings();
+  loadPonIdentity();
   fetchPonStatus(true).then(renderPonPanel);
   window._gwrtPonPanelTimer=setInterval(function(){fetchPonStatus(true).then(renderPonPanel);},10000);
 }
@@ -3518,8 +3767,18 @@ function gwrtWanTrafficSave(){
 function gwrtWanTrafficLoad(){
   try{var d=JSON.parse(localStorage.getItem('gwrt_wan_traffic_v2')||'null');if(wanTrafficValid(d)){gwrtWanTraffic=d;gwrtWanTraffic.ok=false;renderWanTraffic();}}catch(e){}
 }
+function wanTrafficDual(d){
+  var v6=d&&d.families&&d.families.ipv6;
+  if(!v6||!v6.available)return false;
+  var h=(d&&d.history)||[];
+  for(var i=0;i<h.length;i++)if(wanFamilyPoint(h[i].ipv6)!=null)return true;
+  return !!(wanNumber(v6.up)||wanNumber(v6.down));
+}
 function renderWanTraffic(){
   var d=gwrtWanTraffic,fresh=!!(d&&d.ok&&Math.abs(Date.now()/1000-Number(d.sampled))<=20);
+  var dual=wanTrafficDual(d);
+  var mainLabel=document.getElementById('gwrtWanMainLabel');if(mainLabel)mainLabel.textContent=dual?'IPv4':'合计';
+  var row6=document.getElementById('gwrtWan6Row');if(row6)row6.hidden=!dual;
   var status=document.getElementById('gwrtWanSampleState');
   if(status){status.textContent=d?(fresh?'':'稍早数据'):'采样中';status.title=d?'最近有效采样：'+new Date(Number(d.sampled)*1000).toLocaleString():'等待后台采样';}
   ['ipv4','ipv6'].forEach(function(f){
@@ -3533,11 +3792,12 @@ function renderWanTraffic(){
 }
 function renderWanTrend(){
   var el=document.getElementById('gwrtWanTrend');if(!el)return;
+  var dual=wanTrafficDual(gwrtWanTraffic),fams=dual?['ipv4','ipv6']:['ipv4'];
   var h=gwrtWanTraffic&&gwrtWanTraffic.history||[];
   h=h.filter(function(p){return p&&wanNumber(p.t);}).slice(-60);
-  if(!h.length){el.innerHTML='<span class="gwrt-wan-trend-empty">等待双栈流量采样…</span>';return;}
+  if(!h.length){el.innerHTML='<span class="gwrt-wan-trend-empty">'+(dual?'等待双栈流量采样…':'等待 WAN 流量采样…')+'</span>';return;}
   var max=1,w=el.clientWidth||320,hh=el.clientHeight||46,first=Number(h[0].t),last=Number(h[h.length-1].t),span=Math.max(1000,last-first);
-  h.forEach(function(p){['ipv4','ipv6'].forEach(function(f){max=Math.max(max,wanFamilyPoint(p[f])||0);});});
+  h.forEach(function(p){fams.forEach(function(f){max=Math.max(max,wanFamilyPoint(p[f])||0);});});
   function path(f){
     var prev=null,out='';
     h.forEach(function(p){
@@ -3552,14 +3812,18 @@ function renderWanTrend(){
   el.innerHTML='<svg class="gwrt-wan-trend-svg" viewBox="0 0 '+w+' '+hh+'" preserveAspectRatio="none" aria-hidden="true">'
     +'<path d="M0,'+(hh/2)+' H'+w+' M0,'+(hh-1)+' H'+w+'" class="gwrt-wan-trend-grid"/>'
     +'<path data-family="ipv4" d="'+path('ipv4')+'" class="gwrt-wan-line gwrt-wan-line-ipv4"/>'
-    +'<path data-family="ipv6" d="'+path('ipv6')+'" class="gwrt-wan-line gwrt-wan-line-ipv6"/></svg>'
+    +(dual?'<path data-family="ipv6" d="'+path('ipv6')+'" class="gwrt-wan-line gwrt-wan-line-ipv6"/>':'')+'</svg>'
     +'<span class="gwrt-wan-trend-tip"></span>';
   var svg=el.querySelector('svg'),tip=el.querySelector('.gwrt-wan-trend-tip');
   if(svg&&tip){
     svg.addEventListener('mousemove',function(e){
       var r=svg.getBoundingClientRect(),x=e.clientX-r.left,t=first+x/Math.max(1,r.width)*span,nearest=h[0];
       h.forEach(function(p){if(Math.abs(Number(p.t)-t)<Math.abs(Number(nearest.t)-t))nearest=p;});
-      tip.textContent=['ipv4','ipv6'].map(function(f){var p=nearest[f];return (f==='ipv4'?'IPv4':'IPv6')+' ↑'+(p&&wanNumber(p.up)?fmtSpeed(Number(p.up)):'-')+' ↓'+(p&&wanNumber(p.down)?fmtSpeed(Number(p.down)):'-');}).join(' · ');
+      if(dual){
+        tip.textContent=fams.map(function(f){var p=nearest[f];return (f==='ipv4'?'IPv4':'IPv6')+' ↑'+(p&&wanNumber(p.up)?fmtSpeed(Number(p.up)):'-')+' ↓'+(p&&wanNumber(p.down)?fmtSpeed(Number(p.down)):'-');}).join(' · ');
+      }else{
+        var np=nearest.ipv4;tip.textContent='WAN ↑'+(np&&wanNumber(np.up)?fmtSpeed(Number(np.up)):'-')+' ↓'+(np&&wanNumber(np.down)?fmtSpeed(Number(np.down)):'-');
+      }
       tip.style.opacity='1';
     });
     svg.addEventListener('mouseleave',function(){tip.style.opacity='0';});
@@ -3681,63 +3945,78 @@ function refresh(){
       if(!window._gwrtCpuFallbackBusy){window._gwrtCpuFallbackBusy=1;gwrtCpuStatFallback().then(function(p){window._gwrtCpuFallbackBusy=0;if(p!==null){S('gwrtCpu',p+'%');setUsageBar('gwrtCpuBar',p);}});}
     }
     /* CPU 频率：优先 cpufreq，其次 clk_summary（armpll / apcs_alias0_core_clk 等） */
-    var freqHz=(parseInt(window._gwrtSocFreqKhz,10)||0)*1000;
-    if(!(freqHz>0))freqHz=parseInt(cf.stdout,10)||0;
-    if(!(freqHz>0)){
-      String((cf&&cf.stdout)||'').split('\n').forEach(function(l){
-        if(freqHz>0)return;
-        var mm=l.match(/^\s*armpll\s+.*?(\d{6,})/)||l.match(/^\s*apcs_alias0_core_clk\s+.*?(\d{6,})/);
-        if(!mm){var cm2=l.match(/^\s*([\w,.\-]*(?:core_clk|cpu_clk|cpuclk|cpu_clock)[\w,.\-]*)\s+.*?(\d{6,})/);if(cm2)mm=[l,cm2[2]];}
-        if(mm)freqHz=parseInt(mm[1],10)||0;
-      });
+    /* CPU 频率：cpufreq 优先（AN7581 走这条），clk_summary 作为回退 */
+    (function(){
+      function applyHz(hz){
+        var u=document.getElementById('gwrtCpuFreqUnit');
+        if(hz>=1000000000){S('gwrtCpuFreq',(hz/1000000000).toFixed(2).replace(/\.?0+$/,''));if(u)u.textContent='GHz';}
+        else if(hz>0){S('gwrtCpuFreq',String(Math.round(hz/1000000)));if(u)u.textContent='MHz';}
+        else{S('gwrtCpuFreq','-');if(u)u.textContent='';}
+      }
+      function fromClk(){
+        var hz=parseInt(String((cf&&cf.stdout)||''),10)||0;
+        if(!(hz>0)){
+          String((cf&&cf.stdout)||'').split('\n').forEach(function(l){
+            if(hz>0)return;
+            var mm=l.match(/^\s*armpll\s+.*?(\d{6,})/)||l.match(/^\s*apcs_alias0_core_clk\s+.*?(\d{6,})/);
+            if(!mm){var cm2=l.match(/^\s*([\w,.\-]*(?:core_clk|cpu_clk|cpuclk|cpu_clock)[\w,.\-]*)\s+.*?(\d{6,})/);if(cm2)mm=[l,cm2[2]];}
+            if(mm)hz=parseInt(mm[1],10)||0;
+          });
+        }
+        applyHz(hz);
+      }
+      rpcD('file','exec',{command:'/bin/cat',params:['/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq']}).then(function(cpf){
+        var khz=parseInt(String((cpf&&cpf.stdout)||''),10)||0;
+        if(khz>0)applyHz(khz*1000);else fromClk();
+      }).catch(fromClk);
+    })();
+    var accelProbe=null,accelCaps={};
+    if(accelRpc&&accelRpc.stdout){
+      try{accelCaps=JSON.parse(String(accelRpc.stdout))||{};accelProbe=accelRpc;}catch(e){accelCaps={};accelProbe=null;}
     }
-    if(freqHz>0){
-      S('gwrtCpuFreq',freqHz>=1000000000?(freqHz/1000000000).toFixed(2).replace(/\.?0+$/,'')+' GHz':Math.round(freqHz/1000000)+' MHz');
-    }else{S('gwrtCpuFreq','-');}
-    var accelCaps=null;
-    try{
-      var accelRaw=String((accelRpc&&accelRpc.stdout)||'').trim();
-      if(accelRaw)accelCaps=JSON.parse(accelRaw);
-    }catch(accelError){accelCaps=null;}
-    /* The helper is authoritative.  Keep a conservative statistics fallback
-     * for an older in-place theme where the helper has not been installed. */
-    var accelProbe=accelCaps&&typeof accelCaps==='object';
     var nssDetected=accelProbe?accelCaps.nss===true:nss4&&typeof nss4.data==='string'&&/^\s*(?:ipv4|ipv6)_rx_byts\s*=/m.test(String(nss4.data));
     var ppeDetected=accelProbe?accelCaps.ppe===true:false;
     var npuDetected=accelProbe?accelCaps.npu===true:false;
     var nss=nssTrafficRate(nss4,nss6);
-    renderPpe(ppeDetected);
-    var accRow=document.getElementById('gwrtAccelRow'),accLabel=document.getElementById('gwrtAccelLabel'),nssTrafficRow=document.getElementById('gwrtNssTrafficRow');
+    var accelNums=accelProbe?accelCaps:{};
+    renderAccelEngines(accelProbe?accelCaps:null,{ppe:ppeDetected,npu:npuDetected});
+    /* 标题按本机实际探测到的加速引擎命名：PPE · NSS · NPU */
+    var titleParts=[];
+    if(ppeDetected)titleParts.push('PPE');
+    if(nssDetected)titleParts.push('NSS');
+    if(npuDetected)titleParts.push('NPU');
+    var titleEl=document.getElementById('gwrtAccelCardTitle');
+    if(titleEl)titleEl.textContent=titleParts.length?titleParts.join(' · '):'CPU · 温度';
+    var enginesEl=document.getElementById('gwrtAccelEngines'),accelNote=document.getElementById('gwrtAccelNote');
+    if(enginesEl)enginesEl.hidden=true;
+    if(accelNote)accelNote.hidden=titleParts.length>0;
+    /* NSS 瓦片：频率取 clk，核数取 nss 统计 */
+    var nssTile=document.getElementById('gwrtNssTile'),nssTrafficTile=document.getElementById('gwrtNssTrafficTile');
+    if(nssTile)nssTile.hidden=!nssDetected;
+    if(nssTrafficTile)nssTrafficTile.hidden=!(nssDetected&&nss.available);
     if(nssDetected){
-      if(accLabel)accLabel.textContent='NSS';
-      S('gwrtNss',nm?nm[1]+'%':'-');
-      setUsageBar('gwrtAccelBar',nm?nm[1]:0);
-      if(nssTrafficRow){
-        nssTrafficRow.style.display=nss.available?'flex':'none';
-        if(nss.available){
-          S('gwrtNssRx',nss.rxRate===null?'采样中':fmtSpeed(nss.rxRate));
-          S('gwrtNssTx',!nss.txAvailable?'-':(nss.txRate===null?'采样中':fmtSpeed(nss.txRate)));
-        }
+      var nssHz=Number(accelNums.nss_freq||0),nssCores=Number(accelNums.nss_cores||0);
+      var nssUnit=document.getElementById('gwrtNssUnit');
+      if(nssHz>=1000000000){S('gwrtNss',(nssHz/1000000000).toFixed(2).replace(/\.?0+$/,''));if(nssUnit)nssUnit.textContent='GHz';}
+      else if(nssHz>0){S('gwrtNss',String(Math.round(nssHz/1000000)));if(nssUnit)nssUnit.textContent='MHz';}
+      else{S('gwrtNss','-');if(nssUnit)nssUnit.textContent='';}
+      S('gwrtNssCores',nssCores>0?nssCores+' \u6838':'');
+      var nssPct=(nm&&nm[1]!==undefined)?Number(nm[1]):null;
+      var nssSub=[];
+      if(nssCores>0)nssSub.push(nssCores+' \u6838');
+      if(nssPct!==null)nssSub.push('\u5360\u7528 '+nssPct+'%');
+      S('gwrtNssSub',nssSub.join(' \u00b7 '));
+      setUsageBar('gwrtAccelBar',nssPct===null?0:nssPct);
+      if(nss.available){
+        S('gwrtNssRx',nss.rxRate===null?'-':fmtSpeed(nss.rxRate));
+        S('gwrtNssTx',!nss.txAvailable?'-':(nss.txRate===null?'-':fmtSpeed(nss.txRate)));
       }
-    }else{
-      if(accRow)accRow.style.display='none';
-      if(nssTrafficRow)nssTrafficRow.style.display='none';
     }
-    if(accRow&&nssDetected)accRow.style.display='';
-    var npuRow=document.getElementById('gwrtNpuRow');
-    if(npuRow){
-      npuRow.style.display=npuDetected?'':'none';
-      if(npuDetected){S('gwrtNpu','已识别');setUsageBar('gwrtNpuBar',100);}
-    }
-    var accTitle=document.getElementById('gwrtAccelCardTitle');
-    if(accTitle){
-      var accelTitleParts=['CPU'];
-      if(nssDetected)accelTitleParts.push('NSS');
-      if(ppeDetected)accelTitleParts.push('PPE');
-      if(npuDetected)accelTitleParts.push('NPU');
-      accelTitleParts.push('温度');
-      accTitle.textContent=accelTitleParts.join(' · ');
-    }
+    /* CPU 瓦片：核心数与平均负载 */
+    var cpuCores=Number(accelNums.cpu_cores||0);
+    S('gwrtCpuCores',cpuCores>0?cpuCores+' \u6838':'');
+    var load1=Number(accelNums.load1||0);
+    S('gwrtCpuLoad',load1>0?' \u00b7 \u5747 '+load1.toFixed(2):'');
 
     /* Temperature */
     var ts=ti.tempinfo||'';
@@ -3745,13 +4024,14 @@ function refresh(){
     function gwrtApplyCpuTemp(v){
       var tn=parseFloat(v)||0;
       var te=document.getElementById('gwrtTemp');
-      if(te){te.textContent=tn>0?tn.toFixed(1)+'\u00b0C':'-';te.style.color=tn>=75?'var(--accent-danger)':(tn>=60?'var(--accent-warning)':'var(--accent-secondary)');}
+      if(te){te.textContent=tn>0?tn.toFixed(1):'-';te.style.color=tn>=75?'var(--accent-danger)':(tn>=60?'var(--accent-warning)':'var(--accent-secondary)');}
       if(typeof setUsageBar==='function')setUsageBar('gwrtTempBar',Math.max(0,Math.min(100,Math.round(tn))));    /* 满量程 100°C */
     }
     function gwrtApplyWifiTemp(v){
-      var wn=parseFloat(v)||0;
-      S('gwrtWifiTemp',wn>0?wn.toFixed(1)+'\u00b0C':'-');
-      if(typeof setUsageBar==='function')setUsageBar('gwrtWifiTempBar',Math.max(0,Math.min(100,Math.round(wn))));  /* 满量程 100°C */
+      var wn=parseFloat(v)||0,has=wn>0;
+      S('gwrtWifiTemp',has?wn.toFixed(1):'-');
+      var wrap=document.getElementById('gwrtWifiTempWrap');if(wrap)wrap.hidden=!has;
+      var sub=document.getElementById('gwrtTempSubLabel');if(sub)sub.textContent=has?'SoC / WiFi':'SoC';
     }
     var cpuV=ct?parseFloat(ct[1]):0,wifiV=0;
     if(wifiPart){
@@ -3773,11 +4053,6 @@ function refresh(){
     if(socEl&&!socEl.dataset.fetched){
       rpc('file','exec',{command:'/usr/libexec/gwrt-socinfo'}).then(function(res){
         var o=String((res&&res.stdout)||'').split('\n');
-        var __socKhz=parseInt(String(o[2]||'').trim(),10)||0;
-        if(__socKhz>0){
-          window._gwrtSocFreqKhz=__socKhz;
-          S('gwrtCpuFreq',__socKhz>=1000000?(__socKhz/1000000).toFixed(2).replace(/\.?0+$/,'')+' GHz':Math.round(__socKhz/1000)+' MHz');
-        }
         /* The helper reads the board's actual machine/compatible value. Keep
          * that value intact (lowercase) instead of mapping a guessed model. */
         var chip=String(o[0]||'').trim().toLowerCase();

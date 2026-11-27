@@ -855,6 +855,7 @@ body[data-page="admin-system-package-manager"] #packages .cbi-section-actions .b
 .gwrt-wan-traffic-row b{font-size:.68rem;font-weight:600;color:var(--text-primary)}
 .gwrt-wan-ipv4>strong{color:#22b8cf}.gwrt-wan-ipv6>strong{color:#a78bfa}
 .gwrt-wan-traffic-row>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.gwrt-wan-traffic-row[hidden],.gwrt-netspeed-address[hidden],#gwrtWifiTempWrap[hidden],#gwrtWan6AddrChip[hidden]{display:none!important}
 .gwrt-wan-total{text-align:right}
 .gwrt-wan-trend{position:relative;flex:1;min-height:30px;overflow:hidden;margin:1px 0}
 .gwrt-wan-trend-svg{display:block;width:100%;height:100%}
@@ -928,7 +929,7 @@ body[data-page="admin-system-package-manager"] #packages .cbi-section-actions .b
 .gwrt-accel-engines::before{content:"";width:5px;height:5px;border-radius:50%;background:currentColor}
 .gwrt-accel-engines[hidden]{display:none}
 .gwrt-accel-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
-.gwrt-accel-tile{min-width:0;padding:7px 9px 6px;border:1px solid var(--border-primary);border-radius:var(--radius-md);background:var(--bg-tertiary)}
+.gwrt-accel-tile{min-width:0;padding:7px 9px 6px;border-radius:var(--radius-md);background:var(--bg-tertiary);background:linear-gradient(160deg,color-mix(in srgb,#fff 7%,transparent) 0%,transparent 46%),color-mix(in srgb,var(--bg-tertiary) 28%,transparent);border:1px solid var(--border-primary);border-color:color-mix(in srgb,var(--text-primary) 14%,transparent);box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 8%,transparent),0 1px 6px -2px rgba(0,0,0,.35);backdrop-filter:blur(12px) saturate(1.25);-webkit-backdrop-filter:blur(12px) saturate(1.25);transition:border-color .2s,background .2s}.gwrt-accel-tile:hover{background:linear-gradient(160deg,color-mix(in srgb,#fff 10%,transparent) 0%,transparent 46%),color-mix(in srgb,var(--bg-tertiary) 42%,transparent);border-color:color-mix(in srgb,var(--accent-primary) 38%,transparent)}html[data-theme="light"] .gwrt-accel-tile{background:color-mix(in srgb,#fff 55%,transparent);border-color:color-mix(in srgb,#0b1220 12%,transparent);box-shadow:inset 0 1px 0 rgba(255,255,255,.7),0 1px 6px -2px rgba(16,24,40,.12)}
 .gwrt-accel-tile[hidden]{display:none}
 .gwrt-accel-k{display:flex;align-items:center;justify-content:space-between;gap:6px;color:var(--text-tertiary);font-size:9px;font-weight:700;letter-spacing:.04em;white-space:nowrap;overflow:hidden}
 .gwrt-accel-k em{font-style:normal;font-weight:600;letter-spacing:0;overflow:hidden;text-overflow:ellipsis}

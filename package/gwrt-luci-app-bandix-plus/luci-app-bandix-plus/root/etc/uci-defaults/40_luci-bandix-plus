@@ -13,6 +13,16 @@ if [ ! -f /etc/config/bandix_plus ]; then
 	EOF
 fi
 
+# WAN 纳入监控：主题的 WAN 双栈曲线依赖 Bandix 的 wan 累计值。
+# 只追加缺失项，不动用户已有接口列表。
+if [ -f /etc/config/bandix_plus ]; then
+	cur="$(uci -q get bandix_plus.general.iface 2>/dev/null)"
+	if ! printf '%s\n' "$cur" | tr ' ' '\n' | grep -qx wan; then
+		uci -q add_list bandix_plus.general.iface='wan' && uci -q commit bandix_plus
+		touch /tmp/.bandix-iface-added
+	fi
+fi
+
 while uci -q delete ucitrack.@bandix_plus[0]; do :; done
 
 uci -q batch <<-EOF >/dev/null
