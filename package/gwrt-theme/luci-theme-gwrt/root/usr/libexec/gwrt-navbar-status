@@ -170,23 +170,27 @@ if [ "$external_method" != null ] && [ -n "$external_method" ]; then
 	external_method_json="\"$(json_escape "$external_method")\""
 fi
 
-# ---- 出口公网 IP（缓存 10 分钟，避免每轮都外连） ----
+# ---- 出口公网 IP（带缓存：成功 10 分钟，失败 2 分钟，避免每轮外连） ----
 public_ip=''
 ip_cache=/tmp/.gwrt-public-ip
+c_ip=''; c_ts=0
 if [ -r "$ip_cache" ]; then
 	read -r c_ip c_ts < "$ip_cache" 2>/dev/null || true
 	case "$c_ts" in ''|*[!0-9]*) c_ts=0 ;; esac
-	if [ -n "$c_ip" ] && [ "$sampled" -gt 0 ] && [ $((sampled - c_ts)) -lt 600 ]; then
-		public_ip=$c_ip
-	fi
 fi
-if [ -z "$public_ip" ]; then
-	for ip_url in 'https://api.ipify.org' 'https://ipinfo.io/ip' 'https://ifconfig.me/ip'; do
+ip_age=$((sampled - c_ts))
+if [ -n "$c_ip" ] && [ "$c_ts" -gt 0 ] && [ "$ip_age" -lt 120 ]; then
+	[ "$c_ip" = '-' ] || public_ip=$c_ip
+elif [ -n "$c_ip" ] && [ "$c_ts" -gt 0 ] && [ "$ip_age" -lt 600 ]; then
+	[ "$c_ip" = '-' ] || public_ip=$c_ip
+fi
+if [ -z "$public_ip" ] && { [ "$c_ip" != '-' ] || [ "$ip_age" -ge 120 ]; }; then
+	for ip_url in 'https://api.ipify.org' 'https://ipinfo.io/ip'; do
 		for fetcher in /usr/bin/curl /usr/bin/uclient-fetch /bin/uclient-fetch; do
 			[ -x "$fetcher" ] || continue
 			case "$fetcher" in
-				*curl) ip_out=$(run_timeout 6 "$fetcher" -s -m 4 --noproxy '*' "$ip_url" 2>/dev/null) ;;
-				*) ip_out=$(run_timeout 6 "$fetcher" -q -T 4 -O - "$ip_url" 2>/dev/null) ;;
+				*curl) ip_out=$(run_timeout 4 "$fetcher" -s -m 3 --noproxy '*' "$ip_url" 2>/dev/null) ;;
+				*) ip_out=$(run_timeout 4 "$fetcher" -q -T 3 -O - "$ip_url" 2>/dev/null) ;;
 			esac
 			ip_out=$(printf '%s' "$ip_out" | tr -d ' \t\r\n')
 			case "$ip_out" in
@@ -199,7 +203,11 @@ if [ -z "$public_ip" ]; then
 		done
 		[ -n "$public_ip" ] && break
 	done
-	[ -n "$public_ip" ] && printf '%s %s\n' "$public_ip" "$sampled" > "$ip_cache" 2>/dev/null || true
+	if [ -n "$public_ip" ]; then
+		printf '%s %s\n' "$public_ip" "$sampled" > "$ip_cache" 2>/dev/null || true
+	else
+		printf '%s %s\n' '-' "$sampled" > "$ip_cache" 2>/dev/null || true
+	fi
 fi
 public_ip_json=null
 [ -n "$public_ip" ] && public_ip_json="\"$(json_escape "$public_ip")\""
