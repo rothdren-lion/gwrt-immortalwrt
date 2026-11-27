@@ -91,7 +91,7 @@ grep -q "^CONFIG_PACKAGE_MAC80211_DEBUGFS=y\$" "$OUT" || \
 	echo "CONFIG_PACKAGE_MAC80211_DEBUGFS=y" >> "$OUT"
 
 # --- GWRT mesh 组网（所有机型必备）---
-for p in gwrt-device-defaults gwrt-mesh-led gwrt-mesh-apmode gwrt-agent; do
+for p in gwrt-device-defaults gwrt-mesh-led gwrt-mesh-apmode gwrt-agent sgdisk; do
 	grep -q "^CONFIG_PACKAGE_${p}=y$" "$OUT" && continue
 	sed -i "/^# CONFIG_PACKAGE_${p} is not set$/d" "$OUT"
 	echo "CONFIG_PACKAGE_${p}=y" >> "$OUT"
