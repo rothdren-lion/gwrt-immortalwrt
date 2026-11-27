@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later OR MIT
-// GWRT2 variant of JDCloud RE-CS-02 (same ipq6010 hardware).
+// GWRT2 variant of JDCloud RE-CS-02 (same ipq6010 hardware, 2.5G port moved to LAN1).
 // compatible fallback chain: jdcloud,re-cs-02-gwrt2 -> jdcloud,re-cs-02 -> qcom,ipq6018
 
 /dts-v1/;
@@ -9,4 +9,22 @@
 / {
 	model = "JDCloud RE-CS-02 GWRT2";
 	compatible = "jdcloud,re-cs-02-gwrt2", "jdcloud,re-cs-02", "qcom,ipq6018";
+};
+
+/* GWRT2 puts the QCA8081 2.5G PHY on the LAN1 port and the 1G PHY on WAN,
+ * the reverse of the stock RE-CS-02 layout, so the two switch ports swap
+ * both their label and their PHY/PCS binding.
+ */
+&swport1 {
+	label = "lan1";
+	phy-handle = <&qca8081>;
+	phy-mode = "2500base-x";
+	pcs-handle = <&uniphy1 0>;
+};
+
+&swport5 {
+	label = "wan";
+	phy-handle = <&qca8075_0>;
+	phy-mode = "psgmii";
+	pcs-handle = <&uniphy0 0>;
 };

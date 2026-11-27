@@ -70,6 +70,14 @@ def verify_dtb(blob, preset):
     wanted = {1: 'wan', 2: 'lan1', 3: 'lan2', 4: 'lan3'} if preset == 'cs07' else {
         1: 'lan1', 2: 'lan2', 3: 'lan3', 4: 'lan4', 5: 'wan'}
     require(ports == wanted, 'DTB port map differs from the source DTS: ' + repr(ports))
+    phy_modes = {int.from_bytes(n['reg'], 'big'): n['phy-mode'].rstrip(b'\0').decode()
+                 for path, n in nodes.items() if '/ports/port@' in path and 'phy-mode' in n and 'reg' in n}
+    if preset == 'cs02-gwrt2':
+        require(phy_modes.get(1) == '2500base-x' and phy_modes.get(5) == 'psgmii',
+                'GWRT2 must put the 2.5G PHY on lan1: ' + repr(phy_modes))
+    elif preset == 'cs02':
+        require(phy_modes.get(5) == '2500base-x' and phy_modes.get(1) == 'psgmii',
+                'CS-02 must keep the 2.5G PHY on wan: ' + repr(phy_modes))
     require(bool(active(b'qcom,ipq6018-wifi')) == (preset != 'cs07'), 'incorrect integrated radio state')
     require(bool(active(b'pci17cb,1104')) == (preset != 'cs07'), 'incorrect PCI radio state')
     print('PASS DTB identity, DSA PPE/EDMA, port map and radio state:', DEVICES[preset])

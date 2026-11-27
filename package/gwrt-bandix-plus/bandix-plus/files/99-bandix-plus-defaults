@@ -17,6 +17,13 @@ uci -q get bandix_plus.general.host >/dev/null 2>&1 || uci -q set bandix_plus.ge
 uci -q get bandix_plus.general.history_window_minutes >/dev/null 2>&1 || uci -q set bandix_plus.general.history_window_minutes='10'
 uci -q get bandix_plus.general.data_dir >/dev/null 2>&1 || uci -q set bandix_plus.general.data_dir='/usr/share/bandix-plus'
 
+# Keep WAN in the monitored set: the theme traffic curve reads WAN counters and
+# only falls back to LAN when WAN is missing from the Bandix snapshot.
+case " $(uci -q get bandix_plus.general.iface 2>/dev/null) " in
+	*" wan "*) ;;
+	*) uci -q add_list bandix_plus.general.iface='wan' >/dev/null 2>&1 ;;
+esac
+
 uci -q commit bandix_plus
 
 exit 0

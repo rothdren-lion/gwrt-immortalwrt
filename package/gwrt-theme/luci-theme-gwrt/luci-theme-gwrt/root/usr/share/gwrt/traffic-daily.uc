@@ -80,11 +80,14 @@ function probe() {
 	if (!sample && snapshot?.ok == true && type(snapshot?.data?.interfaces) == 'array') {
 		// Bandix may not monitor WAN (e.g. only br-lan). Fall back to the first
 		// interface with cumulative data so the traffic chart still shows data.
-		for (let item in snapshot.data.interfaces) {
-			if (type(item.cumulative) == 'object') {
+		for (let pass in [ 'wan', 'any' ]) {
+			for (let item in snapshot.data.interfaces) {
+				if (type(item.cumulative) != 'object') continue;
+				if (pass == 'wan' && !match(item.ifname, /^(pppoe-wan|wan)([.@:].*)?$/)) continue;
 				sample = sample_from_iface(item, time(), uptime, boot);
 				if (sample) break;
 			}
+			if (sample) break;
 		}
 	}
 	return sample;
