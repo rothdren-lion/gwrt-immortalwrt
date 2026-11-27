@@ -68,6 +68,9 @@ CONFIG_TARGET_MULTI_PROFILE=y
 CONFIG_TARGET_PER_DEVICE_ROOTFS=y
 $( [ "$DEVICE" = all ] || echo "CONFIG_TARGET_DEVICE_airoha_${SUB}_DEVICE_${DEVICE}=y" )
 CONFIG_LINUX_6_18=y
+# honk（eBPF 透明代理）需要 /sys/kernel/btf/vmlinux，vmlinux-btf 从内核 BTF
+# 导出；不开这一项 honk 运行时 CO-RE 重定位会失败。
+CONFIG_KERNEL_DEBUG_INFO_BTF=y
 CONFIG_PACKAGE_luci=y
 CONFIG_LUCI_LANG_zh_Hans=y
 EOF
@@ -131,6 +134,17 @@ for p in \
 	luci-app-route-tool \
 	luci-app-easytier \
 	luci-i18n-easytier-zh-cn ; do
+	add_pkg "$p"
+done
+
+# Honk（daeuniverse，需 configs/an758x-feeds.conf 里的 daeuniverse feed）
+# 与 OpenAppFilter（feeds/packages/net/open-app-filter，luci-app-oaf 会带
+# appfilter + kmod-oaf + luci-compat）。
+echo "[$SUB] Honk + OpenAppFilter:"
+for p in \
+	honk \
+	luci-app-honk \
+	luci-app-oaf ; do
 	add_pkg "$p"
 done
 
@@ -210,10 +224,7 @@ for p in \
 	kmod-inet-diag \
 	coremark \
 	luci-app-ttyd \
-	ttyd \
-	appfilter \
-	kmod-oaf \
-	luci-app-oaf ; do
+	ttyd ; do
 	unset_pkg "$p"
 done
 
@@ -251,9 +262,6 @@ for p in \
 	coremark \
 	luci-app-ttyd \
 	ttyd \
-	appfilter \
-	kmod-oaf \
-	luci-app-oaf \
 	gecoosac \
 	luci-app-gecoosac ; do
 	case "$p" in
@@ -274,3 +282,5 @@ echo "==> 设备: $(grep -c "^CONFIG_TARGET_DEVICE_airoha_${SUB}_DEVICE_.*=y$" "
 echo "==> PON:  $(grep -E '^CONFIG_PACKAGE_(kmod-airoha|airoha-pon|luci-app-pon)' "$OUT" | tr '\n' ' ')"
 echo "==> 体积预算检查（下面是 .config 里仍为 y 的重包，实际体积以构建为准）:"
 grep -E '^CONFIG_PACKAGE_(gecoosac|openclash|docker|podman|kmod-wireguard)=y$' "$OUT" || echo "  重包均已排除"
+echo "==> 插件: $(grep -E '^CONFIG_PACKAGE_(honk|luci-app-honk|luci-app-oaf|appfilter|kmod-oaf)=y$' "$OUT" | tr '\n' ' ')"
+echo "==> BTF:  $(grep -E '^CONFIG_KERNEL_DEBUG_INFO_BTF=y$' "$OUT" || echo '缺失')"

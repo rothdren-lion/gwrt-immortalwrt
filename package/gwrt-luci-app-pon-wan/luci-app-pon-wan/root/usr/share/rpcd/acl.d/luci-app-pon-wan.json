@@ -1,15 +1,23 @@
 {
 	"luci-app-pon-wan": {
-		"description": "Grant access to the PON WAN service VLAN configuration",
+		"description": "Grant access to the PON WAN service VLAN and PON identity configuration",
 		"read": {
-			"uci": [ "pon_wan", "network", "firewall" ],
+			"uci": [ "pon_wan", "pon", "network", "firewall" ],
 			"ubus": {
 				"network.device": [ "status" ],
 				"network.interface": [ "dump" ]
+			},
+			"file": {
+				"/usr/libexec/pon-identity-apply": [ "exec" ],
+				"/usr/libexec/pon-identity-apply *": [ "exec" ]
 			}
 		},
 		"write": {
-			"uci": [ "pon_wan", "network", "firewall" ]
+			"uci": [ "pon_wan", "network", "firewall" ],
+			"file": {
+				"/usr/libexec/pon-identity-apply": [ "exec" ],
+				"/usr/libexec/pon-identity-apply *": [ "exec" ]
+			}
 		}
 	}
 }

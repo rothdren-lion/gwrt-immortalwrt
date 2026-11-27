@@ -137,6 +137,7 @@ jobs:
         run: |
           case "${{ inputs.device }}" in
             ss01|cs02|cs02-gwrt2|cs07) cp configs/ipq60xx-feeds.conf feeds.conf ;;
+            an758x|an7583) cp configs/an758x-feeds.conf feeds.conf ;;
           esac
           ./scripts/feeds update -a
           for feed in feeds/*; do
@@ -181,8 +182,8 @@ jobs:
             bdy-g98-uefi) OUT=.config VER="$VER" BOOT=uefi sh gwrt-mk-bdy-g98-config.sh ;;
             mt7981) OUT=.config GWRT_NO_SELF_DEFCONFIG=1 VER="$VER" sh gwrt-mk-xingloo-ax3000-config.sh ;;
             mt7986) OUT=.config GWRT_NO_SELF_DEFCONFIG=1 VER="$VER" sh gwrt-mk-mt7986-config.sh ;;
-            an758x) OUT=.config VER="$VER" DEVICE=all WITH_OPENCLASH=1 WITH_SMB=1 sh gwrt-mk-an7581-config.sh ;;
-            an7583) OUT=.config VER="$VER" DEVICE=all SUB=an7583 WITH_OPENCLASH=1 WITH_SMB=1 sh gwrt-mk-an7581-config.sh ;;
+            an758x) OUT=.config VER="$VER" DEVICE=all WITH_OPENCLASH=0 WITH_SMB=1 sh gwrt-mk-an7581-config.sh ;;
+            an7583) OUT=.config VER="$VER" DEVICE=all SUB=an7583 WITH_OPENCLASH=0 WITH_SMB=1 sh gwrt-mk-an7581-config.sh ;;
             *) echo "unknown device preset: ${{ inputs.device }}"; exit 1 ;;
           esac
           if [ -n "$GWRT_MODELS" ]; then

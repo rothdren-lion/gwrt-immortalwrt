@@ -1,0 +1,163 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# 向 /etc/config/pon 写入 PON 身份参数，然后重启 PON 守护进程与线路服务：
+#   --loid             LOID（1-24 可打印 ASCII）
+#   --loid-password    LOID 密码（1-12 可打印 ASCII）
+#   --serial           SN（16 位十六进制，或 4 位厂商码 + 8 位十六进制）
+#   --registration-id  Registration-ID（1-36 可打印 ASCII）
+#
+# 未给出的参数保持现状；任何一项写入成功才算变更。
+# 输出单行 JSON：{"ok":1,"changed":0|1}
+
+set -u
+
+loid=''
+loid_pw=''
+serial=''
+regid=''
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--loid)
+		[ $# -ge 2 ] || { echo '{"ok":0,"error":"missing --loid value"}'; exit 2; }
+		loid="$2"; shift 2 ;;
+	--loid-password)
+		[ $# -ge 2 ] || { echo '{"ok":0,"error":"missing --loid-password value"}'; exit 2; }
+		loid_pw="$2"; shift 2 ;;
+	--serial)
+		[ $# -ge 2 ] || { echo '{"ok":0,"error":"missing --serial value"}'; exit 2; }
+		serial="$2"; shift 2 ;;
+	--registration-id)
+		[ $# -ge 2 ] || { echo '{"ok":0,"error":"missing --registration-id value"}'; exit 2; }
+		regid="$2"; shift 2 ;;
+	*)
+		shift ;;
+	esac
+done
+
+fail() {
+	printf '{"ok":0,"error":"%s"}\n' "$1"
+	exit 1
+}
+
+is_printable() {
+	case "$1" in
+	'') return 1 ;;
+	*[!\ -~]*) return 1 ;;
+	esac
+	return 0
+}
+
+is_serial() {
+	case "$1" in
+	[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]|\
+	[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]*) ;;
+	*) return 1 ;;
+	esac
+}
+
+if [ -n "$loid" ]; then
+	is_printable "$loid" || fail "LOID must be printable ASCII"
+	[ "${#loid}" -le 24 ] || fail "LOID must be at most 24 characters"
+fi
+if [ -n "$loid_pw" ]; then
+	is_printable "$loid_pw" || fail "LOID password must be printable ASCII"
+	[ "${#loid_pw}" -le 12 ] || fail "LOID password must be at most 12 characters"
+fi
+if [ -n "$serial" ]; then
+	case "$serial" in
+	[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]|\
+	[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]|\
+	[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]|default) ;;
+	*) fail "SN must be 16 hex digits, or 4 characters plus 8 hex digits" ;;
+	esac
+fi
+if [ -n "$regid" ]; then
+	is_printable "$regid" || fail "Registration-ID must be printable ASCII"
+	[ "${#regid}" -le 36 ] || fail "Registration-ID must be at most 36 characters"
+fi
+
+line=''
+omci=''
+oam=''
+for entry in $(uci -q show pon | sed -n 's/^pon\.\([^.=]*\)=\(.*\)$/\1:\2/p'); do
+	sec=${entry%%:*}
+	typ=${entry#*:}
+	case "$typ" in
+	xpon) [ -n "$line" ] || line="$sec" ;;
+	omci) [ -n "$omci" ] || omci="$sec" ;;
+	oam) [ -n "$oam" ] || oam="$sec" ;;
+	esac
+done
+
+changed=0
+if [ -n "$loid" ] && [ -n "$omci" ]; then
+	uci set "pon.$omci.loid=$loid"; changed=1
+fi
+if [ -n "$loid" ] && [ -n "$oam" ]; then
+	uci set "pon.$oam.loid=$loid"; changed=1
+fi
+if [ -n "$loid_pw" ] && [ -n "$omci" ]; then
+	uci set "pon.$omci.loid_password=$loid_pw"; changed=1
+fi
+if [ -n "$loid_pw" ] && [ -n "$oam" ]; then
+	uci set "pon.$oam.loid_password=$loid_pw"; changed=1
+fi
+if [ -n "$serial" ] && [ -n "$line" ]; then
+	uci set "pon.$line.serial_number=$serial"; changed=1
+fi
+if [ -n "$regid" ] && [ -n "$line" ]; then
+	uci set "pon.$line.registration_id=$regid"; changed=1
+fi
+
+if [ "$changed" = 0 ]; then
+	echo '{"ok":1,"changed":0}'
+	exit 0
+fi
+
+uci commit pon || fail "uci commit pon failed"
+/etc/init.d/pon reload >/dev/null 2>&1
+/etc/init.d/airoha-pond restart >/dev/null 2>&1
+
+# PON 重注册会重建 pon0：802.1q 子接口与 PPPoE/WAN6 需要重新拉起，
+# 否则 netifd 会停在 pending 不再自动重拨。
+#
+# 步骤：等 pon0/pon0.41 链路就绪 → reload network → 反复 ifup 直到 WAN 起来。
+wan_ifaces() {
+	uci -q show network | sed -n "s/^\(network\.[^.=]*\)\.device='\(pon0[^']*\)'$/\1/p" | sed 's/^network\.//'
+}
+
+wait_oper_up() {
+	local dev="$1" left="${2:-30}"
+	[ -e "/sys/class/net/$dev" ] || return 0
+	while [ "$left" -gt 0 ]; do
+		[ "$(cat "/sys/class/net/$dev/operstate" 2>/dev/null)" = "up" ] && return 0
+		sleep 1
+		left=$((left - 1))
+	done
+	return 1
+}
+
+iface_up() {
+	ubus call "network.interface.$1" status 2>/dev/null | grep -q '"up": *true'
+}
+
+wait_oper_up pon0 30
+wait_oper_up pon0.41 30
+ubus call network reload >/dev/null 2>&1
+sleep 2
+
+ifaces="$(wan_ifaces)"
+tries=0
+while [ "$tries" -lt 6 ]; do
+	all_up=1
+	for iface in $ifaces; do
+		iface_up "$iface" || { all_up=0; ifup "$iface" >/dev/null 2>&1; }
+	done
+	[ "$all_up" = 1 ] && break
+	tries=$((tries + 1))
+	sleep 8
+done
+
+printf '{"ok":1,"changed":1,"line":"%s","omci":"%s","oam":"%s"}\n' "$line" "$omci" "$oam"
