@@ -131,6 +131,7 @@ for p in \
 	gwrt-mesh-led \
 	gwrt-mesh-apmode \
 	gwrt-agent \
+	coremark \
 	luci-theme-gwrt \
 ; do
 	sed -i "/^# CONFIG_PACKAGE_${p} is not set\$/d" "$OUT"

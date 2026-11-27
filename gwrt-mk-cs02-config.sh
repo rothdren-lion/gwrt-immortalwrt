@@ -144,7 +144,7 @@ done
 # gwrt-device-defaults 随固件预置 wifiroam 离线 APK，首启安装 + 打补丁；
 # SS-01/CS-02 的「joy」键在 DTS 里已改名为 mesh，短按开、长按关。
 echo "[cs02] adding GWRT mesh stack (wifiroam):"
-for p in gwrt-device-defaults gwrt-mesh-led gwrt-mesh-apmode gwrt-agent; do
+for p in gwrt-device-defaults gwrt-mesh-led gwrt-mesh-apmode gwrt-agent coremark; do
   set_pkg "$p"
 done
 
