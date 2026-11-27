@@ -65,6 +65,9 @@ def verify_dtb(blob, preset):
     require(len(active(b'qualcomm,ipq6018-ppe')) == 1, 'missing DSA PPE switch')
     require(len(active(b'qualcomm,ipq6018-edma')) == 1, 'missing DSA EDMA dataplane')
     require(not active(b'qcom,nss-dp'), 'NSS dataplane must not coexist with DSA')
+    if preset in ('cs02', 'cs02-gwrt2'):
+        require(len(active(b'qcom,nss')) == 1, 'missing NSS core node (qca-nss-drv cannot boot)')
+        require(len(active(b'qcom,nss-common')) == 1, 'missing NSS common node')
     ports = {int.from_bytes(n['reg'], 'big'): n['label'].rstrip(b'\0').decode()
              for path, n in nodes.items() if '/ports/port@' in path and 'label' in n and 'reg' in n}
     wanted = {1: 'wan', 2: 'lan1', 3: 'lan2', 4: 'lan3'} if preset == 'cs07' else {

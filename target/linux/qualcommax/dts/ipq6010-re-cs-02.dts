@@ -4,6 +4,12 @@
 
 #include "ipq6010-re-cs.dtsi"
 
+/* NSS firmware, wifi offload and the crypto/macsec blocks are only described
+ * in ipq6018-nss.dtsi and qca-nss-drv binds nothing but "qcom,nss", so without
+ * this include NSS cannot boot while wired ports stay on DSA/PPE.
+ */
+#include "ipq6018-nss.dtsi"
+
 / {
 	model = "JDCloud RE-CS-02";
 	compatible = "jdcloud,re-cs-02", "qcom,ipq6018";
