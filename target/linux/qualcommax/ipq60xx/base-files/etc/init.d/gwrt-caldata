@@ -21,6 +21,10 @@ START=18
 
 LOG_TAG=gwrt-caldata
 CAL=/lib/firmware/ath11k/IPQ6018/hw1.0/cal-ahb-c000000.wifi.bin
+CAL_PCI=/lib/firmware/ath11k/QCN9074/hw1.0/cal-pci-0000:01:00.0.bin
+# 0:ART 里 QCN9074 校准段：0x26800 起 0x20000
+ART_PCI_OFFSET=157696
+ART_PCI_LEN=131072
 DEF_KEY=12345678
 OVERLAY_STATE=/overlay/.fs_state
 REBOOT_MARKER=/etc/gwrt-caldata-rebooted
@@ -174,28 +178,44 @@ wifi_setup() {
 	wifi_bootstrap
 }
 
-start() {
-	# 已经有了：直接进无线自举（注意：不能把这种“已存在”也当成刚提取，
-	# 否则会无限重启——2026-10-29 在真机上踩过）
-	if [ -s "$CAL" ]; then
-		( wifi_setup ) >/dev/null 2>&1 &
+has_pci_radio() {
+	case "$(cat /tmp/sysinfo/board_name 2>/dev/null)" in
+	jdcloud,re-cs-02|jdcloud,re-cs-02-gwrt2)
 		return 0
+		;;
+	esac
+	return 1
+}
+
+start() {
+	local extracted=0
+
+	# 已经有了就不再算“刚提取”，否则会无限重启（2026-10-29 真机踩过）
+	if [ ! -s "$CAL" ]; then
+		cal_ensure "$CAL" "0:ART" 4096 65536 && extracted=1
 	fi
 
-	if cal_ensure "$CAL" "0:ART" 4096 65536; then
+	# QCN9074（RE-CS-02 / GWRT2 的 5.2G 射频）走独立 cal 文件，
+	# 缺了只会有 AHB 的 phy0/phy1，radio2 永远不出现
+	if has_pci_radio && [ ! -s "$CAL_PCI" ]; then
+		cal_ensure "$CAL_PCI" "0:ART" "$ART_PCI_OFFSET" "$ART_PCI_LEN" && extracted=1
+	fi
+
+	if [ "$extracted" = "1" ]; then
 		# 本次 ath11k 已经错过校准数据，需要重启一次
 		# 防死循环：补过一次还没生效就不再重启（比如 overlay 写不进去）
 		if [ -e "$REBOOT_MARKER" ]; then
 			log "caldata still missing after one reboot, not rebooting again"
-			( wifi_setup ) >/dev/null 2>&1 &
+		else
+			log "caldata was missing at probe time; waiting for persistent overlay before reboot"
+			( reboot_after_caldata_extract ) >/dev/null 2>&1 &
 			return 0
 		fi
-		log "caldata was missing at probe time; waiting for persistent overlay before reboot"
-		( reboot_after_caldata_extract ) >/dev/null 2>&1 &
-		return 0
 	fi
 
-	log "caldata unavailable (no 0:ART partition?), skip"
+	if [ ! -s "$CAL" ]; then
+		log "caldata unavailable (no 0:ART partition?), skip"
+	fi
 	( wifi_setup ) >/dev/null 2>&1 &
 }
 

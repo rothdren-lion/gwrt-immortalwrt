@@ -308,6 +308,10 @@ jobs:
         if: contains(fromJSON('["cs02","cs02-gwrt2","cs07"]'), inputs.device)
         run: python3 scripts/tests/test-ipq60xx-factory-rootfs.py
 
+      - name: Test CS-02 QCN9074 caldata coverage
+        if: contains(fromJSON('["cs02","cs02-gwrt2"]'), inputs.device)
+        run: sh scripts/tests/test-gwrt-caldata-pci.sh
+
       - name: Test SS-01 mesh preset
         if: inputs.device == 'ss01'
         run: |
