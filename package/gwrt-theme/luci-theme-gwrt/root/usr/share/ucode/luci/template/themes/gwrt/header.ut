@@ -80,7 +80,7 @@
 	</script>
 
 	<!-- Main Stylesheet -->
-	<link rel="stylesheet" href="/luci-static/gwrt/css/cascade.css?v=20261128r132">
+	<link rel="stylesheet" href="/luci-static/gwrt/css/cascade.css?v=20261128r133">
 
 	<!-- Stylesheets -->
 	{% if (node?.css): %}
@@ -149,7 +149,7 @@
 							<button type="button" class="lang-toggle gwrt-lang-toggle" data-lang="en">EN</button>
 							<button type="button" class="lang-toggle gwrt-reboot-btn" id="gwrtRebootBtn" title="重启路由" aria-label="重启路由">&#8635;</button>
 							<div class="status" id="indicators"></div>
-							<a class="gwrt-logout-btn" id="gwrtLogoutBtn" href="{{ dispatcher.build_url('admin/logout') }}" title="退出登录" aria-label="退出登录"><span class="gwrt-logout-icon" aria-hidden="true">&#9167;</span></a>
+							<a class="gwrt-logout-btn" id="gwrtLogoutBtn" href="{{ dispatcher.build_url('admin/logout') }}" title="退出登录" aria-label="退出登录"><span class="gwrt-logout-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2.5H3.7a1.2 1.2 0 0 0-1.2 1.2v8.6a1.2 1.2 0 0 0 1.2 1.2H6"/><path d="M10.4 5.4 13 8l-2.6 2.6"/><path d="M13 8H6.6"/></svg></span></a>
 						</div>
 					</div>
 				</div>
