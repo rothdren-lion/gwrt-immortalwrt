@@ -92,9 +92,27 @@ struct dentry;
 /* sections 2.6 / 2.3 TE global and rate encoding                             */
 /* ------------------------------------------------------------------ */
 #define L3TE_TE_GLB_CTRL		0x9004u
+#define L3TE_TE_GLB_POLICER_EN		BIT(0)
 #define L3TE_GLB_CTRL_WRED_EN		BIT(3)
+#define L3TE_GLB_CTRL_MARK_ECN_EN	BIT(4)
+#define L3TE_GLB_CTRL_POL_ECN_EN	BIT(5)
 #define L3TE_GLB_CTRL_WRED_ECN_EN	BIT(6)
 #define L3TE_TE_GLB_POL_GRP_64		BIT(25)
+
+/* L2FE ARB global control (NE 0x1600): bit 2 enables IP ECN marking support. */
+#define L3TE_L2FE_ARB_CTRL		0x1600u
+#define L3TE_L2FE_ARB_CTRL_IP_ECN_EN	BIT(2)
+
+/*
+ * OEM fc_8277c.ko rtk_8277c_policer_init (@0xcb780) programs NE 0x9180 and
+ * NE 0x30ac alongside L3TE_TE_GLB_CTRL when bringing up L3TE policing.
+ */
+#define L3TE_POL_GLB_CFG		0x9180u
+#define L3TE_POL_GLB_CFG_MASK		(GENMASK(5, 0) | GENMASK(13, 8))
+#define L3TE_POL_GLB_CFG_VAL		((0x1fu << 8) | 0x1fu)
+/* NE 0x30ac lives in the L3FE register window alongside RTL_FE_TABLE_CFG0/1. */
+#define L3TE_FE_POL_GLB_CFG		0x30acu
+#define L3TE_FE_POL_GLB_EN		(BIT(8) | BIT(9))
 
 /*
  * Rate fields hold kbps split as rate = 500 * hi + lo (spec section 2.3:
@@ -120,26 +138,37 @@ struct dentry;
 #define L3TE_POL_W1_PIR_HI_SHIFT	16
 
 /* ------------------------------------------------------------------ */
-/* sections 4.1/4.2 WRED profile table: 32 slots x 8 data words               */
+/* sections 4.1/4.2 WRED control, AFGS and profile table (32 x 8 words) */
 /* ------------------------------------------------------------------ */
+#define L3TE_WRED_CTRL			0x9380u
+#define L3TE_WRED_CTRL_FAST_DECAY	BIT(2)
+#define L3TE_WRED_CTRL_AFGS_WEIGHT	GENMASK(7, 4)
+#define L3TE_WRED_CTRL_AFGS_SEL_WORST	BIT(8)
+
+#define L3TE_WRED_AFGS_ACC		0x9384u
+#define L3TE_WRED_AFGS_DATA		0x9388u
+#define L3TE_WRED_AFGS_ENTRIES		8u
+#define L3TE_WRED_AFGS_IDX_BITS		3u
+#define L3TE_WRED_AFGS_DEPTH_MASK	0x3fffu
+#define L3TE_WRED_AFGS_EQ1_SHIFT	14u
+
 #define L3TE_WRED_PROF_ACC		0x938cu
 #define L3TE_WRED_PROF_DATA(n)		(0x93acu - 4u * (n))	/* n = 0..7 */
 #define L3TE_WRED_PROF_WORDS		8u
 #define L3TE_WRED_PROFILES		32u
 #define L3TE_WRED_PROF_IDX_BITS		5u
 
-/* section 4.3 WRED profile select: 64 queues x 2 data words */
+/* section 4.3 WRED profile select: 64 port/queue groups x 2 data words */
 #define L3TE_WRED_SEL_ACC		0x93b0u
 #define L3TE_WRED_SEL_DATA(n)		(0x93b8u - 4u * (n))	/* n = 0..1 */
 #define L3TE_WRED_SEL_WORDS		2u
 #define L3TE_WRED_QUEUES		64u
 #define L3TE_WRED_SEL_IDX_BITS		6u
 /*
- * The 2 word select payload is eight 5 bit fields (section 4.2 style packing,
- * aal_l3_te_wred_profile_sel_set @0x72bc0): fields 0..5 live in word0 at
- * 5 bit steps, field 6 spans word0[31:30] + word1[2:0] and field 7 sits in
- * word1[7:3]. Which field carries the profile index is U8; the API keeps
- * the field selectable and defaults to field 0.
+ * The 2 word select payload packs eight 5-bit profile IDs (sel0..sel7), one
+ * per VoQ/CoS 0..7 of that queue group (aal_l3_te_wred_profile_sel_set
+ * @0x72bc0): fields 0..5 live in word0 at 5-bit steps, field 6 spans
+ * word0[31:30] + word1[2:0] and field 7 sits in word1[7:3].
  */
 #define L3TE_WRED_SEL_FIELDS		8u
 #define L3TE_WRED_SEL_FIELD_DEFAULT	0u
@@ -152,7 +181,12 @@ struct dentry;
 #define L3TE_WRED_SEL_F6_W1_MASK	0x7u
 #define L3TE_WRED_SEL_F7_W1_SHIFT	3
 
-/* section 4.4 PIE/WRED per port (engine instance) enable, whole word write */
+/*
+ * section 4.4 PIE/WRED per-port enable bitmap (4 x 32-bit = 128 ports,
+ * indexed by {dir, ldpid[5:0]}): verified against ca-ne.ko
+ * aal_l3_te_pie_reset (@0x76a6c), fc_8277c.ko rtk_fc_qos_aqm_pie_enable_set
+ * (@0xb6f1c), and live RTL9617C silicon: 0 = disabled, 1 = WRED/PIE enabled.
+ */
 #define L3TE_PIE_WRED_PORTS		4u
 #define L3TE_PIE_WRED_PORT_EN(p)	(0x9080u + 4u * (p))
 
@@ -208,6 +242,19 @@ struct dentry;
 #define L3TE_PM_CTRL_CNT0_ID_SEL	BIT(9)
 #define L3TE_PM_CTRL_CNT1_EVT_SEL	BIT(10)
 #define L3TE_PM_CTRL_CNT1_ID_SEL	BIT(11)
+
+/* Global L3TE PM counters (ca-ne.ko aal_l3_te_pm_stats_get @0x6fee0). */
+#define L3TE_PM_PCNT			0x9710u
+#define L3TE_PM_PRE_MARK_PCNT		0x9714u
+#define L3TE_PM_POL_DROP_PCNT		0x9718u
+#define L3TE_PM_TAIL_DROP_PCNT		0x971cu
+#define L3TE_PM_WRED_Y_DROP_PCNT	0x9720u
+#define L3TE_PM_WRED_G_DROP_PCNT	0x9724u
+#define L3TE_PM_MARK_PCNT		0x9728u
+#define L3TE_PM_POL_MARK_PCNT		0x972cu
+#define L3TE_PM_BYPASS_PCNT		0x9730u
+#define L3TE_PM_BYPASS_FLOW_PCNT	0x9734u
+#define L3TE_PM_CE_PCNT			0x9738u
 
 #define L3TE_POL_MIB_ACC		0x973cu
 #define L3TE_POL_MIB_DATA(n)		(0x9740u + 4u * (n))	/* n = 0..8 */
@@ -268,6 +315,7 @@ struct rtl_te_hostpol_mib {
 #define L3TE_DOS_EN_BITS		1u
 #define L3TE_DOS_FLOOD_CNT		0x3310u
 #define L3TE_DOS_FLOOD_CNT_MASK		GENMASK(10, 0)
+#define L3TE_DOS_FLOOD_CNT_DEFAULT	0x3fau
 #define L3TE_DOS_EVT_TRAP		0x3314u
 #define L3TE_DOS_EVT_DROP		0x3318u
 
@@ -295,6 +343,7 @@ struct rtl_te_hostpol_mib {
 #define L3TE_DOS_L2_CFG(n)		(L3TE_DOS_L2_BASE + 4u * (n)) /* 0..4 */
 #define L3TE_DOS_L2_FLOOD_CNT		0x1234u
 #define L3TE_DOS_L2_FLOOD_CNT_MASK	GENMASK(9, 0)
+#define L3TE_DOS_L2_FLOOD_CNT_DEFAULT	0xffu
 #define L3TE_DOS_L2_EVT_TRAP		0x1238u
 /* L2 dos_type_en: 0x1228[15:0], same type order and bit numbers as L3. */
 #define L3TE_DOS_L2_TYPE_EN		0x1228u
@@ -432,10 +481,19 @@ struct rtl_te_flow {
 	 * without writing anything.
 	 */
 	bool group64_ready;
+	/* Cached L3TE policer global enable state (NE 0x9004 bit0, 0x9180,
+	 * 0x30ac): enabled lazily on the first flow/group/host policer add.
+	 */
+	bool policer_ready;
 	/* Cached TE_PM_CTRL (0x9700) state: false until the first host policing
 	 * add or MIB read lazily clears mem_disable and sets auto_clr/cnt sels.
 	 */
 	bool pm_ready;
+	/* Optional FE callback invoked after hostpol rules change (outside
+	 * ->lock) so already-offloaded FE flows refresh their POL_VLD/EN/ID.
+	 */
+	void (*hostpol_sync)(void *data);
+	void *hostpol_sync_data;
 	/* Host policing table, guarded by ->lock together with the bitmaps
 	 * above because both allocate from the same 256 slot POL1 table.
 	 */
@@ -444,6 +502,8 @@ struct rtl_te_flow {
 
 int rtl_te_flow_init(struct rtl9617c_ni *ni);
 void rtl_te_flow_exit(struct rtl9617c_ni *ni);
+void rtl_te_flow_set_sync(struct rtl_te_flow *te, void (*sync)(void *data),
+			  void *data);
 
 int rtl_te_policer_alloc(struct rtl_te_flow *te, u64 cir_bps, u64 pir_bps,
 			 u32 cbs_bytes, u32 pbs_bytes, u8 *slot);
@@ -482,10 +542,13 @@ int rtl_te_dos_l2_set(struct rtl_te_flow *te, u64 field_mask,
 
 int rtl_te_dos_flood_get(struct rtl_te_flow *te, bool l2, u32 *count);
 int rtl_te_dos_flood_clear(struct rtl_te_flow *te, bool l2);
+int rtl_te_dos_flood_unit_set(struct rtl_te_flow *te, bool l2, u32 unit);
 
-/* CANDIDATE bitmap helpers (U10-b) */
+/* Attack type enable/action helpers (verified against ca-rtk.ko DAL). */
 int rtl_te_dos_type_en_get(struct rtl_te_flow *te, bool l2, u32 *bitmap);
 int rtl_te_dos_type_en_set(struct rtl_te_flow *te, bool l2, u32 bitmap);
+int rtl_te_dos_type_set_action(struct rtl_te_flow *te, bool l2,
+			       enum rtl_dos_type type, bool enable, bool trap);
 int rtl_te_dos_type_set(struct rtl_te_flow *te, bool l2,
 			enum rtl_dos_type type, bool enable);
 
@@ -548,9 +611,9 @@ int rtl_te_hostpol_mib_get(struct rtl_te_flow *te, u8 entry, u64 *rx, u64 *tx);
 int rtl_te_hostpol_mib_clear(struct rtl_te_flow *te, u8 entry);
 
 /*
- * Disarm: write an all-zero L3 image.  enable == true is accepted for API
- * compatibility and writes nothing, because arming needs a concrete image
- * supplied through rtl_te_dos_l3_set() -- there is no default image.
+ * Disarm: write all-zero L3 and L2 DoS images.  enable == true is accepted for
+ * API compatibility and writes nothing, because arming needs explicit
+ * thresholds, attack types, and port masks.
  */
 int rtl_te_dos_set(struct rtl_te_flow *te, bool enable);
 

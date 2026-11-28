@@ -73,6 +73,11 @@ static bool rtl_fe_dual_clear_on_free = true;
 
 #define RTL_FE_DUAL_DSLITE_HDR_LEN	40
 #define RTL_FE_DUAL_DSLITE_INR_TO_OUT	0x30
+/* DS-Lite decap requires bit 7 (0x80) in inr_to_out_fld (matching 6RD/PPTP
+ * 0xb0, MAP-T 0x80, L2TP 0xf0): with bit 4 set and bit 7 clear (0x30), L3FE
+ * STG1 drops DS-Lite decapsulated frames instead of forwarding them to Hash.
+ */
+#define RTL_FE_DUAL_DSLITE_DECAP_INR_TO_OUT 0xb0
 #define RTL_FE_DUAL_DSLITE_SRC_WORD	2
 #define RTL_FE_DUAL_DSLITE_DST_WORD	6
 #define RTL_FE_DUAL_DSLITE_ADDR_BYTES	16
@@ -320,6 +325,26 @@ static u32 rtl_fe_dual_index_mask(u32 select)
 {
 	return select == RTL_FE_DUAL_SEL_FMR ? RTL_FE_DUAL_FMR_INDEX_MASK :
 					       RTL_FE_DUAL_INDEX_MASK;
+}
+
+static u32 rtl_fe_dual_swab32(u32 v)
+{
+	return ((v & 0x000000ffU) << 24) | ((v & 0x0000ff00U) << 8) |
+	       ((v & 0x00ff0000U) >> 8) | ((v & 0xff000000U) >> 24);
+}
+
+/* ca-ne.ko aal_pe_dual_content_entry_add/get reverse all 16 words and byte-swap
+ * each word so DATA(15) at 0x354c holds network-order bytes [0..3] and DATA(0)
+ * at 0x3588 holds bytes [60..63].  This involution converts between the logical
+ * header image and hardware RAM order.
+ */
+static void rtl_fe_dual_content_swap(u32 dst[RTL_FE_DUAL_WORDS],
+				     const u32 src[RTL_FE_DUAL_WORDS])
+{
+	unsigned int i;
+
+	for (i = 0; i < RTL_FE_DUAL_WORDS; i++)
+		dst[i] = rtl_fe_dual_swab32(src[RTL_FE_DUAL_WORDS - 1 - i]);
 }
 
 static int rtl_fe_dual_hw_read(struct rtl_fe *fe, u32 select,
@@ -672,14 +697,13 @@ static void rtl_fe_dual_control_defaults(struct rtl_fe_dual_control *control)
 	control->vxlan_sp_ost = RTL_FE_DUAL_OST_NONE;
 }
 
-/* _rtk_fc_dualHeader_ctrl_setupIP4InIP6 @ fc_mgr.ko .text+0x9a2f0
- * (spec §3.2, measured literals).
- */
+/* _rtk_fc_dualHeader_ctrl_setupDsliteMape @ fc_8277c.ko (measured literals). */
 static void rtl_fe_dual_control_preset_dslite(struct rtl_fe_dual_control *c)
 {
 	rtl_fe_dual_control_defaults(c);
 	c->hdr_fmt = 0;
 	c->hdr_len = RTL_FE_DUAL_DSLITE_HDR_LEN;
+	c->mtu_diff = RTL_FE_DUAL_DSLITE_HDR_LEN;
 	c->rep_ip_en = 1;
 	c->rep_ip_ver = 1;
 	c->ip6_oft = 0;
@@ -689,19 +713,13 @@ static void rtl_fe_dual_control_preset_dslite(struct rtl_fe_dual_control *c)
 	c->mc_mac_map = 1;
 }
 
-/* _rtk_fc_dualHeader_ctrl_setup6RD @ fc_mgr.ko .text+0x9e330.
- *
- * RE-7 §3.3 corrects phase0's 6RD row: the measured words are
- * 0x0801FEC0/0xFCFFCA00/0x453F9001/0x01401FE0, i.e. hdr_fmt=0, hdr_len=20,
- * mtu_diff=0, ppp_ip_ver_ost=0x7f, rep_ip_en=1, rep_ip_ver=0.  phase0's
- * hdr_fmt=2/hdr_len=64 row was a transcription error.
- */
+/* _rtk_fc_dualHeader_ctrl_setup6RD @ fc_8277c.ko (measured literals). */
 static void rtl_fe_dual_control_preset_6rd(struct rtl_fe_dual_control *c)
 {
 	rtl_fe_dual_control_defaults(c);
 	c->hdr_fmt = 0;
 	c->hdr_len = RTL_FE_DUAL_6RD_HDR_LEN;
-	c->mtu_diff = 0;
+	c->mtu_diff = RTL_FE_DUAL_6RD_HDR_LEN;
 	c->ppp_ip_ver_ost = RTL_FE_DUAL_OST_NONE;
 	c->rep_ip_en = 1;
 	c->rep_ip_ver = 0;
@@ -981,21 +999,34 @@ int rtl_fe_dual_content_free(struct rtl_fe *fe, unsigned int index)
 int rtl_fe_dual_content_write(struct rtl_fe *fe, unsigned int index,
 			      const u32 words[RTL_FE_DUAL_WORDS])
 {
+	u32 hw[RTL_FE_DUAL_WORDS];
+
 	if (!fe || !fe->tunnel)
 		return -ENODEV;
+	if (!words)
+		return -EINVAL;
+	rtl_fe_dual_content_swap(hw, words);
 	return rtl_fe_dual_table_write(fe, fe->tunnel->content,
 				       RTL_FE_DUAL_CONTENT_ENTRIES, index,
-				       RTL_FE_DUAL_SEL_CONTENT, words);
+				       RTL_FE_DUAL_SEL_CONTENT, hw);
 }
 
 int rtl_fe_dual_content_read(struct rtl_fe *fe, unsigned int index,
 			     u32 words[RTL_FE_DUAL_WORDS])
 {
+	u32 hw[RTL_FE_DUAL_WORDS];
+	int ret;
+
 	if (!fe || !fe->tunnel)
 		return -ENODEV;
-	return rtl_fe_dual_table_read(fe, fe->tunnel->content,
-				      RTL_FE_DUAL_CONTENT_ENTRIES, index,
-				      RTL_FE_DUAL_SEL_CONTENT, words);
+	if (!words)
+		return -EINVAL;
+	ret = rtl_fe_dual_table_read(fe, fe->tunnel->content,
+				     RTL_FE_DUAL_CONTENT_ENTRIES, index,
+				     RTL_FE_DUAL_SEL_CONTENT, hw);
+	if (!ret)
+		rtl_fe_dual_content_swap(words, hw);
+	return ret;
 }
 
 int rtl_fe_dual_control_alloc(struct rtl_fe *fe, unsigned int *index,
@@ -1290,6 +1321,9 @@ static int rtl_fe_tunnel_build_words(const struct rtl_fe_tunnel_key *key,
 	switch (key->type) {
 	case RTL_FE_DUAL_TYPE_IP4INIP6:
 		rtl_fe_dual_control_preset_dslite(&profile);
+		if (key->decap)
+			profile.inr_to_out_fld =
+				RTL_FE_DUAL_DSLITE_DECAP_INR_TO_OUT;
 		rtl_fe_dual_control_pack(control_words, &profile);
 		if (!key->decap) {
 			content_words[0] = RTL_FE_DUAL_DSLITE_WORD0;

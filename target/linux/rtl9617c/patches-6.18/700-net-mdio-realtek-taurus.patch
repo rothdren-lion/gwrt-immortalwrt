@@ -1,0 +1,27 @@
+diff --git a/drivers/net/mdio/Kconfig b/drivers/net/mdio/Kconfig
+@@ -170,6 +170,16 @@
+ 	  This driver supports the MDIO interface found in the Realtek
+ 	  RTL9300 family of Ethernet switches with integrated SoC.
+ 
++config MDIO_REALTEK_TAURUS
++	tristate "Realtek Taurus MDIO interface"
++	depends on ARCH_REALTEK_TAURUS || COMPILE_TEST
++	depends on HAS_IOMEM
++	help
++	  This driver supports the MDIO interface found in Realtek Taurus
++	  SoCs. External PHYs are accessed with Clause 22 and Clause 45
++	  frames on the MDIO pins, while the integrated Gigabit Ethernet PHYs
++	  are accessed through their memory mapped register window.
++
+ config MDIO_REGMAP
+ 	tristate
+ 	help
+diff --git a/drivers/net/mdio/Makefile b/drivers/net/mdio/Makefile
+@@ -21,6 +21,7 @@
+ obj-$(CONFIG_MDIO_MVUSB)		+= mdio-mvusb.o
+ obj-$(CONFIG_MDIO_OCTEON)		+= mdio-octeon.o
+ obj-$(CONFIG_MDIO_REALTEK_RTL9300)	+= mdio-realtek-rtl9300.o
++obj-$(CONFIG_MDIO_REALTEK_TAURUS)	+= mdio-realtek-taurus.o
+ obj-$(CONFIG_MDIO_REGMAP)		+= mdio-regmap.o
+ obj-$(CONFIG_MDIO_SUN4I)		+= mdio-sun4i.o
+ obj-$(CONFIG_MDIO_THUNDER)		+= mdio-thunder.o

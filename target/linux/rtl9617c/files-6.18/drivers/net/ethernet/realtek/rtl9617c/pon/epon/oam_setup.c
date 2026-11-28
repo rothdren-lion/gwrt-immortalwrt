@@ -34,6 +34,16 @@ static struct net_device *rtl_oam_allocate(struct rtl9617c_pon *pon, unsigned in
 	dev->netdev_ops = control ? &rtl_oam_ops : &rtl_data_ops;
 	dev->sysfs_groups[0] = &rtl_oam_group;
 	dev->max_mtu = control ? ETH_DATA_LEN : 1536;
+	if (!control) {
+		netdev_features_t offload = rtl9617c_ni_tx_offload_features();
+
+		dev->hw_features |= NETIF_F_RXCSUM |
+				    RTL9617C_NI_TX_OFFLOAD_FEATURES;
+		dev->wanted_features |= RTL9617C_NI_TX_OFFLOAD_FEATURES;
+		dev->features |= NETIF_F_RXCSUM | offload;
+		netif_set_tso_max_size(dev, rtl9617c_ni_tx_gso_max());
+		netif_set_tso_max_segs(dev, MAX_SKB_FRAGS + 1);
+	}
 	if (control)
 		dev->flags |= IFF_NOARP;
 	/* Factory identity is supplied before netifd. Until then the zero
@@ -124,6 +134,7 @@ int rtl_pon_oam_init(struct rtl9617c_pon *pon)
 	pon->oam_endpoint.netdev = dev;
 	pon->oam_endpoint.receive = rtl_oam_receive;
 	pon->oam_endpoint.wake = rtl_oam_wake;
+	pon->oam_endpoint.update_features = rtl_oam_update_features;
 	rcu_assign_pointer(pon->oam_devices[0], dev);
 	ret = rtl9617c_ni_pon_attach(pon->ni_dev, &pon->oam_endpoint);
 	if (ret)

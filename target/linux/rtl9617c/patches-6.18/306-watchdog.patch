@@ -1,0 +1,24 @@
+diff --git a/drivers/watchdog/Kconfig b/drivers/watchdog/Kconfig
+@@ -1076,6 +1076,13 @@
+ 
+ 	  When built as a module this will be called realtek_otto_wdt.
+ 
++config REALTEK_TAURUS_WATCHDOG
++	tristate "Realtek Taurus watchdog"
++	depends on ARCH_REALTEK_TAURUS && OF
++	select WATCHDOG_CORE
++	help
++	  Peripheral watchdog driver for Realtek Taurus SoCs.
++
+ config SPRD_WATCHDOG
+ 	tristate "Spreadtrum watchdog support"
+ 	depends on ARCH_SPRD || COMPILE_TEST
+diff --git a/drivers/watchdog/Makefile b/drivers/watchdog/Makefile
+@@ -185,6 +185,7 @@
+ obj-$(CONFIG_PIC32_WDT) += pic32-wdt.o
+ obj-$(CONFIG_PIC32_DMT) += pic32-dmt.o
+ obj-$(CONFIG_REALTEK_OTTO_WDT) += realtek_otto_wdt.o
++obj-$(CONFIG_REALTEK_TAURUS_WATCHDOG) += taurus-wdt.o
+ 
+ # PARISC Architecture
+ 

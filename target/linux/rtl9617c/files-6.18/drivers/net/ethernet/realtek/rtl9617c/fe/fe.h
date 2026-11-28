@@ -26,6 +26,7 @@ int rtl_fe_setup_tc(struct rtl_fe *fe, struct net_device *netdev,
 void rtl_fe_start(struct rtl_fe *fe);
 void rtl_fe_stop(struct rtl_fe *fe);
 int rtl_fe_pon_attach(struct rtl_fe *fe, bool attach);
+void rtl_fe_hostpol_sync(struct rtl_fe *fe);
 ssize_t rtl_fe_state(struct rtl_fe *fe, char *buffer);
 int rtl_fe_set_itu_paths(struct rtl_fe *fe, struct net_device *netdev,
 			 const struct rtl_itu_paths *paths);
@@ -77,6 +78,10 @@ static inline void rtl_fe_stop(struct rtl_fe *fe)
 static inline int rtl_fe_pon_attach(struct rtl_fe *fe, bool attach)
 {
 	return attach ? -EOPNOTSUPP : 0;
+}
+
+static inline void rtl_fe_hostpol_sync(struct rtl_fe *fe)
+{
 }
 
 static inline ssize_t rtl_fe_state(struct rtl_fe *fe, char *buffer)

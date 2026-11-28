@@ -1,0 +1,43 @@
+diff --git a/drivers/soc/Kconfig b/drivers/soc/Kconfig
+@@ -21,6 +21,7 @@
+ source "drivers/soc/pxa/Kconfig"
+ source "drivers/soc/qcom/Kconfig"
+ source "drivers/soc/renesas/Kconfig"
++source "drivers/soc/realtek/Kconfig"
+ source "drivers/soc/rockchip/Kconfig"
+ source "drivers/soc/samsung/Kconfig"
+ source "drivers/soc/sophgo/Kconfig"
+diff --git a/drivers/soc/Makefile b/drivers/soc/Makefile
+@@ -27,6 +27,7 @@
+ obj-y				+= amlogic/
+ obj-y				+= qcom/
+ obj-y				+= renesas/
++obj-y				+= realtek/
+ obj-y				+= rockchip/
+ obj-$(CONFIG_SOC_SAMSUNG)	+= samsung/
+ obj-y				+= sophgo/
+diff --git a/drivers/soc/realtek/Kconfig b/drivers/soc/realtek/Kconfig
+@@ -0,0 +1,17 @@
++config SOC_REALTEK_TAURUS
++	bool
++	select SOC_BUS
++	help
++	  SoC identification support for the Realtek Taurus SoCs.
++
++config REALTEK_TAURUS_SPARE_REG
++	bool "Realtek Taurus spare register driver"
++	depends on SOC_REALTEK_TAURUS
++	help
++	  PER_SPARE register helper of the Realtek Taurus SoCs.
++
++config REALTEK_TAURUS_VSFC
++	bool "Realtek Taurus VSFC/UVLO monitor"
++	depends on SOC_REALTEK_TAURUS
++	help
++	  UVLO/VSFC state monitor of the Realtek Taurus SoCs.
+diff --git a/drivers/soc/realtek/Makefile b/drivers/soc/realtek/Makefile
+@@ -0,0 +1,4 @@
++# SPDX-License-Identifier: GPL-2.0
++obj-$(CONFIG_SOC_REALTEK_TAURUS)	+= soc-taurus.o
++obj-$(CONFIG_REALTEK_TAURUS_SPARE_REG)	+= taurus-spare-reg.o
++obj-$(CONFIG_REALTEK_TAURUS_VSFC)	+= taurus-vsfc.o

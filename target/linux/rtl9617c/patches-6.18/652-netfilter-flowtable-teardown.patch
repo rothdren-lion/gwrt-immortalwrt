@@ -1,0 +1,48 @@
+diff --git a/net/netfilter/nf_flow_table_core.c b/net/netfilter/nf_flow_table_core.c
+index 49fdba34c..6e797d605 100644
+--- a/net/netfilter/nf_flow_table_core.c
++++ b/net/netfilter/nf_flow_table_core.c
+@@ -722,6 +722,21 @@ int nf_flow_table_init(struct nf_flowtable *flowtable)
+ }
+ EXPORT_SYMBOL_GPL(nf_flow_table_init);
+ 
++static bool nf_flow_tuple_uses_dev(const struct flow_offload_tuple *tuple,
++				   const struct net_device *dev)
++{
++	switch (tuple->xmit_type) {
++	case FLOW_OFFLOAD_XMIT_NEIGH:
++	case FLOW_OFFLOAD_XMIT_XFRM:
++		return tuple->dst_cache->dev == dev;
++	case FLOW_OFFLOAD_XMIT_DIRECT:
++		return tuple->out.ifidx == dev->ifindex ||
++		       tuple->out.hw_ifidx == dev->ifindex;
++	default:
++		return false;
++	}
++}
++
+ static void nf_flow_table_do_cleanup(struct nf_flowtable *flow_table,
+ 				     struct flow_offload *flow, void *data)
+ {
+@@ -734,7 +749,10 @@ static void nf_flow_table_do_cleanup(struct nf_flowtable *flow_table,
+ 
+ 	if (net_eq(nf_ct_net(flow->ct), dev_net(dev)) &&
+ 	    (flow->tuplehash[0].tuple.iifidx == dev->ifindex ||
+-	     flow->tuplehash[1].tuple.iifidx == dev->ifindex))
++	     flow->tuplehash[1].tuple.iifidx == dev->ifindex ||
++	     (flow->type == NF_FLOW_OFFLOAD_ROUTE &&
++	      (nf_flow_tuple_uses_dev(&flow->tuplehash[0].tuple, dev) ||
++	       nf_flow_tuple_uses_dev(&flow->tuplehash[1].tuple, dev)))))
+ 		flow_offload_teardown(flow);
+ }
+ 
+@@ -823,7 +841,8 @@ static int nf_flow_table_netdev_event(struct notifier_block *this,
+ {
+ 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
+ 
+-	if (event != NETDEV_DOWN)
++	if (event != NETDEV_DOWN && event != NETDEV_CHANGEMTU &&
++	    (event != NETDEV_CHANGE || netif_carrier_ok(dev)))
+ 		return NOTIFY_DONE;
+ 
+ 	nf_flow_table_cleanup(dev);

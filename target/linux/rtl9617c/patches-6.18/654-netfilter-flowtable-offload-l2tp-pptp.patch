@@ -1,0 +1,689 @@
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -881,6 +881,43 @@
+ 	DEV_PATH_DSA,
+ 	DEV_PATH_MTK_WDMA,
+ 	DEV_PATH_IEEE80211,
++	DEV_PATH_PPP_TUNNEL,
++};
++
++#define NETDEV_PPP_TUN_F_SEQ	BIT(0)
++#define NETDEV_PPP_TUN_F_ACK	BIT(1)
++#define NETDEV_PPP_TUN_OPT_TYPE	0x880b
++
++struct net_device_ppp_tunnel_opts {
++	u8 proto;
++	u8 ppp_len;
++	u8 flags;
++	u8 reserved;
++	__be16 tid;
++	__be16 sid;
++	__be16 peer_tid;
++	__be16 peer_sid;
++	__be32 gre_seq;
++	__be32 gre_ack;
++};
++
++struct net_device_ppp_tunnel {
++	struct net_device_ppp_tunnel_opts opts;
++	u8 addr_family;
++	u8 h_dest[ETH_ALEN];
++	u8 pad;
++	__be16 sport;
++	__be16 dport;
++	union {
++		struct {
++			__be32 saddr;
++			__be32 daddr;
++		} ipv4;
++		struct {
++			__be32 saddr[4];
++			__be32 daddr[4];
++		} ipv6;
++	};
+ };
+ 
+ struct net_device_path {
+@@ -913,6 +950,7 @@
+ 			u8 bss;
+ 			u8 amsdu;
+ 		} mtk_wdma;
++		struct net_device_ppp_tunnel ppp_tunnel;
+ 	};
+ };
+ 
+--- a/include/net/netfilter/nf_flow_table.h
++++ b/include/net/netfilter/nf_flow_table.h
+@@ -8,6 +8,7 @@
+ #include <linux/rcupdate.h>
+ #include <linux/netfilter.h>
+ #include <linux/netfilter/nf_conntrack_tuple_common.h>
++#include <net/ip_tunnels.h>
+ #include <net/flow_offload.h>
+ #include <net/dst.h>
+ #include <linux/if_pppox.h>
+@@ -37,6 +38,8 @@
+ 	};
+ 	struct flow_dissector_key_tcp			tcp;
+ 	struct flow_dissector_key_ports			tp;
++	struct flow_dissector_key_ports			enc_tp;
++	struct flow_dissector_key_enc_opts		enc_opts;
+ } __aligned(BITS_PER_LONG / 8); /* Ensure that we can do comparisons as longs. */
+ 
+ struct nf_flow_match {
+@@ -48,6 +51,8 @@
+ struct nf_flow_rule {
+ 	struct nf_flow_match	match;
+ 	struct flow_rule	*rule;
++	u8			ppp_encap_tun[sizeof(struct ip_tunnel_info) +
++					      sizeof(struct net_device_ppp_tunnel_opts)];
+ };
+ 
+ struct nf_flowtable_type {
+@@ -134,10 +139,11 @@
+ 	/* All members above are keys for lookups, see flow_offload_hash(). */
+ 	struct { }			__hash;
+ 
+-	u8				dir:2,
++	u16				dir:2,
+ 					xmit_type:3,
+ 					encap_num:2,
+-					in_vlan_ingress:2;
++					in_vlan_ingress:2,
++					has_ppp_tun:1;
+ 	u16				mtu;
+ 	union {
+ 		struct {
+@@ -155,6 +161,7 @@
+ 			u32		iifidx;
+ 		} tc;
+ 	};
++	struct net_device_ppp_tunnel	ppp_tun;
+ };
+ 
+ struct flow_offload_tuple_rhash {
+@@ -210,6 +217,8 @@
+ 			} encap[NF_FLOW_TABLE_ENCAP_MAX];
+ 			u8			num_encaps:2,
+ 						ingress_vlans:2;
++			bool			has_ppp_tun;
++			struct net_device_ppp_tunnel ppp_tun;
+ 		} in;
+ 		struct {
+ 			u32			ifindex;
+--- a/drivers/net/ppp/ppp_generic.c
++++ b/drivers/net/ppp/ppp_generic.c
+@@ -1606,6 +1606,12 @@
+ 	if (ppp->flags & SC_MULTILINK)
+ 		return -EOPNOTSUPP;
+ 
++	if ((ppp->flags & (SC_CCP_UP | SC_MUST_COMP | SC_LOOP_TRAFFIC)) ||
++	    (ppp->vj && (ppp->flags & SC_COMP_TCP)) ||
++	    ((ppp->xstate & SC_COMP_RUN) && ppp->xc_state) ||
++	    ((ppp->rstate & SC_DECOMP_RUN) && ppp->rc_state))
++		return -EOPNOTSUPP;
++
+ 	pch = list_first_or_null_rcu(&ppp->channels, struct channel, clist);
+ 	if (!pch)
+ 		return -ENODEV;
+--- a/drivers/net/ppp/pptp.c
++++ b/drivers/net/ppp/pptp.c
+@@ -11,6 +11,7 @@
+ #include <linux/slab.h>
+ #include <linux/errno.h>
+ #include <linux/netdevice.h>
++#include <linux/if_arp.h>
+ #include <linux/net.h>
+ #include <linux/skbuff.h>
+ #include <linux/vmalloc.h>
+@@ -26,6 +27,7 @@
+ #include <linux/rcupdate.h>
+ #include <linux/security.h>
+ #include <linux/spinlock.h>
++#include <linux/etherdevice.h>
+ 
+ #include <net/sock.h>
+ #include <net/protocol.h>
+@@ -34,6 +36,10 @@
+ #include <net/route.h>
+ #include <net/gre.h>
+ #include <net/pptp.h>
++#include <net/xfrm.h>
++#if IS_ENABLED(CONFIG_IPV6)
++#include <net/ndisc.h>
++#endif
+ 
+ #include <linux/uaccess.h>
+ 
+@@ -608,9 +614,96 @@
+ 	return err;
+ }
+ 
++static int pptp_fill_forward_path(struct net_device_path_ctx *ctx,
++				  struct net_device_path *path,
++				  const struct ppp_channel *chan)
++{
++	struct sock *sk = (struct sock *)chan->private;
++	struct pppox_sock *po;
++	struct pptp_opt *opt;
++	struct net_device *dev;
++	struct neighbour *n;
++	struct rtable *rt;
++	struct flowi4 fl4;
++	u8 ha[ETH_ALEN];
++	__be32 gw;
++
++	if (!sk || !(sk->sk_state & PPPOX_CONNECTED) ||
++	    (sk->sk_state & PPPOX_DEAD) || sock_flag(sk, SOCK_DEAD))
++		return -ENODEV;
++
++	po = pppox_sk(sk);
++	opt = &po->proto.pptp;
++	if (!opt->src_addr.sin_addr.s_addr || !opt->dst_addr.sin_addr.s_addr)
++		return -EINVAL;
++
++	rt = ip_route_output_ports(sock_net(sk), &fl4, sk,
++				   opt->dst_addr.sin_addr.s_addr,
++				   opt->src_addr.sin_addr.s_addr,
++				   0, 0, IPPROTO_GRE, 0, 0);
++	if (IS_ERR(rt))
++		return PTR_ERR(rt);
++
++	dev = rt->dst.dev;
++	if (!dev || dev == ctx->dev || (dev->flags & IFF_LOOPBACK) ||
++	    dst_xfrm(&rt->dst)) {
++		ip_rt_put(rt);
++		return -EOPNOTSUPP;
++	}
++
++	memset(ha, 0, sizeof(ha));
++	if (dev->type == ARPHRD_PPP) {
++		if (!dev->netdev_ops || !dev->netdev_ops->ndo_fill_forward_path) {
++			ip_rt_put(rt);
++			return -EOPNOTSUPP;
++		}
++	} else {
++		if (rt->rt_gw_family == AF_INET6) {
++#if IS_ENABLED(CONFIG_IPV6)
++			n = __ipv6_neigh_lookup_noref_stub(dev, &rt->rt_gw6);
++#else
++			n = NULL;
++#endif
++		} else {
++			gw = rt->rt_gw_family == AF_INET ? rt->rt_gw4 : fl4.daddr;
++			n = __ipv4_neigh_lookup_noref(dev, (__force u32)gw);
++		}
++		if (!n || !(READ_ONCE(n->nud_state) & NUD_VALID)) {
++			ip_rt_put(rt);
++			return -ENOENT;
++		}
++		neigh_ha_snapshot(ha, n, dev);
++		if (!is_valid_ether_addr(ha)) {
++			ip_rt_put(rt);
++			return -ENOENT;
++		}
++		ether_addr_copy(ctx->daddr, ha);
++	}
++
++	path->type = DEV_PATH_PPP_TUNNEL;
++	path->dev = ctx->dev;
++	path->ppp_tunnel.opts.proto = IPPROTO_GRE;
++	path->ppp_tunnel.opts.ppp_len = 4 -
++		((opt->ppp_flags & SC_COMP_AC) ? 2 : 0) -
++		((opt->ppp_flags & SC_COMP_PROT) ? 1 : 0);
++	path->ppp_tunnel.opts.flags = NETDEV_PPP_TUN_F_SEQ;
++	path->ppp_tunnel.opts.tid = htons(opt->src_addr.call_id);
++	path->ppp_tunnel.opts.peer_tid = htons(opt->dst_addr.call_id);
++	path->ppp_tunnel.opts.gre_seq = htonl(READ_ONCE(opt->seq_sent) + 16);
++	path->ppp_tunnel.addr_family = AF_INET;
++	path->ppp_tunnel.ipv4.saddr = opt->src_addr.sin_addr.s_addr;
++	path->ppp_tunnel.ipv4.daddr = opt->dst_addr.sin_addr.s_addr;
++	ether_addr_copy(path->ppp_tunnel.h_dest, ha);
++
++	ctx->dev = dev;
++	ip_rt_put(rt);
++	return 0;
++}
++
+ static const struct ppp_channel_ops pptp_chan_ops = {
+ 	.start_xmit = pptp_xmit,
+ 	.ioctl      = pptp_ppp_ioctl,
++	.fill_forward_path = pptp_fill_forward_path,
+ };
+ 
+ static struct proto pptp_sk_proto __read_mostly = {
+--- a/net/l2tp/l2tp_ppp.c
++++ b/net/l2tp/l2tp_ppp.c
+@@ -68,6 +68,8 @@
+ #include <linux/errno.h>
+ #include <linux/jiffies.h>
+ 
++#include <linux/if_arp.h>
++#include <linux/etherdevice.h>
+ #include <linux/netdevice.h>
+ #include <linux/net.h>
+ #include <linux/inetdevice.h>
+@@ -92,6 +94,11 @@
+ #include <net/ip.h>
+ #include <net/udp.h>
+ #include <net/inet_common.h>
++#include <net/route.h>
++#include <net/neighbour.h>
++#if IS_ENABLED(CONFIG_IPV6)
++#include <net/ndisc.h>
++#endif
+ 
+ #include <asm/byteorder.h>
+ #include <linux/atomic.h>
+@@ -123,8 +130,136 @@
+ 
+ static int pppol2tp_xmit(struct ppp_channel *chan, struct sk_buff *skb);
+ 
++static struct l2tp_session *pppol2tp_sock_to_session(struct sock *sk);
++
++static int pppol2tp_fill_forward_path(struct net_device_path_ctx *ctx,
++				      struct net_device_path *path,
++				      const struct ppp_channel *chan)
++{
++	struct sock *sk = (struct sock *)chan->private;
++	struct l2tp_session *session;
++	struct l2tp_tunnel *tunnel;
++	struct inet_sock *inet;
++	struct net_device *dev;
++	struct dst_entry *dst;
++	struct neighbour *n;
++	struct flowi4 fl4;
++	struct rtable *rt;
++	struct sock *usk;
++	u8 ha[ETH_ALEN];
++	int err = -EOPNOTSUPP;
++	__be32 gw;
++
++	if (!sk || !(sk->sk_state & PPPOX_CONNECTED) ||
++	    (sk->sk_state & PPPOX_DEAD) || sock_flag(sk, SOCK_DEAD))
++		return -ENODEV;
++
++	session = pppol2tp_sock_to_session(sk);
++	if (!session)
++		return -ENODEV;
++
++	if (session->magic != L2TP_SESSION_MAGIC ||
++	    session->pwtype != L2TP_PWTYPE_PPP ||
++	    session->send_seq || session->recv_seq || session->reorder_timeout)
++		goto out_put;
++
++	tunnel = session->tunnel;
++	if (!tunnel || tunnel->dead ||
++	    tunnel->version != 2 || tunnel->encap != L2TP_ENCAPTYPE_UDP ||
++	    l2tp_tunnel_uses_xfrm(tunnel))
++		goto out_put;
++
++	if (!tunnel->tunnel_id || !tunnel->peer_tunnel_id ||
++	    !session->session_id || !session->peer_session_id ||
++	    tunnel->tunnel_id > 0xffff || tunnel->peer_tunnel_id > 0xffff ||
++	    session->session_id > 0xffff || session->peer_session_id > 0xffff)
++		goto out_put;
++
++	usk = tunnel->sock;
++	if (!usk)
++		goto out_put;
++
++	inet = inet_sk(usk);
++	if (!inet->inet_sport || !inet->inet_dport ||
++	    (inet->inet_sport != htons(1701) && inet->inet_dport != htons(1701)))
++		goto out_put;
++
++	memset(ha, 0, sizeof(ha));
++	if (usk->sk_family != AF_INET || !inet->inet_saddr || !inet->inet_daddr)
++		goto out_put;
++
++	rt = ip_route_output_ports(sock_net(usk), &fl4, usk,
++				   inet->inet_daddr, inet->inet_saddr,
++				   inet->inet_dport, inet->inet_sport,
++				   IPPROTO_UDP, RT_TOS(inet->tos),
++				   usk->sk_bound_dev_if);
++	if (IS_ERR(rt)) {
++		err = PTR_ERR(rt);
++		goto out_put;
++	}
++	dst = &rt->dst;
++	dev = dst->dev;
++	if (!dev || dev == ctx->dev || (dev->flags & IFF_LOOPBACK) ||
++	    dst_xfrm(dst)) {
++		dst_release(dst);
++		goto out_put;
++	}
++	if (dev->type != ARPHRD_PPP) {
++		if (rt->rt_gw_family == AF_INET6) {
++#if IS_ENABLED(CONFIG_IPV6)
++			n = __ipv6_neigh_lookup_noref_stub(dev, &rt->rt_gw6);
++#else
++			n = NULL;
++#endif
++		} else {
++			gw = rt->rt_gw_family == AF_INET ?
++			     rt->rt_gw4 : fl4.daddr;
++			n = __ipv4_neigh_lookup_noref(dev, (__force u32)gw);
++		}
++		if (!n || !(READ_ONCE(n->nud_state) & NUD_VALID)) {
++			dst_release(dst);
++			err = -ENOENT;
++			goto out_put;
++		}
++		neigh_ha_snapshot(ha, n, dev);
++		if (!is_valid_ether_addr(ha)) {
++			dst_release(dst);
++			err = -ENOENT;
++			goto out_put;
++		}
++		ether_addr_copy(ctx->daddr, ha);
++	} else if (!dev->netdev_ops ||
++		   !dev->netdev_ops->ndo_fill_forward_path) {
++		dst_release(dst);
++		goto out_put;
++	}
++
++	path->type = DEV_PATH_PPP_TUNNEL;
++	path->dev = ctx->dev;
++	path->ppp_tunnel.addr_family = AF_INET;
++	path->ppp_tunnel.ipv4.saddr = inet->inet_saddr;
++	path->ppp_tunnel.ipv4.daddr = inet->inet_daddr;
++	path->ppp_tunnel.opts.proto = IPPROTO_UDP;
++	path->ppp_tunnel.opts.ppp_len = 4;
++	path->ppp_tunnel.opts.tid = htons((u16)tunnel->tunnel_id);
++	path->ppp_tunnel.opts.sid = htons((u16)session->session_id);
++	path->ppp_tunnel.opts.peer_tid = htons((u16)tunnel->peer_tunnel_id);
++	path->ppp_tunnel.opts.peer_sid = htons((u16)session->peer_session_id);
++	path->ppp_tunnel.sport = inet->inet_sport;
++	path->ppp_tunnel.dport = inet->inet_dport;
++	ether_addr_copy(path->ppp_tunnel.h_dest, ha);
++
++	ctx->dev = dev;
++	dst_release(dst);
++	err = 0;
++out_put:
++	l2tp_session_put(session);
++	return err;
++}
++
+ static const struct ppp_channel_ops pppol2tp_chan_ops = {
+ 	.start_xmit =  pppol2tp_xmit,
++	.fill_forward_path = pppol2tp_fill_forward_path,
+ };
+ 
+ static const struct proto_ops pppol2tp_ops;
+--- a/net/netfilter/nf_flow_table_core.c
++++ b/net/netfilter/nf_flow_table_core.c
+@@ -118,6 +118,8 @@
+ 		j++;
+ 	}
+ 	flow_tuple->encap_num = route->tuple[dir].in.num_encaps;
++	flow_tuple->has_ppp_tun = route->tuple[dir].in.has_ppp_tun;
++	flow_tuple->ppp_tun = route->tuple[dir].in.ppp_tun;
+ 
+ 	switch (route->tuple[dir].xmit_type) {
+ 	case FLOW_OFFLOAD_XMIT_DIRECT:
+--- a/net/netfilter/nf_flow_table_path.c
++++ b/net/netfilter/nf_flow_table_path.c
+@@ -92,6 +92,8 @@
+ 	u8 ingress_vlans;
+ 	u8 h_source[ETH_ALEN];
+ 	u8 h_dest[ETH_ALEN];
++	bool has_ppp_tun;
++	struct net_device_ppp_tunnel ppp_tun;
+ 	enum flow_offload_xmit_type xmit_type;
+ };
+ 
+@@ -166,6 +168,17 @@
+ 			}
+ 			info->xmit_type = FLOW_OFFLOAD_XMIT_DIRECT;
+ 			break;
++		case DEV_PATH_PPP_TUNNEL:
++			if (info->has_ppp_tun)
++				return -1;
++			info->has_ppp_tun = true;
++			info->ppp_tun = path->ppp_tunnel;
++			if (is_valid_ether_addr(path->ppp_tunnel.h_dest)) {
++				memcpy(info->h_dest, path->ppp_tunnel.h_dest,
++				       ETH_ALEN);
++				info->xmit_type = FLOW_OFFLOAD_XMIT_DIRECT;
++			}
++			break;
+ 		default:
+ 			return -1;
+ 		}
+@@ -230,6 +243,12 @@
+ 	route->tuple[!dir].in.num_encaps = info.num_encaps;
+ 	route->tuple[!dir].in.ingress_vlans = info.ingress_vlans;
+ 
++	if (info.has_ppp_tun && !nf_flowtable_hw_offload(&ft->data))
++		return -1;
++	route->tuple[!dir].in.has_ppp_tun = info.has_ppp_tun;
++	if (info.has_ppp_tun)
++		route->tuple[!dir].in.ppp_tun = info.ppp_tun;
++
+ 	if (info.xmit_type == FLOW_OFFLOAD_XMIT_DIRECT) {
+ 		memcpy(route->tuple[dir].out.h_source, info.h_source, ETH_ALEN);
+ 		memcpy(route->tuple[dir].out.h_dest, info.h_dest, ETH_ALEN);
+--- a/net/netfilter/nf_flow_table_offload.c
++++ b/net/netfilter/nf_flow_table_offload.c
+@@ -113,6 +113,59 @@
+ 		nf_flow_rule_lwt_match(match, tun_info);
+ 	}
+ 
++	if (tuple->has_ppp_tun) {
++		unsigned long long enc_keys;
++
++		NF_FLOW_DISSECTOR(match, FLOW_DISSECTOR_KEY_ENC_CONTROL,
++				  enc_control);
++		NF_FLOW_DISSECTOR(match, FLOW_DISSECTOR_KEY_ENC_OPTS,
++				  enc_opts);
++		enc_keys = BIT_ULL(FLOW_DISSECTOR_KEY_ENC_CONTROL) |
++			   BIT_ULL(FLOW_DISSECTOR_KEY_ENC_OPTS);
++		if (tuple->ppp_tun.addr_family == AF_INET) {
++			NF_FLOW_DISSECTOR(match,
++					  FLOW_DISSECTOR_KEY_ENC_IPV4_ADDRS,
++					  enc_ipv4);
++			key->enc_control.addr_type =
++				FLOW_DISSECTOR_KEY_IPV4_ADDRS;
++			mask->enc_control.addr_type = ~0;
++			key->enc_ipv4.src = tuple->ppp_tun.ipv4.daddr;
++			key->enc_ipv4.dst = tuple->ppp_tun.ipv4.saddr;
++			mask->enc_ipv4.src = htonl(0xffffffff);
++			mask->enc_ipv4.dst = htonl(0xffffffff);
++			enc_keys |= BIT_ULL(FLOW_DISSECTOR_KEY_ENC_IPV4_ADDRS);
++		} else {
++			NF_FLOW_DISSECTOR(match,
++					  FLOW_DISSECTOR_KEY_ENC_IPV6_ADDRS,
++					  enc_ipv6);
++			key->enc_control.addr_type =
++				FLOW_DISSECTOR_KEY_IPV6_ADDRS;
++			mask->enc_control.addr_type = ~0;
++			memcpy(&key->enc_ipv6.src, tuple->ppp_tun.ipv6.daddr, 16);
++			memcpy(&key->enc_ipv6.dst, tuple->ppp_tun.ipv6.saddr, 16);
++			memset(&mask->enc_ipv6.src, 0xff, 16);
++			memset(&mask->enc_ipv6.dst, 0xff, 16);
++			enc_keys |= BIT_ULL(FLOW_DISSECTOR_KEY_ENC_IPV6_ADDRS);
++		}
++		if (tuple->ppp_tun.opts.proto == IPPROTO_UDP) {
++			NF_FLOW_DISSECTOR(match, FLOW_DISSECTOR_KEY_ENC_PORTS,
++					  enc_tp);
++			key->enc_tp.src = tuple->ppp_tun.dport;
++			key->enc_tp.dst = tuple->ppp_tun.sport;
++			mask->enc_tp.src = htons(0xffff);
++			mask->enc_tp.dst = htons(0xffff);
++			enc_keys |= BIT_ULL(FLOW_DISSECTOR_KEY_ENC_PORTS);
++		}
++		memcpy(key->enc_opts.data, &tuple->ppp_tun.opts,
++		       sizeof(tuple->ppp_tun.opts));
++		key->enc_opts.len = sizeof(tuple->ppp_tun.opts);
++		key->enc_opts.dst_opt_type = NETDEV_PPP_TUN_OPT_TYPE;
++		memset(mask->enc_opts.data, 0xff, sizeof(tuple->ppp_tun.opts));
++		mask->enc_opts.len = 0xff;
++		mask->enc_opts.dst_opt_type = ~0U;
++		match->dissector.used_keys |= enc_keys;
++	}
++
+ 	if (tuple->xmit_type == FLOW_OFFLOAD_XMIT_TC)
+ 		key->meta.ingress_ifindex = tuple->tc.iifidx;
+ 	else
+@@ -171,8 +224,13 @@
+ 			continue;
+ 		NF_FLOW_DISSECTOR(match, FLOW_DISSECTOR_KEY_PPPOE, pppoe);
+ 		key->pppoe.session_id = htons(tuple->encap[i].id);
+-		key->pppoe.ppp_proto = htons(tuple->l3proto == AF_INET ?
+-					    PPP_IP : PPP_IPV6);
++		if (tuple->has_ppp_tun)
++			key->pppoe.ppp_proto = htons(tuple->ppp_tun.addr_family ==
++						     AF_INET ? PPP_IP :
++							       PPP_IPV6);
++		else
++			key->pppoe.ppp_proto = htons(tuple->l3proto == AF_INET ?
++						     PPP_IP : PPP_IPV6);
+ 		key->pppoe.type = htons(ETH_P_PPP_SES);
+ 		mask->pppoe.session_id = 0xffff;
+ 		mask->pppoe.ppp_proto = 0xffff;
+@@ -636,15 +694,51 @@
+ 	return 0;
+ }
+ 
++static void
++nf_flow_fill_ppp_encap_tunnel(struct ip_tunnel_info *info,
++			      const struct net_device_ppp_tunnel *tun)
++{
++	IP_TUNNEL_DECLARE_FLAGS(opt_flags) = { };
++
++	memset(info, 0, sizeof(*info) + sizeof(tun->opts));
++	info->mode = IP_TUNNEL_INFO_TX;
++	if (tun->addr_family == AF_INET6) {
++		info->mode |= IP_TUNNEL_INFO_IPV6;
++		memcpy(&info->key.u.ipv6.src, tun->ipv6.saddr, 16);
++		memcpy(&info->key.u.ipv6.dst, tun->ipv6.daddr, 16);
++	} else {
++		info->key.u.ipv4.src = tun->ipv4.saddr;
++		info->key.u.ipv4.dst = tun->ipv4.daddr;
++	}
++	info->key.tp_src = tun->sport;
++	info->key.tp_dst = tun->dport;
++	info->encap.type = NETDEV_PPP_TUN_OPT_TYPE;
++	__set_bit(IP_TUNNEL_CRIT_OPT_BIT, opt_flags);
++	ip_tunnel_info_opts_set(info, &tun->opts, sizeof(tun->opts), opt_flags);
++}
++
+ static int flow_offload_encap_tunnel(const struct flow_offload *flow,
+ 				     enum flow_offload_tuple_dir dir,
+ 				     struct nf_flow_rule *flow_rule)
+ {
+-	const struct flow_offload_tuple *this_tuple;
++	const struct flow_offload_tuple *this_tuple, *other_tuple;
+ 	struct flow_action_entry *entry;
+ 	struct dst_entry *dst;
+ 
+ 	this_tuple = &flow->tuplehash[dir].tuple;
++	other_tuple = &flow->tuplehash[!dir].tuple;
++	if (other_tuple->has_ppp_tun) {
++		struct ip_tunnel_info *info;
++
++		entry = flow_action_entry_next(flow_rule);
++		if (!entry)
++			return -E2BIG;
++		info = (struct ip_tunnel_info *)flow_rule->ppp_encap_tun;
++		nf_flow_fill_ppp_encap_tunnel(info, &other_tuple->ppp_tun);
++		entry->id = FLOW_ACTION_TUNNEL_ENCAP;
++		entry->tunnel = info;
++		return 0;
++	}
+ 	if (this_tuple->xmit_type == FLOW_OFFLOAD_XMIT_DIRECT)
+ 		return 0;
+ 
+@@ -670,10 +764,18 @@
+ 				     enum flow_offload_tuple_dir dir,
+ 				     struct nf_flow_rule *flow_rule)
+ {
+-	const struct flow_offload_tuple *other_tuple;
++	const struct flow_offload_tuple *this_tuple, *other_tuple;
+ 	struct flow_action_entry *entry;
+ 	struct dst_entry *dst;
+ 
++	this_tuple = &flow->tuplehash[dir].tuple;
++	if (this_tuple->has_ppp_tun) {
++		entry = flow_action_entry_next(flow_rule);
++		if (!entry)
++			return -E2BIG;
++		entry->id = FLOW_ACTION_TUNNEL_DECAP;
++		return 0;
++	}
+ 	other_tuple = &flow->tuplehash[!dir].tuple;
+ 	if (other_tuple->xmit_type == FLOW_OFFLOAD_XMIT_DIRECT)
+ 		return 0;
+@@ -994,12 +1096,20 @@
+ 	int err;
+ 
+ 	err = nf_flow_offload_alloc(offload, flow_rule);
+-	if (err < 0)
++	if (err < 0) {
++		if (offload->flow->tuplehash[FLOW_OFFLOAD_DIR_ORIGINAL].tuple.has_ppp_tun ||
++		    offload->flow->tuplehash[FLOW_OFFLOAD_DIR_REPLY].tuple.has_ppp_tun)
++			flow_offload_teardown(offload->flow);
+ 		return;
++	}
+ 
+ 	err = flow_offload_rule_add(offload, flow_rule);
+-	if (err < 0)
++	if (err < 0) {
++		if (offload->flow->tuplehash[FLOW_OFFLOAD_DIR_ORIGINAL].tuple.has_ppp_tun ||
++		    offload->flow->tuplehash[FLOW_OFFLOAD_DIR_REPLY].tuple.has_ppp_tun)
++			flow_offload_teardown(offload->flow);
+ 		goto out;
++	}
+ 
+ 	set_bit(IPS_HW_OFFLOAD_BIT, &offload->flow->ct->status);
+ 
+--- a/net/netfilter/nf_flow_table_ip.c
++++ b/net/netfilter/nf_flow_table_ip.c
+@@ -443,6 +443,12 @@
+ 	if (!tuplehash)
+ 		return NF_ACCEPT;
+ 
++	dir = tuplehash->tuple.dir;
++	flow = container_of(tuplehash, struct flow_offload, tuplehash[dir]);
++	if (unlikely(tuplehash->tuple.has_ppp_tun ||
++		     flow->tuplehash[!dir].tuple.has_ppp_tun))
++		return NF_ACCEPT;
++
+ 	ret = nf_flow_offload_forward(&ctx, flow_table, tuplehash, skb);
+ 	if (ret < 0)
+ 		return NF_DROP;
+@@ -457,9 +463,6 @@
+ 		return nf_flow_xmit_xfrm(skb, state, &rt->dst);
+ 	}
+ 
+-	dir = tuplehash->tuple.dir;
+-	flow = container_of(tuplehash, struct flow_offload, tuplehash[dir]);
+-
+ 	switch (tuplehash->tuple.xmit_type) {
+ 	case FLOW_OFFLOAD_XMIT_NEIGH:
+ 		rt = dst_rtable(tuplehash->tuple.dst_cache);
+@@ -748,6 +751,12 @@
+ 	if (tuplehash == NULL)
+ 		return NF_ACCEPT;
+ 
++	dir = tuplehash->tuple.dir;
++	flow = container_of(tuplehash, struct flow_offload, tuplehash[dir]);
++	if (unlikely(tuplehash->tuple.has_ppp_tun ||
++		     flow->tuplehash[!dir].tuple.has_ppp_tun))
++		return NF_ACCEPT;
++
+ 	ret = nf_flow_offload_ipv6_forward(&ctx, flow_table, tuplehash, skb);
+ 	if (ret < 0)
+ 		return NF_DROP;
+@@ -762,9 +771,6 @@
+ 		return nf_flow_xmit_xfrm(skb, state, &rt->dst);
+ 	}
+ 
+-	dir = tuplehash->tuple.dir;
+-	flow = container_of(tuplehash, struct flow_offload, tuplehash[dir]);
+-
+ 	switch (tuplehash->tuple.xmit_type) {
+ 	case FLOW_OFFLOAD_XMIT_NEIGH:
+ 		rt = dst_rt6_info(tuplehash->tuple.dst_cache);

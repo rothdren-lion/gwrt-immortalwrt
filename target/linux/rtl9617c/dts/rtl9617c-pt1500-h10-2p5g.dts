@@ -43,6 +43,13 @@
 			reg = <0 0x0eeff000 0 0x1000>;
 			no-map;
 		};
+		ramoops@ff80000 {
+			compatible = "ramoops";
+			reg = <0 0x0ff80000 0 0x40000>;
+			record-size = <0x10000>;
+			console-size = <0x10000>;
+			pmsg-size = <0x10000>;
+		};
 		tz@ffc0000 {
 			reg = <0 0x0ffc0000 0 0x40000>;
 		};
@@ -291,6 +298,10 @@
 };
 
 &uart0 {
+	status = "okay";
+};
+
+&vsfc {
 	status = "okay";
 };
 

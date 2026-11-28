@@ -1,0 +1,24 @@
+diff --git a/drivers/pinctrl/realtek/Kconfig b/drivers/pinctrl/realtek/Kconfig
+@@ -4,6 +4,13 @@
+ 	tristate "Realtek DHC core pin controller driver"
+ 	depends on ARCH_REALTEK
+ 	default y
++
++config PINCTRL_REALTEK_TAURUS
++	bool "Realtek Taurus pin controller driver"
++	depends on ARCH_REALTEK_TAURUS && OF
++	select PINMUX
++	select PINCONF
++	select GENERIC_PINCONF
+ 	select PINMUX
+ 	select GENERIC_PINCONF
+ 	select REGMAP_MMIO
+diff --git a/drivers/pinctrl/realtek/Makefile b/drivers/pinctrl/realtek/Makefile
+@@ -1,6 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0-or-later
+ # Realtek DHC pin control drivers
+ obj-$(CONFIG_PINCTRL_RTD)		+= pinctrl-rtd.o
++obj-$(CONFIG_PINCTRL_REALTEK_TAURUS)	+= pinctrl-taurus.o
+ obj-$(CONFIG_PINCTRL_RTD1619B)		+= pinctrl-rtd1619b.o
+ obj-$(CONFIG_PINCTRL_RTD1319D)		+= pinctrl-rtd1319d.o
+ obj-$(CONFIG_PINCTRL_RTD1315E)		+= pinctrl-rtd1315e.o

@@ -1,0 +1,24 @@
+diff --git a/drivers/i2c/busses/Kconfig b/drivers/i2c/busses/Kconfig
+@@ -1103,6 +1103,13 @@
+ 	  This driver can also be built as a module. If so, the module will
+ 	  be called i2c-rtl9300.
+ 
++config I2C_REALTEK_TAURUS
++	tristate "Realtek Taurus I2C controller"
++	depends on ARCH_REALTEK_TAURUS && OF
++	help
++	  I2C controller of the Realtek Taurus SoCs. It carries the optical
++	  front end (BOSA).
++
+ config I2C_RZV2M
+ 	tristate "Renesas RZ/V2M adapter"
+ 	depends on ARCH_RENESAS || COMPILE_TEST
+diff --git a/drivers/i2c/busses/Makefile b/drivers/i2c/busses/Makefile
+@@ -103,6 +103,7 @@
+ obj-$(CONFIG_I2C_QUP)		+= i2c-qup.o
+ obj-$(CONFIG_I2C_RIIC)		+= i2c-riic.o
+ obj-$(CONFIG_I2C_RK3X)		+= i2c-rk3x.o
++obj-$(CONFIG_I2C_REALTEK_TAURUS)	+= i2c-taurus.o
+ obj-$(CONFIG_I2C_RTL9300)	+= i2c-rtl9300.o
+ obj-$(CONFIG_I2C_RZV2M)		+= i2c-rzv2m.o
+ obj-$(CONFIG_I2C_S3C2410)	+= i2c-s3c2410.o

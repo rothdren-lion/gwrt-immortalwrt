@@ -270,12 +270,15 @@ struct rtl_fe_action {
 	u8 pppoe_pop;
 	u8 mtu_set;
 	u8 mtu_index;
+	u8 dip_remap_vld;
+	u8 dip_remap;
 	u8 gem_set;
 	u8 gem_index;
 	u8 bridge;
 	u8 dscp;
 	bool dscp_set;
 	bool mirror;
+	bool mcast;
 	struct rtl_fe_vlan vlan[2];
 };
 
@@ -390,24 +393,47 @@ int rtl_fe_fdb_command(struct rtl_fe *fe, unsigned int command,
  *
  * The generic table register block places the data words below the command
  * register in descending order, the same layout every other indirect table
- * in this driver uses (RTL_L2FE_PP_ILPB_DATA(n) = 0x11f8 - 4 * n).  The ARB
- * MC FIB words are the OEM addresses; the MCE data registers are derived
- * from that layout and must be confirmed by read-back on the device
- * (TODO(probe)).
+ * in this driver uses (RTL_L2FE_PP_ILPB_DATA(n) = 0x11f8 - 4 * n).  Both the
+ * ARB MC FIB (0x1634..0x1640) and MCE (0xaa64..0xaa6c) register layouts have
+ * been verified by bit-for-bit write/read-back on RTL9617C silicon.
  *
  * The MCE entry payload is the 64-bit bitmap of ARB MC FIB member indices
  * belonging to the group (aal_hw_mcgid_free iterates 1 << i, i < 0x40).
  */
 #define RTL_FE_MCE_ENTRIES		256
+#define RTL_FE_MCE_CTL			0xaa60
+#define RTL_FE_MCE_CTL_FF_THRSHD	GENMASK(9, 0)
+#define RTL_FE_MCE_CTL_FF_THRSHD_INIT	0x17U
 #define RTL_FE_MCE_CMD			0xaa64
 #define RTL_FE_MCE_DATA0		0xaa6c
 #define RTL_FE_MCE_DATA1		0xaa68
+#define RTL_FE_MCE_ZERO_DROP_CNT	0xaa70
+#define RTL_FE_MCE_INGRESS_CNT		0xaa74
+#define RTL_FE_MCE_EGRESS_CNT		0xaa78
+#define RTL_FE_MCE_LAST_IN_HDR2		0xaa7c
+#define RTL_FE_MCE_LAST_IN_HDR1		0xaa80
+#define RTL_FE_MCE_LAST_IN_HDR0		0xaa84
+#define RTL_FE_MCE_LAST_OUT_HDR2	0xaa88
+#define RTL_FE_MCE_LAST_OUT_HDR1	0xaa8c
+#define RTL_FE_MCE_LAST_OUT_HDR0	0xaa90
+#define RTL_FE_MCE_ERR_STS		0xaa94
+#define RTL_FE_ARB_CTRL			0x1600
+#define RTL_FE_ARB_CTRL_KEEP_O_LSPID_MC	BIT(31)
+#define RTL_FE_ARB_CTRL_EXT		0x160c
+#define RTL_FE_ARB_CTRL_EXT_MC_MMSHP	BIT(0)
 #define RTL_FE_ARB_MC_FIB_ENTRIES	64
 #define RTL_FE_ARB_MC_FIB_CMD		0x1634
 #define RTL_FE_ARB_MC_FIB_DATA0		0x1640
 #define RTL_FE_ARB_MC_FIB_DATA1		0x163c
 #define RTL_FE_ARB_MC_FIB_DATA2		0x1638
 #define RTL_FE_MCAST_POLL_COUNT		10000
+#define RTL_FE_MC_LDPID			0x1bU
+#define RTL_FE_MC_PDPID			11U
+#define RTL_FE_L3FE_PSPID		10U
+#define RTL_FE_MCE_PSPID		11U
+#define RTL_NI_GLB_INTERNAL_PORT_ID_CFG2 0xa1c0
+#define RTL_NI_DEMUX_CFG1_MC_MASK	GENMASK(23, 22)
+#define RTL_NI_DEMUX_L2FE		2U
 
 /* L3PE dual-header tables (spec phase0-re3-dualhdr-mc-napt6 §1.1/§1.2).
  *

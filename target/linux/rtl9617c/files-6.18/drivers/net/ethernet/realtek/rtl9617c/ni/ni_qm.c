@@ -20,11 +20,110 @@ module_param_named(rx_zerocopy, rtl_ni_rx_zerocopy, bool, 0644);
 MODULE_PARM_DESC(rx_zerocopy,
 		 "Zero-copy RX via page_pool + napi_build_skb (default 1)");
 
-#define QM_EQ_PROFILE_CPU0		RTL_QM_EQ_PROFILE(RTL_NI_QM_EQ)
+static unsigned int rtl_ni_rx_queues = RTL_NI_RX_QUEUES;
+module_param_named(rx_queues, rtl_ni_rx_queues, uint, 0444);
+MODULE_PARM_DESC(rx_queues,
+		 "Number of CPU RX queues / NAPI instances (1-4, default 4)");
+
+static bool rtl_ni_rx_rss = true;
+static int rtl_ni_rx_rss_set(const char *val, const struct kernel_param *kp)
+{
+	int ret = param_set_bool(val, kp);
+
+	if (!ret)
+		rtl_ni_ports_rss_apply();
+	return ret;
+}
+
+static const struct kernel_param_ops rtl_ni_rx_rss_ops = {
+	.set = rtl_ni_rx_rss_set,
+	.get = param_get_bool,
+};
+
+module_param_cb(rx_rss, &rtl_ni_rx_rss_ops, &rtl_ni_rx_rss, 0644);
+MODULE_PARM_DESC(rx_rss,
+		 "L3FE 5-tuple hardware RSS across CPU RX queues (default 1)");
+
+unsigned int rtl_ni_rx_queues_get(void)
+{
+	return clamp_t(unsigned int, rtl_ni_rx_queues, 1U, RTL_NI_RX_QUEUES);
+}
+
+/* BEGIN rtl-ni-rss (tests/rx-rss-layout.py extracts this region verbatim) */
+struct rtl_ni_rxq_cfg {
+	u8 eq0;
+	u8 eq1;
+	u16 bid_base;
+};
+
+static const struct rtl_ni_rxq_cfg rtl_ni_rxq_cfgs[RTL_NI_RX_QUEUES] = {
+	{ .eq0 = 4,  .eq1 = 5,  .bid_base = 0 },
+	{ .eq0 = 6,  .eq1 = 7,  .bid_base = 1536 },
+	{ .eq0 = 9,  .eq1 = 10, .bid_base = 2048 },
+	{ .eq0 = 11, .eq1 = 12, .bid_base = 2560 },
+};
+
+void rtl_ni_rss_dpid_words(unsigned int num_rxq, u32 *dpid0, u32 *dpid1)
+{
+	unsigned int i;
+	u32 w0 = 0, w1 = 0;
+
+	if (num_rxq < 1)
+		num_rxq = 1;
+	if (num_rxq > RTL_NI_RX_QUEUES)
+		num_rxq = RTL_NI_RX_QUEUES;
+
+	for (i = 0; i < 16; i++) {
+		u32 dpid = i % num_rxq;
+
+		if (i <= 4)
+			w0 |= dpid << (3 * i);
+		else if (i <= 9)
+			w0 |= dpid << (3 * i + 1);
+		else if (i <= 14)
+			w1 |= dpid << (3 * i - 30);
+		else
+			w1 |= dpid << 16;
+	}
+	*dpid0 = w0;
+	*dpid1 = w1;
+}
+/* END rtl-ni-rss */
+
+int rtl_ni_qm_rss_apply(struct rtl9617c_ni *ni)
+{
+	struct rtl_ni_qm *qm = &ni->qm;
+	bool enable = READ_ONCE(rtl_ni_rx_rss) && qm->num_rxq > 1;
+	u32 dpid0 = 0, dpid1 = 0;
+
+	if (!enable) {
+		rtl_ni_write(ni, RTL_L3FE_GLB_CPU_REMAP_DPID0, 0);
+		rtl_ni_write(ni, RTL_L3FE_GLB_CPU_REMAP_DPID1, 0);
+		rtl_ni_write(ni, RTL_L3FE_GLB_CPU_REMAP_CFG, 0);
+		return 0;
+	}
+
+	rtl_ni_rss_dpid_words(qm->num_rxq, &dpid0, &dpid1);
+	rtl_ni_write(ni, RTL_L3FE_GLB_CPU_REMAP_HASH_SMAC, 0x00c00000);
+	rtl_ni_write(ni, RTL_L3FE_GLB_CPU_REMAP_HASH_DMAC, 0x00400000);
+	rtl_ni_write(ni, RTL_L3FE_GLB_CPU_REMAP_HASH_SIP, 0x00f00000);
+	rtl_ni_write(ni, RTL_L3FE_GLB_CPU_REMAP_HASH_DIP, 0x00f00000);
+	rtl_ni_write(ni, RTL_L3FE_GLB_CPU_REMAP_HASH_SP, 0x000c0000);
+	rtl_ni_write(ni, RTL_L3FE_GLB_CPU_REMAP_HASH_DP, 0x00040000);
+	rtl_ni_write(ni, RTL_L3FE_GLB_CPU_REMAP_DPID0, dpid0);
+	rtl_ni_write(ni, RTL_L3FE_GLB_CPU_REMAP_DPID1, dpid1);
+	rtl_ni_write(ni, RTL_L3FE_GLB_CPU_REMAP_CFG,
+		     FIELD_PREP(RTL_L3FE_GLB_CPU_REMAP_PID_MASK, 0x01) |
+		     FIELD_PREP(RTL_L3FE_GLB_CPU_REMAP_HASH_EN, 0x7f) |
+		     RTL_L3FE_GLB_CPU_REMAP_FLOW_MISS);
+	return 0;
+}
+
+#define QM_EQ_PROFILE_CPU(c)		RTL_QM_EQ_PROFILE(RTL_NI_QM_EQ + (c))
 #define QM_DQ_EQ_PRIVATE		1
 #define QM_DQ_EQ_SHARED			2
 #define QM_DQ_BID_BASE			512
-#define QM_LAN_DQ_PORT			(8 + RTL_NI_PORT_P6)
+#define QM_LAN_DQ_PORT(p)		(8 + (p))
 #define QM_LAN_DQ_EQ_PROFILE		0
 #define QM_LAN_DQ_CREDIT_PROFILE	2
 #define QM_LAN_DQ_VOQ_PROFILE		5
@@ -69,12 +168,12 @@ MODULE_PARM_DESC(rx_zerocopy,
 					 FIELD_PREP(RTL_QM_AXI_ATTRIB_DOMAIN, 2) | \
 					 FIELD_PREP(RTL_QM_AXI_ATTRIB_CACHE, 6))
 #define QM_ATTRIBUTE_CPU_ENTRY		48
-#define QM_ES_CTRL_RUN			(RTL_QM_ES_TX_EN | \
+#define QM_ES_CTRL_RUN(cpu_mask)	(RTL_QM_ES_TX_EN | \
 					 FIELD_PREP(RTL_QM_ES_CPUEPP_TIMER_MAX, 1) | \
 					 FIELD_PREP(RTL_QM_ES_INCCFG_ERR, 6) | \
 					 FIELD_PREP(RTL_QM_ES_INCCFG_PKT, 2) | \
 					 FIELD_PREP(RTL_QM_ES_NI_EN, 0xff) | \
-					 FIELD_PREP(RTL_QM_ES_CPU_EN, 1))
+					 FIELD_PREP(RTL_QM_ES_CPU_EN, (cpu_mask)))
 #define L2TE_CB_FREECNT_INIT		(RTL_L2TE_CB_FREECNT_CNT1_MSB | \
 					 FIELD_PREP(RTL_L2TE_CB_FREECNT_CNT1, 0xe30) | \
 					 RTL_L2TE_CB_FREECNT_CNT0_MSB)
@@ -116,7 +215,8 @@ static int rtl_ni_qm_pon_map(struct rtl9617c_ni *ni)
 	return 0;
 }
 
-static int rtl_ni_qm_push(struct rtl9617c_ni *ni, u32 addr, unsigned int eq)
+static int rtl_ni_qm_push(struct rtl9617c_ni *ni, unsigned int cpu, u32 addr,
+			  unsigned int eq)
 {
 	u32 status;
 	int ret;
@@ -127,57 +227,125 @@ static int rtl_ni_qm_push(struct rtl9617c_ni *ni, u32 addr, unsigned int eq)
 					      1, 10000);
 	if (ret)
 		return ret;
-	ret = regmap_read_poll_timeout_atomic(ni->regs, RTL_QM_CPU_PUSH_RDY0,
+	ret = regmap_read_poll_timeout_atomic(ni->regs,
+					      RTL_QM_CPU_PUSH_RDY_REG(cpu),
 					      status,
 					      status & RTL_QM_CPU_PUSH_RDY,
 					      1, 10000);
 	if (ret)
 		return ret;
-	rtl_ni_write(ni, RTL_QM_CPU_PUSH_PADDR0,
+	rtl_ni_write(ni, RTL_QM_CPU_PUSH_PADDR(cpu),
 		     (addr & RTL_QM_CPU_PUSH_ADDR) |
 		     FIELD_PREP(RTL_QM_CPU_PUSH_EQID, eq));
 	return 0;
 }
 
-static int rtl_ni_qm_try_push(struct rtl9617c_ni *ni, u32 addr, unsigned int eq)
+static int rtl_ni_qm_try_push(struct rtl9617c_ni *ni, unsigned int cpu,
+			      u32 addr, unsigned int eq)
 {
 	if (!(rtl_ni_read(ni, RTL_QM_EQM_PA_REQ(eq)) & RTL_QM_EQM_PA_REQ_CNT) ||
-	    !(rtl_ni_read(ni, RTL_QM_CPU_PUSH_RDY0) & RTL_QM_CPU_PUSH_RDY))
+	    !(rtl_ni_read(ni, RTL_QM_CPU_PUSH_RDY_REG(cpu)) & RTL_QM_CPU_PUSH_RDY))
 		return -EAGAIN;
-	rtl_ni_write(ni, RTL_QM_CPU_PUSH_PADDR0,
+	rtl_ni_write(ni, RTL_QM_CPU_PUSH_PADDR(cpu),
 		     (addr & RTL_QM_CPU_PUSH_ADDR) |
 		     FIELD_PREP(RTL_QM_CPU_PUSH_EQID, eq));
 	return 0;
 }
 
-static void rtl_ni_qm_refill_add(struct rtl_ni_qm_refill *refill, u32 cmd)
+static void rtl_ni_qm_refill_add(struct rtl_ni_rxq *rxq, u32 cmd)
 {
-	unsigned int eq = FIELD_GET(QM_CMD_EQ, cmd) - RTL_NI_QM_EQ;
-	unsigned int tail = (refill->head[eq] + refill->count[eq]) %
-			    RTL_NI_QM_EQ_BUFS;
+	struct rtl_ni_qm_refill *refill = &rxq->refill;
+	unsigned int eq = FIELD_GET(QM_CMD_EQ, cmd) == rxq->eq1 ? 1 : 0;
+	unsigned int tail;
 
+	if (WARN_ON_ONCE(refill->count[eq] >= RTL_NI_QM_EQ_BUFS))
+		return;
+	tail = (refill->head[eq] + refill->count[eq]) % RTL_NI_QM_EQ_BUFS;
 	refill->addr[eq][tail] = cmd & QM_CMD_ADDR;
 	refill->count[eq]++;
 	refill->pending++;
 }
 
-static void rtl_ni_qm_refill_drain(struct rtl9617c_ni *ni, unsigned int budget)
+static void rtl_ni_qm_refill_drain(struct rtl_ni_rxq *rxq, unsigned int budget)
 {
-	struct rtl_ni_qm_refill *refill = &ni->qm.refill;
-	unsigned int eq, done = 0;
+	struct rtl9617c_ni *ni = rxq->ni;
+	struct rtl_ni_qm_refill *refill = &rxq->refill;
+	unsigned int slot, done = 0;
 
-	for (eq = 0; eq < RTL_NI_QM_EQS; eq++) {
+	for (slot = 0; slot < RTL_NI_QM_EQS; slot++) {
+		unsigned int eq = slot ? rxq->eq1 : rxq->eq0;
 		unsigned int limit = budget / 2;
 
-		while (refill->count[eq] && limit-- && done++ < budget) {
-			if (rtl_ni_qm_try_push(ni, refill->addr[eq][refill->head[eq]],
-					       eq + RTL_NI_QM_EQ))
+		while (refill->count[slot] && limit-- && done++ < budget) {
+			if (rtl_ni_qm_try_push(ni, rxq->id,
+					       refill->addr[slot][refill->head[slot]],
+					       eq))
 				break;
-			refill->head[eq] = (refill->head[eq] + 1) % RTL_NI_QM_EQ_BUFS;
-			refill->count[eq]--;
+			refill->head[slot] = (refill->head[slot] + 1) %
+					     RTL_NI_QM_EQ_BUFS;
+			refill->count[slot]--;
 			refill->pending--;
 		}
 	}
+}
+
+static int rtl_ni_qm_cpu_ingress(struct rtl9617c_ni *ni)
+{
+	static const u32 key[] = { 0x00007ef0, 0, 0, 0, 0, 0x02800000, 0x0001fbc0,
+				   0, 0, 0, 0, 0x0a000000, 0x00000a40 };
+	static const u32 fib[] = {
+		0,
+		0,
+		RTL_L2FE_CLE_FIB2_PERMIT_0 |
+		RTL_L2FE_CLE_FIB2_PERMIT_VLD_0 |
+		FIELD_PREP_CONST(RTL_L2FE_CLE_FIB2_STP_MODE_0, 3),
+		FIELD_PREP_CONST(RTL_L2FE_CLE_FIB3_LDPID_0, QM_CPU_PORT) |
+		RTL_L2FE_CLE_FIB3_DP_VLD_0,
+		0,
+	};
+	static const u32 cpu_flags[] = {
+		0,
+		RTL_L2FE_ARB_PDPID_MAP_MY_MAC,
+		RTL_L2FE_ARB_PDPID_MAP_POL,
+		RTL_L2FE_ARB_PDPID_MAP_POL | RTL_L2FE_ARB_PDPID_MAP_MY_MAC,
+	};
+	unsigned int c, i;
+	int ret;
+
+	for (i = 0; i < ARRAY_SIZE(key); i++)
+		rtl_ni_write(ni, RTL_L2FE_CLE_IGR_KEY_DATA(i), key[i]);
+	ret = rtl_ni_qm_table_write(ni, RTL_L2FE_CLE_IGR_KEY_ACCESS, 0);
+	if (ret)
+		return ret;
+	for (i = 0; i < ARRAY_SIZE(fib); i++)
+		rtl_ni_write(ni, RTL_L2FE_CLE_IGR_FIB_DATA(i), fib[i]);
+	ret = rtl_ni_qm_table_write(ni, RTL_L2FE_CLE_IGR_FIB_ACCESS, 0);
+	if (ret)
+		return ret;
+
+	for (c = 0; c < ni->qm.num_rxq; c++) {
+		unsigned int cpu_port = QM_CPU_PORT + c;
+
+		for (i = 0; i < ARRAY_SIZE(cpu_flags); i++) {
+			ret = rtl_ni_qm_port_map(ni, cpu_port | cpu_flags[i], 9);
+			if (ret)
+				return ret;
+		}
+		rtl_ni_write(ni, RTL_L2FE_PLC_ELPB_DATA0,
+			     RTL_L2FE_PLC_ELPB_STP_STATUS);
+		rtl_ni_write(ni, RTL_L2FE_PLC_ELPB_DATA1, 0);
+		ret = rtl_ni_qm_table_write(ni, RTL_L2FE_PLC_ELPB_ACCESS,
+					    cpu_port);
+		if (ret)
+			return ret;
+	}
+
+	rtl_ni_rmw(ni, RTL_NI_GLB_NIRX_L3FE_DEMUX_CFG1, GENMASK(15, 0), 0);
+	rtl_ni_rmw(ni, RTL_NI_GLB_NIRX_L3FE_DPQ_DEMUX_CFG1, GENMASK(15, 0), 0);
+	rtl_ni_rmw(ni, RTL_NI_GLB_NIRX_L3FE_DPQ_DEMUX_CFG0, GENMASK(13, 0), 0);
+	rtl_ni_rmw(ni, RTL_L2FE_PLC_DPID_FWD_CTRL, 0,
+		   RTL_L2FE_PLC_VID_FFF_FWD | RTL_L2FE_PLC_UNKVLAN_FWD);
+	return 0;
 }
 
 static int rtl_ni_qm_ingress(struct rtl9617c_ni *ni, unsigned int port)
@@ -210,24 +378,6 @@ static int rtl_ni_qm_ingress(struct rtl9617c_ni *ni, unsigned int port)
 		FIELD_PREP_CONST(RTL_L2FE_ILPB_D3_VLAN_CMD_SEL, 3),
 		RTL_L2FE_ILPB_D4_UNKWN_POL_MODE,
 	};
-	static const u32 key[] = { 0x00007ef0, 0, 0, 0, 0, 0x02800000, 0x0001fbc0,
-				   0, 0, 0, 0, 0x0a000000, 0x00000a40 };
-	static const u32 fib[] = {
-		0,
-		0,
-		RTL_L2FE_CLE_FIB2_PERMIT_0 |
-		RTL_L2FE_CLE_FIB2_PERMIT_VLD_0 |
-		FIELD_PREP_CONST(RTL_L2FE_CLE_FIB2_STP_MODE_0, 3),
-		FIELD_PREP_CONST(RTL_L2FE_CLE_FIB3_LDPID_0, QM_CPU_PORT) |
-		RTL_L2FE_CLE_FIB3_DP_VLD_0,
-		0,
-	};
-	static const u32 cpu_map[] = {
-		QM_CPU_PORT | RTL_L2FE_ARB_PDPID_MAP_MY_MAC,
-		QM_CPU_PORT | RTL_L2FE_ARB_PDPID_MAP_POL,
-		QM_CPU_PORT | RTL_L2FE_ARB_PDPID_MAP_POL |
-		RTL_L2FE_ARB_PDPID_MAP_MY_MAC,
-	};
 	unsigned int i;
 	int ret;
 
@@ -251,28 +401,6 @@ static int rtl_ni_qm_ingress(struct rtl9617c_ni *ni, unsigned int port)
 	if (ret)
 		return ret;
 
-	for (i = 0; i < ARRAY_SIZE(key); i++)
-		rtl_ni_write(ni, RTL_L2FE_CLE_IGR_KEY_DATA(i), key[i]);
-	ret = rtl_ni_qm_table_write(ni, RTL_L2FE_CLE_IGR_KEY_ACCESS, 0);
-	if (ret)
-		return ret;
-	for (i = 0; i < ARRAY_SIZE(fib); i++)
-		rtl_ni_write(ni, RTL_L2FE_CLE_IGR_FIB_DATA(i), fib[i]);
-	ret = rtl_ni_qm_table_write(ni, RTL_L2FE_CLE_IGR_FIB_ACCESS, 0);
-	if (ret)
-		return ret;
-
-	ret = rtl_ni_qm_port_map(ni, QM_CPU_PORT, 9);
-	if (ret)
-		return ret;
-	for (i = 0; i < ARRAY_SIZE(cpu_map); i++) {
-		ret = rtl_ni_qm_table_write(ni,
-					    RTL_L2FE_ARB_PDPID_MAP_TBL_ACCESS,
-					    cpu_map[i]);
-		if (ret)
-			return ret;
-	}
-
 	rtl_ni_write(ni, RTL_L2FE_PONCLE_KEY_DATA0,
 		     ~FIELD_PREP(RTL_L2FE_PONCLE_KEY0_LSPID, port));
 	rtl_ni_write(ni, RTL_L2FE_PONCLE_KEY_DATA1, ~0U);
@@ -295,20 +423,7 @@ static int rtl_ni_qm_ingress(struct rtl9617c_ni *ni, unsigned int port)
 		     FIELD_PREP(RTL_L2FE_PONCLE_FIB1_FWD_ID, QM_CPU_PORT));
 	rtl_ni_write(ni, RTL_L2FE_PONCLE_FIB_DATA2,
 		     RTL_L2FE_PONCLE_FIB2_COS_ACT);
-	ret = rtl_ni_qm_table_write(ni, RTL_L2FE_PONCLE_FIB_ACCESS, port);
-	if (ret)
-		return ret;
-	rtl_ni_write(ni, RTL_L2FE_PLC_ELPB_DATA0, RTL_L2FE_PLC_ELPB_STP_STATUS);
-	rtl_ni_write(ni, RTL_L2FE_PLC_ELPB_DATA1, 0);
-	ret = rtl_ni_qm_table_write(ni, RTL_L2FE_PLC_ELPB_ACCESS, QM_CPU_PORT);
-	if (ret)
-		return ret;
-
-	rtl_ni_rmw(ni, RTL_NI_GLB_NIRX_L3FE_DEMUX_CFG1, GENMASK(15, 0), 0);
-	rtl_ni_rmw(ni, RTL_NI_GLB_NIRX_L3FE_DPQ_DEMUX_CFG1, GENMASK(15, 0), 0);
-	rtl_ni_rmw(ni, RTL_L2FE_PLC_DPID_FWD_CTRL, 0,
-		   RTL_L2FE_PLC_VID_FFF_FWD | RTL_L2FE_PLC_UNKVLAN_FWD);
-	return 0;
+	return rtl_ni_qm_table_write(ni, RTL_L2FE_PONCLE_FIB_ACCESS, port);
 }
 
 /**
@@ -334,13 +449,21 @@ static void rtl_ni_qm_eq_cfg(struct rtl9617c_ni *ni, unsigned int eq,
 	rtl_ni_write(ni, base, cfg0);
 }
 
+static bool rtl_ni_qm_is_lan_dq_port(const struct rtl9617c_ni *ni,
+				     unsigned int id)
+{
+	return id < RTL_NI_PORTS && ni->ports[id] &&
+	       (rtl_ni_is_ge(id) || id == RTL_NI_PORT_P6);
+}
+
 /**
- * rtl_ni_qm_lan_deepq - Initialize dedicated EQ0/EQ8 deep queue for 2.5G LAN1.
+ * rtl_ni_qm_lan_deepq - Initialize shared EQ0/EQ8 deep queue for all LAN ports.
  * @ni: Network interface state.
  *
- * High-rate 10G PON -> 2.5G XGE6 microbursts overflow L2TM's shared SRAM
- * buffer pool (~3651 cells). Offloading that flow onto L3QM port 14 backed
- * by private SRAM (EQ0) + reserved DDR (EQ8) absorbs bursts without tail drop.
+ * High-rate 10G PON -> LAN (1G GE and 2.5G) microbursts overflow L2TM's shared
+ * SRAM buffer pool (~3651 cells). Offloading PON -> LAN flows onto L3QM ports
+ * (8 + id) backed by private SRAM (EQ0) + reserved DDR (EQ8) absorbs bursts
+ * without tail drop.
  */
 static int rtl_ni_qm_lan_deepq(struct rtl9617c_ni *ni)
 {
@@ -349,9 +472,7 @@ static int rtl_ni_qm_lan_deepq(struct rtl9617c_ni *ni)
 	unsigned int low = count / 3;
 	unsigned int high = (count * 2) / 3;
 	unsigned int mid = count / 2;
-	unsigned int voq_start = QM_LAN_DQ_PORT * RTL_NI_QM_VOQS;
-	unsigned int shift = QM_LAN_DQ_PORT * 2;
-	unsigned int voq;
+	unsigned int id, voq;
 	int ret;
 
 	if (!count)
@@ -375,29 +496,12 @@ static int rtl_ni_qm_lan_deepq(struct rtl9617c_ni *ni)
 	rtl_ni_write(ni, RTL_QM_EQ_PROFILE(QM_LAN_DQ_EQ_PROFILE),
 		     FIELD_PREP(RTL_QM_EQ_PROF_EQP0, QM_LAN_DQ_EQ_PRIVATE) |
 		     FIELD_PREP(RTL_QM_EQ_PROF_EQP1, QM_LAN_DQ_EQ_SHARED));
-	rtl_ni_write(ni, RTL_QM_DEST_PORT_EQ_CFG(QM_LAN_DQ_PORT),
-		     QM_LAN_DQ_EQ_PROFILE);
-	rtl_ni_write(ni, RTL_QM_SCH_CFG(QM_LAN_DQ_PORT), RTL_QM_SCH_VOQ_EN);
-	rtl_ni_write(ni, RTL_QM_VOQ3_0_WEIGHT_RATIO_CFG(QM_LAN_DQ_PORT), 0);
-	rtl_ni_write(ni, RTL_QM_VOQ3_0_WEIGHT_RATIO_CFG(QM_LAN_DQ_PORT) + 4, 0);
 
 	rtl_ni_write(ni, RTL_TE_CB_PORT_THRSH_PROFILE(QM_LAN_DQ_CREDIT_PROFILE),
 		     FIELD_PREP(RTL_TE_CB_PORT_LTH, low) |
 		     FIELD_PREP(RTL_TE_CB_PORT_HTH, high));
 	rtl_ni_write(ni, RTL_TE_CB_PORT_GRPTHRSH_PROFILE(QM_LAN_DQ_CREDIT_PROFILE),
 		     QM_CPU_BURST_UNLIMITED);
-	rtl_ni_rmw(ni, RTL_TE_CB_PORT_THRSH_SELECT0, GENMASK(1, 0) << shift,
-		   QM_LAN_DQ_CREDIT_PROFILE << shift);
-
-	rtl_ni_write(ni, RTL_TE_CB_PORT_FREECNT_DATA,
-		     FIELD_PREP(RTL_TE_CB_FREECNT_CNT0, QM_LAN_DQ_SRAM_BUFS) |
-		     RTL_TE_CB_FREECNT_CNT0_MSB |
-		     FIELD_PREP(RTL_TE_CB_FREECNT_CNT1, count) |
-		     RTL_TE_CB_FREECNT_CNT1_MSB);
-	ret = rtl_ni_qm_table_write(ni, RTL_TE_CB_PORT_FREECNT_ACCESS,
-				    QM_LAN_DQ_PORT);
-	if (ret)
-		return ret;
 
 	rtl_ni_write(ni, RTL_TE_CB_VOQ_THRSH_PROFILE_DATA2, 0);
 	rtl_ni_write(ni, RTL_TE_CB_VOQ_THRSH_PROFILE_DATA1,
@@ -411,14 +515,45 @@ static int rtl_ni_qm_lan_deepq(struct rtl9617c_ni *ni)
 	if (ret)
 		return ret;
 
-	for (voq = voq_start; voq < voq_start + RTL_NI_QM_VOQS; voq++) {
-		rtl_ni_write(ni, RTL_TE_CB_VOQ_THRSH_SELECT_DATA,
-			     QM_LAN_DQ_VOQ_PROFILE);
-		ret = rtl_ni_qm_table_write(ni,
-					    RTL_TE_CB_VOQ_THRSH_SELECT_ACCESS,
-					    voq);
+	for (id = 0; id < RTL_NI_PORTS; id++) {
+		unsigned int qm_port, voq_start, shift;
+
+		if (!rtl_ni_qm_is_lan_dq_port(ni, id))
+			continue;
+
+		qm_port = QM_LAN_DQ_PORT(id);
+		voq_start = qm_port * RTL_NI_QM_VOQS;
+		shift = qm_port * 2;
+
+		rtl_ni_write(ni, RTL_QM_DEST_PORT_EQ_CFG(qm_port),
+			     QM_LAN_DQ_EQ_PROFILE);
+		rtl_ni_write(ni, RTL_QM_SCH_CFG(qm_port), RTL_QM_SCH_VOQ_EN);
+		rtl_ni_write(ni, RTL_QM_VOQ3_0_WEIGHT_RATIO_CFG(qm_port), 0);
+		rtl_ni_write(ni, RTL_QM_VOQ3_0_WEIGHT_RATIO_CFG(qm_port) + 4, 0);
+
+		rtl_ni_rmw(ni, RTL_TE_CB_PORT_THRSH_SELECT0,
+			   GENMASK(1, 0) << shift,
+			   QM_LAN_DQ_CREDIT_PROFILE << shift);
+
+		rtl_ni_write(ni, RTL_TE_CB_PORT_FREECNT_DATA,
+			     FIELD_PREP(RTL_TE_CB_FREECNT_CNT0, QM_LAN_DQ_SRAM_BUFS) |
+			     RTL_TE_CB_FREECNT_CNT0_MSB |
+			     FIELD_PREP(RTL_TE_CB_FREECNT_CNT1, count) |
+			     RTL_TE_CB_FREECNT_CNT1_MSB);
+		ret = rtl_ni_qm_table_write(ni, RTL_TE_CB_PORT_FREECNT_ACCESS,
+					    qm_port);
 		if (ret)
 			return ret;
+
+		for (voq = voq_start; voq < voq_start + RTL_NI_QM_VOQS; voq++) {
+			rtl_ni_write(ni, RTL_TE_CB_VOQ_THRSH_SELECT_DATA,
+				     QM_LAN_DQ_VOQ_PROFILE);
+			ret = rtl_ni_qm_table_write(ni,
+						    RTL_TE_CB_VOQ_THRSH_SELECT_ACCESS,
+						    voq);
+			if (ret)
+				return ret;
+		}
 	}
 	return 0;
 }
@@ -531,58 +666,35 @@ static void rtl_ni_qm_axi_reorder(struct rtl9617c_ni *ni)
 static int rtl_ni_qm_cpu_credits(struct rtl9617c_ni *ni)
 {
 	u32 select = rtl_ni_read(ni, RTL_TE_CB_PORT_THRSH_SELECT0);
-	unsigned int profile, cpu, voq;
+	unsigned int cpu, voq;
 	int ret;
 
-	for (profile = 0; profile < 2; profile++) {
-		unsigned int count = profile ? RTL_NI_QM_PE_BUFS - 4 : RTL_NI_QM_EQ_BUFS;
+	rtl_ni_write(ni, RTL_TE_CB_PORT_THRSH_PROFILE(0),
+		     FIELD_PREP(RTL_TE_CB_PORT_HTH, RTL_NI_QM_EQ_BUFS / 8) |
+		     FIELD_PREP(RTL_TE_CB_PORT_LTH, RTL_NI_QM_EQ_BUFS / 64));
+	rtl_ni_write(ni, RTL_TE_CB_PORT_GRPTHRSH_PROFILE(0),
+		     QM_CPU_BURST_UNLIMITED);
 
-		rtl_ni_write(ni, RTL_TE_CB_PORT_THRSH_PROFILE(profile),
-			     FIELD_PREP(RTL_TE_CB_PORT_HTH, count / 8) |
-			     FIELD_PREP(RTL_TE_CB_PORT_LTH, count / 64));
-		rtl_ni_write(ni, RTL_TE_CB_PORT_GRPTHRSH_PROFILE(profile),
-			     QM_CPU_BURST_UNLIMITED);
-	}
+	for (cpu = 0; cpu < ni->qm.num_rxq; cpu++) {
+		unsigned int eq_profile = RTL_NI_QM_EQ + cpu;
 
-	for (cpu = 0; cpu < 4; cpu++) {
-		unsigned int count0, count1, eq_profile;
-
-		if (cpu == 1)
-			continue;
-		profile = cpu ? 1 : 0;
-		count0 = cpu ? RTL_NI_QM_PE_BUFS - 4 : RTL_NI_QM_EQ_BUFS;
-		count1 = cpu ? 0 : RTL_NI_QM_EQ_BUFS;
-		eq_profile = cpu ? cpu + 4 : RTL_NI_QM_EQ;
-
-		if (cpu) {
-			unsigned int eq = RTL_NI_QM_PE_EQ + (3 - cpu);
-
-			rtl_ni_write(ni, RTL_QM_EQ_PROFILE(eq_profile),
-				     FIELD_PREP(RTL_QM_EQ_PROF_EQP0, eq) |
-				     FIELD_PREP(RTL_QM_EQ_PROF_EQP1, 15));
-			rtl_ni_write(ni, RTL_QM_DEST_PORT_EQ_CFG(cpu),
-				     eq_profile);
-		}
 		rtl_ni_write(ni, RTL_TE_CB_PORT_FREECNT_DATA,
-			     FIELD_PREP(RTL_TE_CB_FREECNT_CNT0, count0) |
+			     FIELD_PREP(RTL_TE_CB_FREECNT_CNT0, RTL_NI_QM_EQ_BUFS) |
 			     RTL_TE_CB_FREECNT_CNT0_MSB |
-			     FIELD_PREP(RTL_TE_CB_FREECNT_CNT1, count1) |
+			     FIELD_PREP(RTL_TE_CB_FREECNT_CNT1, RTL_NI_QM_EQ_BUFS) |
 			     RTL_TE_CB_FREECNT_CNT1_MSB);
 		ret = rtl_ni_qm_table_write(ni, RTL_TE_CB_PORT_FREECNT_ACCESS,
 					    cpu);
 		if (ret)
 			return ret;
-		select = (select & ~(3U << (cpu * 2))) | (profile << (cpu * 2));
+		select &= ~(3U << (cpu * 2));
 
 		rtl_ni_write(ni, RTL_TE_CB_EQ_PROFILE_THRSH(eq_profile),
 			     FIELD_PREP(RTL_TE_CB_EQ_TH0, 12) |
 			     FIELD_PREP(RTL_TE_CB_EQ_TH1, 12));
-		for (voq = cpu * 8; voq < cpu * 8 + 8; voq++) {
-			if (cpu)
-				rtl_ni_write(ni, RTL_QM_CPU_EPP_FIFO0_CFG(voq),
-					     eq_profile);
-			rtl_ni_write(ni, RTL_TE_CB_VOQ_THRSH_SELECT_DATA,
-				     cpu == 3 ? 4 : profile);
+		for (voq = cpu * RTL_NI_QM_VOQS;
+		     voq < (cpu + 1) * RTL_NI_QM_VOQS; voq++) {
+			rtl_ni_write(ni, RTL_TE_CB_VOQ_THRSH_SELECT_DATA, 0);
 			ret = rtl_ni_qm_table_write(ni,
 						    RTL_TE_CB_VOQ_THRSH_SELECT_ACCESS,
 						    voq);
@@ -591,28 +703,22 @@ static int rtl_ni_qm_cpu_credits(struct rtl9617c_ni *ni)
 		}
 	}
 
-	for (profile = 0; profile < 3; profile++) {
-		unsigned int count = profile ? RTL_NI_QM_PE_BUFS - 4 : RTL_NI_QM_EQ_BUFS;
+	rtl_ni_write(ni, RTL_TE_CB_VOQ_THRSH_PROFILE_DATA2, 0);
+	rtl_ni_write(ni, RTL_TE_CB_VOQ_THRSH_PROFILE_DATA1,
+		     FIELD_PREP(RTL_TE_CB_VOQ_D1_PRVT, 3));
+	rtl_ni_write(ni, RTL_TE_CB_VOQ_THRSH_PROFILE_DATA0,
+		     FIELD_PREP(RTL_TE_CB_VOQ_D0_HTH, RTL_NI_QM_EQ_BUFS * 7 / 8) |
+		     FIELD_PREP(RTL_TE_CB_VOQ_D0_LTH, RTL_NI_QM_EQ_BUFS * 6 / 8));
+	ret = rtl_ni_qm_table_write(ni, RTL_TE_CB_VOQ_THRSH_PROFILE_ACCESS, 0);
+	if (ret)
+		return ret;
 
-		rtl_ni_write(ni, RTL_TE_CB_VOQ_THRSH_PROFILE_DATA2, 0);
-		rtl_ni_write(ni, RTL_TE_CB_VOQ_THRSH_PROFILE_DATA1,
-			     FIELD_PREP(RTL_TE_CB_VOQ_D1_PRVT,
-					profile == 1 ? 12 : 3));
-		rtl_ni_write(ni, RTL_TE_CB_VOQ_THRSH_PROFILE_DATA0,
-			     FIELD_PREP(RTL_TE_CB_VOQ_D0_HTH, count * 7 / 8) |
-			     FIELD_PREP(RTL_TE_CB_VOQ_D0_LTH, count * 6 / 8));
-		ret = rtl_ni_qm_table_write(ni,
-					    RTL_TE_CB_VOQ_THRSH_PROFILE_ACCESS,
-					    profile == 2 ? 4 : profile);
-		if (ret)
-			return ret;
-	}
 	rtl_ni_write(ni, RTL_TE_CB_PORT_THRSH_SELECT0, select);
 	return 0;
 }
 
 /**
- * rtl_ni_qm_lan_dq_alloc - Claim reserved DDR pool for XGE6 (LAN1) deep queue.
+ * rtl_ni_qm_lan_dq_alloc - Claim reserved DDR pool for LAN deep queues.
  * @ni: Network interface state.
  *
  * Looks up optional "memory-region" on the NI device-tree node. When absent,
@@ -740,50 +846,74 @@ static void rtl_ni_qm_slot_remove_at(struct rtl_ni_qm_slot *slots,
 void rtl_ni_qm_drain_slots(struct rtl9617c_ni *ni)
 {
 	struct rtl_ni_qm *qm = &ni->qm;
-	unsigned int i;
+	unsigned int c, i;
 
-	if (qm->rx_slots && qm->pool) {
-		for (i = 0; i < RTL_NI_QM_SLOT_HASH_SIZE; i++) {
-			if (!qm->rx_slots[i].page)
-				continue;
-			page_pool_put_full_page(qm->pool, qm->rx_slots[i].page,
-						false);
-			qm->rx_slots[i].page = NULL;
-			qm->rx_slots[i].dma = 0;
+	for (c = 0; c < qm->num_rxq; c++) {
+		struct rtl_ni_rxq *rxq = &qm->rxq[c];
+
+		if (rxq->rx_slots && rxq->pool) {
+			for (i = 0; i < RTL_NI_QM_SLOT_HASH_SIZE; i++) {
+				if (!rxq->rx_slots[i].page)
+					continue;
+				page_pool_put_full_page(rxq->pool,
+							rxq->rx_slots[i].page,
+							false);
+				rxq->rx_slots[i].page = NULL;
+				rxq->rx_slots[i].dma = 0;
+			}
 		}
+		memset(&rxq->refill, 0, sizeof(rxq->refill));
 	}
-	memset(&qm->refill, 0, sizeof(qm->refill));
 }
 
 int rtl_ni_qm_alloc(struct rtl9617c_ni *ni)
 {
-	struct page_pool_params pp_params = {
-		.flags = PP_FLAG_DMA_MAP | PP_FLAG_DMA_SYNC_DEV,
-		.order = 0,
-		.pool_size = RTL_NI_QM_BUFS,
-		.nid = dev_to_node(ni->dev),
-		.dev = ni->dev,
-		.napi = &ni->napi,
-		.dma_dir = DMA_FROM_DEVICE,
-		.offset = 0,
-		.max_len = RTL_NI_QM_BUF_SIZE - RTL_NI_QM_TAILROOM,
-	};
 	struct rtl_ni_qm *qm = &ni->qm;
+	unsigned int c;
 	int ret;
 
-	qm->pool = page_pool_create(&pp_params);
-	if (IS_ERR(qm->pool)) {
-		ret = PTR_ERR(qm->pool);
-		qm->pool = NULL;
-		return ret;
+	for (c = 0; c < qm->num_rxq; c++) {
+		struct rtl_ni_rxq *rxq = &qm->rxq[c];
+		struct page_pool_params pp_params = {
+			.flags = PP_FLAG_DMA_MAP | PP_FLAG_DMA_SYNC_DEV,
+			.order = 0,
+			.pool_size = RTL_NI_QM_BUFS,
+			.nid = dev_to_node(ni->dev),
+			.dev = ni->dev,
+			.napi = &rxq->napi,
+			.dma_dir = DMA_FROM_DEVICE,
+			.offset = 0,
+			.max_len = RTL_NI_QM_BUF_SIZE - RTL_NI_QM_TAILROOM,
+		};
+
+		rxq->ni = ni;
+		rxq->id = c;
+		rxq->eq0 = rtl_ni_rxq_cfgs[c].eq0;
+		rxq->eq1 = rtl_ni_rxq_cfgs[c].eq1;
+		rxq->bid_base = rtl_ni_rxq_cfgs[c].bid_base;
+		atomic_long_set(&rxq->rx_pkts, 0);
+
+		rxq->pool = page_pool_create(&pp_params);
+		if (IS_ERR(rxq->pool)) {
+			ret = PTR_ERR(rxq->pool);
+			rxq->pool = NULL;
+			rtl_ni_qm_free(ni);
+			return ret;
+		}
+		rxq->rx_slots = devm_kcalloc(ni->dev, RTL_NI_QM_SLOT_HASH_SIZE,
+					     sizeof(*rxq->rx_slots), GFP_KERNEL);
+		rxq->ring = dmam_alloc_coherent(ni->dev,
+						RTL_NI_QM_RING_SIZE * RTL_NI_QM_VOQS,
+						&rxq->ring_dma, GFP_KERNEL);
+		if (!rxq->rx_slots || !rxq->ring) {
+			rtl_ni_qm_free(ni);
+			return -ENOMEM;
+		}
 	}
-	qm->rx_slots = devm_kcalloc(ni->dev, RTL_NI_QM_SLOT_HASH_SIZE,
-				    sizeof(*qm->rx_slots), GFP_KERNEL);
-	qm->ring = dmam_alloc_coherent(ni->dev, RTL_NI_QM_RING_SIZE * RTL_NI_QM_VOQS,
-				       &qm->ring_dma, GFP_KERNEL);
+
 	qm->dq = dmam_alloc_coherent(ni->dev, RTL_NI_DQ_SIZE, &qm->dq_dma,
 				     GFP_KERNEL);
-	if (!qm->rx_slots || !qm->ring || !qm->dq) {
+	if (!qm->dq) {
 		rtl_ni_qm_free(ni);
 		return -ENOMEM;
 	}
@@ -798,13 +928,16 @@ int rtl_ni_qm_alloc(struct rtl9617c_ni *ni)
 void rtl_ni_qm_free(struct rtl9617c_ni *ni)
 {
 	struct rtl_ni_qm *qm = &ni->qm;
+	unsigned int c;
 
 	rtl_ni_qm_drain_slots(ni);
 	rtl_ni_qm_lan_dq_free(ni);
-	if (!qm->pool)
-		return;
-	page_pool_destroy(qm->pool);
-	qm->pool = NULL;
+	for (c = 0; c < qm->num_rxq; c++) {
+		if (!qm->rxq[c].pool)
+			continue;
+		page_pool_destroy(qm->rxq[c].pool);
+		qm->rxq[c].pool = NULL;
+	}
 }
 
 static int rtl_ni_qm_lan_dq_wait_pool(struct rtl9617c_ni *ni, unsigned int eq,
@@ -839,13 +972,26 @@ static int rtl_ni_qm_lan_dq_wait_flush(struct rtl9617c_ni *ni)
 					  ni->qm.lan_dq_bufs);
 }
 
+static u32 rtl_ni_qm_lan_dq_demux_mask(const struct rtl9617c_ni *ni)
+{
+	unsigned int id;
+	u32 mask = 0;
+
+	for (id = 0; id < RTL_NI_PORTS; id++)
+		if (rtl_ni_qm_is_lan_dq_port(ni, id))
+			mask |= RTL_NI_L3QMRX_DEMUX_PORT(id);
+	return mask;
+}
+
 static void rtl_ni_qm_lan_dq_enable(struct rtl9617c_ni *ni, bool enable)
 {
+	u32 demux = rtl_ni_qm_lan_dq_demux_mask(ni);
+
 	rtl_ni_rmw(ni, RTL_NI_GLB_INTERNAL_PORT_ID_CFG,
 		   RTL_NI_GLB_L3QMRX_TO_LAN,
 		   enable ? RTL_NI_GLB_L3QMRX_TO_LAN : 0);
-	rtl_ni_rmw(ni, RTL_NI_L3QMRX_DEMUX_CFG0, RTL_NI_L3QMRX_DEMUX_P6,
-		   enable ? RTL_NI_L3QMRX_DEMUX_P6 : 0);
+	rtl_ni_rmw(ni, RTL_NI_L3QMRX_DEMUX_CFG0, demux,
+		   enable ? demux : 0);
 	rtl_ni_rmw(ni, RTL_QM_ES_CTRL2, RTL_QM_ES_CTRL2_LAN_EN,
 		   enable ? RTL_QM_ES_CTRL2_LAN_EN : 0);
 }
@@ -853,11 +999,14 @@ static void rtl_ni_qm_lan_dq_enable(struct rtl9617c_ni *ni, bool enable)
 int rtl_ni_qm_start(struct rtl9617c_ni *ni)
 {
 	struct rtl_ni_qm *qm = &ni->qm;
-	unsigned int i;
+	unsigned int c, i;
 	u32 val;
 	int ret;
 
 	qm->ready = false;
+	for (c = 0; c < qm->num_rxq; c++)
+		qm->rxq[c].ready = false;
+
 	rtl_ni_rmw(ni, RTL_TE_CB_CTRL, RTL_TE_CB_SCAN_EN, 0);
 	rtl_ni_rmw(ni, RTL_QM_RMU0_CTRL, RTL_QM_RMU0_RX_EN, 0);
 	rtl_ni_rmw(ni, RTL_QM_ES_CTRL, RTL_QM_ES_TX_EN, 0);
@@ -877,14 +1026,22 @@ int rtl_ni_qm_start(struct rtl9617c_ni *ni)
 	rtl_ni_write(ni, RTL_QM_EPP64_P3_0_INT_EN, 0);
 	rtl_ni_write(ni, RTL_QM_EPP64_P7_4_INT_EN, 0);
 
-	for (i = 0; i < RTL_NI_QM_VOQS; i++) {
-		qm->read[i] = rtl_ni_read(ni, RTL_QM_CPUEPP_FIFO_WRPTR(i)) &
-			      QM_RING_ADDR_MASK;
-		rtl_ni_write(ni, RTL_QM_CPUEPP_FIFO_RDPTR(i), qm->read[i]);
+	for (c = 0; c < qm->num_rxq; c++) {
+		struct rtl_ni_rxq *rxq = &qm->rxq[c];
+
+		for (i = 0; i < RTL_NI_QM_VOQS; i++) {
+			unsigned int voq_id = c * RTL_NI_QM_VOQS + i;
+
+			rxq->read[i] = rtl_ni_read(ni,
+						   RTL_QM_CPUEPP_FIFO_WRPTR(voq_id)) &
+				       QM_RING_ADDR_MASK;
+			rtl_ni_write(ni, RTL_QM_CPUEPP_FIFO_RDPTR(voq_id),
+				     rxq->read[i]);
+		}
+		memset(rxq->ring, 0, RTL_NI_QM_RING_SIZE * RTL_NI_QM_VOQS);
 	}
 	rtl_ni_read(ni, RTL_QM_CPUEPP_FIFO_RDPTR(0));
 	rtl_ni_qm_axi_reorder(ni);
-	memset(qm->ring, 0, RTL_NI_QM_RING_SIZE * RTL_NI_QM_VOQS);
 	if (qm->lan_dq_bufs)
 		dma_sync_single_for_device(ni->dev, qm->lan_dq_dma,
 					   qm->lan_dq_size, DMA_BIDIRECTIONAL);
@@ -893,34 +1050,52 @@ int rtl_ni_qm_start(struct rtl9617c_ni *ni)
 		rtl_ni_write(ni, RTL_QM_EQ_CFG0(i), 0);
 		rtl_ni_write(ni, RTL_QM_EQ_CFG0(i) + 4, 0);
 	}
-	for (i = 0; i < RTL_NI_QM_EQS; i++) {
-		unsigned int cfg = RTL_QM_EQ_CFG0(RTL_NI_QM_EQ + i);
+	for (c = 0; c < qm->num_rxq; c++) {
+		struct rtl_ni_rxq *rxq = &qm->rxq[c];
 
-		rtl_ni_write(ni, cfg, RTL_QM_EQ_CFG0_EN);
-		rtl_ni_write(ni, cfg + 4,
-			     FIELD_PREP(RTL_QM_EQ_CFG1_TOTAL_BUFS, RTL_NI_QM_EQ_BUFS) |
-			     FIELD_PREP(RTL_QM_EQ_CFG1_BID_START, i * RTL_NI_QM_EQ_BUFS));
-		rtl_ni_write(ni, cfg + 8,
-			     FIELD_PREP(RTL_QM_EQ_CFG2_BUFSZ, QM_EQ_CFG2_BUFSZ_2048) |
-			     RTL_QM_EQ_CFG2_CPU_EQ |
-			     FIELD_PREP(RTL_QM_EQ_CFG2_REFILL_THS, 24));
-		rtl_ni_write(ni, cfg + 12, QM_EQ_CFG_DESC);
-		rtl_ni_write(ni, cfg + 16, 2);
+		for (i = 0; i < RTL_NI_QM_EQS; i++) {
+			unsigned int eq = i ? rxq->eq1 : rxq->eq0;
+			unsigned int cfg = RTL_QM_EQ_CFG0(eq);
+			u16 bid_start = rxq->bid_base + i * RTL_NI_QM_EQ_BUFS;
+
+			rtl_ni_write(ni, cfg, RTL_QM_EQ_CFG0_EN);
+			rtl_ni_write(ni, cfg + 4,
+				     FIELD_PREP(RTL_QM_EQ_CFG1_TOTAL_BUFS,
+						RTL_NI_QM_EQ_BUFS) |
+				     FIELD_PREP(RTL_QM_EQ_CFG1_BID_START,
+						bid_start));
+			rtl_ni_write(ni, cfg + 8,
+				     FIELD_PREP(RTL_QM_EQ_CFG2_BUFSZ,
+						QM_EQ_CFG2_BUFSZ_2048) |
+				     RTL_QM_EQ_CFG2_CPU_EQ |
+				     FIELD_PREP(RTL_QM_EQ_CFG2_REFILL_THS, 24));
+			rtl_ni_write(ni, cfg + 12, QM_EQ_CFG_DESC);
+			rtl_ni_write(ni, cfg + 16, 2);
+		}
 	}
 
 	ret = rtl_ni_qm_deepq(ni);
 	if (ret)
 		return ret;
 
-	rtl_ni_write(ni, QM_EQ_PROFILE_CPU0,
-		     FIELD_PREP(RTL_QM_EQ_PROF_EQP0, RTL_NI_QM_EQ) |
-		     FIELD_PREP(RTL_QM_EQ_PROF_EQP1, RTL_NI_QM_EQ + 1));
-	rtl_ni_write(ni, RTL_QM_DEST_PORT_EQ_CFG(0), RTL_NI_QM_EQ);
-	rtl_ni_write(ni, RTL_QM_DEST_PORT_PKT_BUF_CFG(0),
-		     FIELD_PREP(RTL_QM_PKT_BUF_HEAD_FIRST, RTL_NI_QM_HEADROOM / 16) |
-		     FIELD_PREP(RTL_QM_PKT_BUF_TAIL_FIRST, RTL_NI_QM_TAILROOM / 16) |
-		     FIELD_PREP(RTL_QM_PKT_BUF_HEAD_REST, RTL_NI_QM_HEADROOM / 16) |
-		     FIELD_PREP(RTL_QM_PKT_BUF_TAIL_REST, RTL_NI_QM_TAILROOM / 16));
+	for (c = 0; c < qm->num_rxq; c++) {
+		struct rtl_ni_rxq *rxq = &qm->rxq[c];
+		unsigned int eq_prof = RTL_NI_QM_EQ + c;
+
+		rtl_ni_write(ni, QM_EQ_PROFILE_CPU(c),
+			     FIELD_PREP(RTL_QM_EQ_PROF_EQP0, rxq->eq0) |
+			     FIELD_PREP(RTL_QM_EQ_PROF_EQP1, rxq->eq1));
+		rtl_ni_write(ni, RTL_QM_DEST_PORT_EQ_CFG(c), eq_prof);
+		rtl_ni_write(ni, RTL_QM_DEST_PORT_PKT_BUF_CFG(c),
+			     FIELD_PREP(RTL_QM_PKT_BUF_HEAD_FIRST,
+					RTL_NI_QM_HEADROOM / 16) |
+			     FIELD_PREP(RTL_QM_PKT_BUF_TAIL_FIRST,
+					RTL_NI_QM_TAILROOM / 16) |
+			     FIELD_PREP(RTL_QM_PKT_BUF_HEAD_REST,
+					RTL_NI_QM_HEADROOM / 16) |
+			     FIELD_PREP(RTL_QM_PKT_BUF_TAIL_REST,
+					RTL_NI_QM_TAILROOM / 16));
+	}
 	rtl_ni_write(ni, RTL_QM_HDM_WRITE_PROTECT,
 		     RTL_QM_HDM_WRITE_PROTECT_UNLOCK);
 	wmb();
@@ -938,63 +1113,79 @@ int rtl_ni_qm_start(struct rtl9617c_ni *ni)
 		if (ret)
 			return ret;
 	}
-	ret = rtl_ni_qm_attribute(ni, QM_ATTRIBUTE_CPU_ENTRY, QM_ATTRIBUTE_CPU);
-	if (ret)
-		return ret;
+	for (c = 0; c < qm->num_rxq; c++) {
+		ret = rtl_ni_qm_attribute(ni, QM_ATTRIBUTE_CPU_ENTRY + c,
+					  QM_ATTRIBUTE_CPU);
+		if (ret)
+			return ret;
+	}
 
 	rtl_ni_rmw(ni, RTL_QM_AXIM2_CONFIG,
 		   RTL_QM_AXIM2_WR_CACHELINE | RTL_QM_AXIM2_RD_CACHELINE,
 		   FIELD_PREP(RTL_QM_AXIM2_RD_OUTTRANS, 15) |
 		   FIELD_PREP(RTL_QM_AXIM2_WR_OUTTRANS, 15));
 	rtl_ni_rmw(ni, RTL_QM_EPP, 0, RTL_QM_EPP_CMD_MODE);
-	rtl_ni_write(ni, RTL_QM_CPU_EPP0_CFG, 0);
 
 	rtl_ni_rmw(ni, RTL_QM_CPU_EPP_FIFO_CFG_PROFILE(RTL_NI_QM_EQ),
 		   RTL_QM_EPP_FIFO_CFG_MASK,
 		   FIELD_PREP(RTL_QM_EPP_FIFO_SIZE, RTL_NI_QM_RING_SIZE / 16) |
 		   FIELD_PREP(RTL_QM_EPP_FIFO_TIMER_THS, 15) |
 		   FIELD_PREP(RTL_QM_EPP_FIFO_HIGH_THS, 2));
-	for (i = 0; i < RTL_NI_QM_VOQS; i++) {
-		rtl_ni_write(ni, RTL_QM_CPU_EPP_FIFO0_CFG(i), RTL_NI_QM_EQ);
-		rtl_ni_write(ni, RTL_QM_CPUEPP_FIFO_PADDR_START(i),
-			     qm->ring_dma + i * RTL_NI_QM_RING_SIZE);
-	}
-	for (i = 0; i < RTL_NI_QM_BUFS; i++) {
-		struct page *page;
-		dma_addr_t dma;
-		u32 dma32;
 
-		page = page_pool_dev_alloc_pages(qm->pool);
-		if (!page) {
-			ret = -ENOMEM;
-			goto err_drain;
+	for (c = 0; c < qm->num_rxq; c++) {
+		struct rtl_ni_rxq *rxq = &qm->rxq[c];
+
+		rtl_ni_write(ni, RTL_QM_CPU_EPP_CFG(c), 0);
+		for (i = 0; i < RTL_NI_QM_VOQS; i++) {
+			unsigned int voq_id = c * RTL_NI_QM_VOQS + i;
+
+			rtl_ni_write(ni, RTL_QM_CPU_EPP_FIFO0_CFG(voq_id),
+				     RTL_NI_QM_EQ);
+			rtl_ni_write(ni, RTL_QM_CPUEPP_FIFO_PADDR_START(voq_id),
+				     rxq->ring_dma + i * RTL_NI_QM_RING_SIZE);
 		}
-		dma = page_pool_get_dma_addr(page);
-		if (upper_32_bits(dma) || (dma & ~QM_CMD_ADDR)) {
-			page_pool_put_full_page(qm->pool, page, false);
-			ret = -EFAULT;
-			goto err_drain;
+		for (i = 0; i < RTL_NI_QM_BUFS; i++) {
+			unsigned int eq = (i < RTL_NI_QM_EQ_BUFS) ? rxq->eq0 :
+								    rxq->eq1;
+			struct page *page;
+			dma_addr_t dma;
+			u32 dma32;
+
+			page = page_pool_dev_alloc_pages(rxq->pool);
+			if (!page) {
+				ret = -ENOMEM;
+				goto err_drain;
+			}
+			dma = page_pool_get_dma_addr(page);
+			if (upper_32_bits(dma) || (dma & ~QM_CMD_ADDR)) {
+				page_pool_put_full_page(rxq->pool, page, false);
+				ret = -EFAULT;
+				goto err_drain;
+			}
+			dma32 = lower_32_bits(dma);
+			ret = rtl_ni_qm_slot_insert(rxq->rx_slots, dma32, page);
+			if (ret) {
+				page_pool_put_full_page(rxq->pool, page, false);
+				goto err_drain;
+			}
+			ret = rtl_ni_qm_push(ni, rxq->id, dma32, eq);
+			if (ret)
+				goto err_drain;
 		}
-		dma32 = lower_32_bits(dma);
-		ret = rtl_ni_qm_slot_insert(qm->rx_slots, dma32, page);
-		if (ret) {
-			page_pool_put_full_page(qm->pool, page, false);
-			goto err_drain;
-		}
-		ret = rtl_ni_qm_push(ni, dma32,
-				     RTL_NI_QM_EQ + i / RTL_NI_QM_EQ_BUFS);
-		if (ret)
-			goto err_drain;
 	}
 
 	ret = rtl_ni_qm_cpu_credits(ni);
 	if (ret)
 		goto err_drain;
-	rtl_ni_write(ni, RTL_QM_SCH_CFG(0), RTL_QM_SCH_VOQ_EN);
+	for (c = 0; c < qm->num_rxq; c++)
+		rtl_ni_write(ni, RTL_QM_SCH_CFG(c), RTL_QM_SCH_VOQ_EN);
 	rtl_ni_rmw(ni, RTL_NI_GLB_INTERNAL_PORT_ID_CFG,
 		   RTL_NI_GLB_L3QMRX_DEMUX_SEL, 0);
 	rtl_ni_qm_lan_dq_enable(ni, qm->lan_dq_bufs > 0);
 
+	ret = rtl_ni_qm_cpu_ingress(ni);
+	if (ret)
+		goto err_drain;
 	for (i = 0; i < RTL_NI_PORTS; i++) {
 		if (!ni->ports[i])
 			continue;
@@ -1024,9 +1215,13 @@ int rtl_ni_qm_start(struct rtl9617c_ni *ni)
 		     FIELD_PREP(RTL_L2TM_ES_SCH_SPEED, 6));
 	rtl_ni_rmw(ni, RTL_TE_CB_CTRL, 0, RTL_TE_CB_SCAN_EN);
 	rtl_ni_rmw(ni, RTL_TE_GLB_CTRL, 0, RTL_TE_GLB_TAILDROP_EN);
-	rtl_ni_write(ni, RTL_QM_ES_CTRL, QM_ES_CTRL_RUN);
+	rtl_ni_write(ni, RTL_QM_ES_CTRL,
+		     QM_ES_CTRL_RUN(GENMASK(qm->num_rxq - 1, 0)));
 	rtl_ni_rmw(ni, RTL_QM_ES_CTRL1, 0, RTL_QM_ES_CTRL1_PUC_EN);
 	rtl_ni_rmw(ni, RTL_QM_RMU0_CTRL, 0, RTL_QM_RMU0_RX_EN);
+	rtl_ni_qm_rss_apply(ni);
+	for (c = 0; c < qm->num_rxq; c++)
+		qm->rxq[c].ready = true;
 	qm->ready = true;
 	return 0;
 
@@ -1037,7 +1232,11 @@ err_drain:
 
 void rtl_ni_qm_stop(struct rtl9617c_ni *ni)
 {
+	unsigned int c;
+
 	ni->qm.ready = false;
+	for (c = 0; c < ni->qm.num_rxq; c++)
+		ni->qm.rxq[c].ready = false;
 	if (ni->qm.lan_dq_bufs)
 		rtl_ni_qm_lan_dq_enable(ni, false);
 	rtl_ni_rmw(ni, RTL_TE_CB_CTRL, RTL_TE_CB_SCAN_EN, 0);
@@ -1078,23 +1277,24 @@ static bool rtl_ni_rx_csum_valid(u32 cmd, const u8 *frame, unsigned int len)
 	}
 }
 
-static void rtl_ni_qm_retire(struct rtl9617c_ni *ni, unsigned int voq, u32 cmd,
+static void rtl_ni_qm_retire(struct rtl_ni_rxq *rxq, unsigned int voq, u32 cmd,
 			     bool refill)
 {
-	struct rtl_ni_qm *qm = &ni->qm;
+	unsigned int voq_id = rxq->id * RTL_NI_QM_VOQS + voq;
 
-	qm->read[voq] = (qm->read[voq] + RTL_NI_QM_CMD_SIZE) & QM_RING_ADDR_MASK;
+	rxq->read[voq] = (rxq->read[voq] + RTL_NI_QM_CMD_SIZE) & QM_RING_ADDR_MASK;
 	mb();
-	rtl_ni_write(ni, RTL_QM_CPUEPP_FIFO_RDPTR(voq), qm->read[voq]);
+	rtl_ni_write(rxq->ni, RTL_QM_CPUEPP_FIFO_RDPTR(voq_id), rxq->read[voq]);
 	if (refill)
-		rtl_ni_qm_refill_add(&qm->refill, cmd);
+		rtl_ni_qm_refill_add(rxq, cmd);
 }
 
-static void rtl_ni_qm_deliver(struct rtl9617c_ni *ni, struct napi_struct *napi,
-			      struct sk_buff *skb, u32 cmd, u32 h0, u32 h1,
-			      bool csum)
+static void rtl_ni_qm_deliver(struct rtl_ni_rxq *rxq, struct sk_buff *skb,
+			      u32 cmd, u32 h0, u32 h1, bool csum)
 {
 	unsigned int source = FIELD_GET(QM_HDR_SOURCE, h1);
+	struct rtl9617c_ni *ni = rxq->ni;
+	struct napi_struct *napi = &rxq->napi;
 	struct rtl9617c_ni_endpoint *endpoint;
 	struct net_device *dev;
 
@@ -1105,6 +1305,7 @@ static void rtl_ni_qm_deliver(struct rtl9617c_ni *ni, struct napi_struct *napi,
 				 source >= QM_SOURCE_PON_LLID)) {
 			if (csum && rtl_ni_rx_csum_valid(cmd, skb->data, skb->len))
 				skb->ip_summed = CHECKSUM_UNNECESSARY;
+			atomic_long_inc(&rxq->rx_pkts);
 			endpoint->receive(endpoint, napi, skb,
 					  source | (FIELD_GET(QM_HDR_POL, h0) << 8));
 		} else {
@@ -1128,55 +1329,59 @@ static void rtl_ni_qm_deliver(struct rtl9617c_ni *ni, struct napi_struct *napi,
 	skb->protocol = eth_type_trans(skb, dev);
 	DEV_STATS_INC(dev, rx_packets);
 	DEV_STATS_ADD(dev, rx_bytes, skb->len + ETH_HLEN);
+	atomic_long_inc(&rxq->rx_pkts);
 	napi_gro_receive(napi, skb);
 	rcu_read_unlock();
 }
 
-int rtl_ni_qm_poll(struct rtl9617c_ni *ni, struct napi_struct *napi, int budget)
+int rtl_ni_qm_poll(struct rtl_ni_rxq *rxq, int budget)
 {
-	struct rtl_ni_qm *qm = &ni->qm;
+	struct rtl9617c_ni *ni = rxq->ni;
 	bool csum = rtl_ni_read(ni, RTL_FE_CAM_DATA_AUX) & RTL_FE_CAM_AUX_L4_CSUM;
 	bool zc_en = READ_ONCE(rtl_ni_rx_zerocopy);
+	u32 status_shift = rxq->id * RTL_NI_QM_VOQS;
 	int voq, count = 0;
 	unsigned int zc_pkts = 0, cb_pkts = 0, fb_pkts = 0;
 
-	rtl_ni_qm_refill_drain(ni, NAPI_POLL_WEIGHT);
+	rtl_ni_qm_refill_drain(rxq, NAPI_POLL_WEIGHT);
 
 	for (voq = RTL_NI_QM_VOQS - 1; voq >= 0 && count < budget; voq--) {
-		bool nonempty = rtl_ni_read(ni, RTL_QM_CPU_EPP_STATUS0) &
-				BIT(voq);
-		unsigned int wr = rtl_ni_read(ni, RTL_QM_CPUEPP_FIFO_WRPTR(voq)) &
+		unsigned int voq_id = status_shift + voq;
+		bool nonempty = (rtl_ni_read(ni, RTL_QM_CPU_EPP_STATUS0) >>
+				 status_shift) & BIT(voq);
+		unsigned int wr = rtl_ni_read(ni, RTL_QM_CPUEPP_FIFO_WRPTR(voq_id)) &
 				  QM_EPP_WRITE_MASK;
-		bool full = qm->read[voq] == wr && nonempty;
+		bool full = rxq->read[voq] == wr && nonempty;
 
-		while ((qm->read[voq] != wr || full) && count < budget) {
-			void *entry = qm->ring + voq * RTL_NI_QM_RING_SIZE + qm->read[voq];
+		while ((rxq->read[voq] != wr || full) && count < budget) {
+			void *entry = rxq->ring + voq * RTL_NI_QM_RING_SIZE +
+				      rxq->read[voq];
 			unsigned int eq, len, hdr, sync_len;
 			struct page *page, *new_page = NULL;
 			struct sk_buff *skb;
 			u32 cmd, dma, h0, h1;
-			int slot_idx;
+			int eq_slot, slot_idx;
 			void *va, *data;
 
 			full = false;
 			dma_rmb();
 			cmd = get_unaligned_le32(entry);
 			eq = FIELD_GET(QM_CMD_EQ, cmd);
-			if ((eq == RTL_NI_QM_EQ || eq == RTL_NI_QM_EQ + 1) &&
-			    qm->refill.count[eq - RTL_NI_QM_EQ] == RTL_NI_QM_EQ_BUFS)
+			eq_slot = (eq == rxq->eq0) ? 0 : (eq == rxq->eq1) ? 1 : -1;
+			if (eq_slot >= 0 &&
+			    rxq->refill.count[eq_slot] == RTL_NI_QM_EQ_BUFS)
 				break;
 
 			count++;
 			dma = cmd & QM_CMD_ADDR;
-			slot_idx = rtl_ni_qm_slot_lookup(qm->rx_slots, dma);
-			if (slot_idx < 0 ||
-			    (eq != RTL_NI_QM_EQ && eq != RTL_NI_QM_EQ + 1)) {
+			slot_idx = rtl_ni_qm_slot_lookup(rxq->rx_slots, dma);
+			if (slot_idx < 0 || eq_slot < 0) {
 				atomic_long_inc(&ni->rx_errors);
-				rtl_ni_qm_retire(ni, voq, cmd, false);
+				rtl_ni_qm_retire(rxq, voq, cmd, false);
 				continue;
 			}
 
-			page = qm->rx_slots[slot_idx].page;
+			page = rxq->rx_slots[slot_idx].page;
 			va = page_address(page);
 			dma_sync_single_for_cpu(ni->dev,
 						(dma_addr_t)dma + RTL_NI_QM_HEADROOM,
@@ -1194,7 +1399,7 @@ int rtl_ni_qm_poll(struct rtl9617c_ni *ni, struct napi_struct *napi, int budget)
 				dma_sync_single_for_device(ni->dev,
 							   (dma_addr_t)dma + RTL_NI_QM_HEADROOM,
 							   64, DMA_FROM_DEVICE);
-				rtl_ni_qm_retire(ni, voq, cmd, true);
+				rtl_ni_qm_retire(rxq, voq, cmd, true);
 				continue;
 			}
 
@@ -1208,12 +1413,12 @@ int rtl_ni_qm_poll(struct rtl9617c_ni *ni, struct napi_struct *napi, int budget)
 			if (zc_en && len > RTL_NI_RX_COPYBREAK) {
 				dma_addr_t new_dma = 0;
 
-				new_page = page_pool_dev_alloc_pages(qm->pool);
+				new_page = page_pool_dev_alloc_pages(rxq->pool);
 				if (likely(new_page)) {
 					new_dma = page_pool_get_dma_addr(new_page);
 					if (unlikely(upper_32_bits(new_dma) ||
 						     (new_dma & ~QM_CMD_ADDR))) {
-						page_pool_put_full_page(qm->pool,
+						page_pool_put_full_page(rxq->pool,
 									new_page,
 									true);
 						new_page = NULL;
@@ -1227,34 +1432,34 @@ int rtl_ni_qm_poll(struct rtl9617c_ni *ni, struct napi_struct *napi, int budget)
 						skb_mark_for_recycle(skb);
 						skb_reserve(skb, RTL_NI_QM_HEADROOM + hdr);
 						skb_put(skb, len);
-						rtl_ni_qm_slot_remove_at(qm->rx_slots,
+						rtl_ni_qm_slot_remove_at(rxq->rx_slots,
 									 slot_idx);
 						WARN_ON_ONCE(rtl_ni_qm_slot_insert(
-							qm->rx_slots,
+							rxq->rx_slots,
 							lower_32_bits(new_dma),
 							new_page));
 						new_cmd = (lower_32_bits(new_dma) &
 							   QM_CMD_ADDR) |
 							  FIELD_PREP(QM_CMD_EQ, eq);
-						rtl_ni_qm_retire(ni, voq, new_cmd, true);
+						rtl_ni_qm_retire(rxq, voq, new_cmd, true);
 						zc_pkts++;
-						rtl_ni_qm_deliver(ni, napi, skb, cmd,
+						rtl_ni_qm_deliver(rxq, skb, cmd,
 								  h0, h1, csum);
 						continue;
 					}
-					page_pool_put_full_page(qm->pool, new_page, true);
+					page_pool_put_full_page(rxq->pool, new_page, true);
 					atomic_long_inc(&ni->rx_dropped);
 					dma_sync_single_for_device(ni->dev,
 								   (dma_addr_t)dma + RTL_NI_QM_HEADROOM,
 								   sync_len,
 								   DMA_FROM_DEVICE);
-					rtl_ni_qm_retire(ni, voq, cmd, true);
+					rtl_ni_qm_retire(rxq, voq, cmd, true);
 					continue;
 				}
 				fb_pkts++;
 			}
 
-			skb = napi_alloc_skb(napi, len);
+			skb = napi_alloc_skb(&rxq->napi, len);
 			if (likely(skb)) {
 				skb_put_data(skb, data + hdr, len);
 				cb_pkts++;
@@ -1264,9 +1469,9 @@ int rtl_ni_qm_poll(struct rtl9617c_ni *ni, struct napi_struct *napi, int budget)
 			dma_sync_single_for_device(ni->dev,
 						   (dma_addr_t)dma + RTL_NI_QM_HEADROOM,
 						   sync_len, DMA_FROM_DEVICE);
-			rtl_ni_qm_retire(ni, voq, cmd, true);
+			rtl_ni_qm_retire(rxq, voq, cmd, true);
 			if (likely(skb))
-				rtl_ni_qm_deliver(ni, napi, skb, cmd, h0, h1, csum);
+				rtl_ni_qm_deliver(rxq, skb, cmd, h0, h1, csum);
 		}
 	}
 
@@ -1277,6 +1482,6 @@ int rtl_ni_qm_poll(struct rtl9617c_ni *ni, struct napi_struct *napi, int budget)
 	if (fb_pkts)
 		atomic_long_add(fb_pkts, &ni->rx_alloc_fallback);
 
-	rtl_ni_qm_refill_drain(ni, NAPI_POLL_WEIGHT);
+	rtl_ni_qm_refill_drain(rxq, NAPI_POLL_WEIGHT);
 	return count;
 }

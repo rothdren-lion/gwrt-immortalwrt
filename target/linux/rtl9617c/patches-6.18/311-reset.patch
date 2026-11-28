@@ -1,0 +1,23 @@
+diff --git a/drivers/reset/Kconfig b/drivers/reset/Kconfig
+@@ -259,6 +259,12 @@
+ 	  This driver uses SCMI Message Protocol to interact with the
+ 	  firmware controlling all the reset signals.
+ 
++config RESET_REALTEK_TAURUS
++	bool "Realtek Taurus reset controller"
++	depends on ARCH_REALTEK_TAURUS && OF
++	help
++	  Block reset lines of the Realtek Taurus SoCs.
++
+ config RESET_SIMPLE
+ 	bool "Simple Reset Controller Driver" if COMPILE_TEST || EXPERT
+ 	default ARCH_ASPEED || ARCH_BCMBCA || ARCH_BITMAIN || ARCH_REALTEK || ARCH_SOPHGO || ARCH_STM32 || (ARCH_INTEL_SOCFPGA && ARM64) || ARCH_SUNXI || ARC
+diff --git a/drivers/reset/Makefile b/drivers/reset/Makefile
+@@ -5,6 +5,7 @@
+ obj-y += starfive/
+ obj-y += sti/
+ obj-y += tegra/
++obj-$(CONFIG_RESET_REALTEK_TAURUS)	+= reset-taurus.o
+ obj-$(CONFIG_RESET_A10SR) += reset-a10sr.o
+ obj-$(CONFIG_RESET_ASPEED) += reset-aspeed.o
+ obj-$(CONFIG_RESET_ATH79) += reset-ath79.o

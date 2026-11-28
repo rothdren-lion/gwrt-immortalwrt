@@ -333,9 +333,12 @@ static int rtl_ni_open(struct net_device *dev)
 	}
 
 	phylink_start(port->phylink);
-	netif_start_queue(dev);
-	if (READ_ONCE(ni->tx_stopped))
-		netif_stop_queue(dev);
+	netif_tx_start_all_queues(dev);
+	for (id = 0; id < min_t(unsigned int, dev->real_num_tx_queues,
+				ni->dma.num_rings); id++) {
+		if (READ_ONCE(ni->dma.rings[id].stopped))
+			netif_tx_stop_queue(netdev_get_tx_queue(dev, id));
+	}
 	return 0;
 }
 
@@ -344,13 +347,20 @@ static int rtl_ni_stop(struct net_device *dev)
 	struct rtl9617c_ni_port *port = netdev_priv(dev);
 	struct rtl9617c_ni *ni = port->ni;
 
-	netif_stop_queue(dev);
+	netif_tx_stop_all_queues(dev);
+	rtl_fe_flush_port(ni->fe, dev);
+	if ((dev->features & NETIF_F_LOOPBACK) && dev->phydev &&
+	    dev->phydev->loopback_enabled) {
+		phy_loopback(dev->phydev, false, 0);
+		dev->features &= ~NETIF_F_LOOPBACK;
+	}
 	phylink_stop(port->phylink);
 	if (rtl_ni_is_ge(port->id)) {
+		if (ni->qm.lan_dq_bufs)
+			usleep_range(1000, 2000);
 		rtl_ni_rmw(ni, RTL_NI_PORT_RX(port->id), PORT_ENABLE, 0);
 		rtl_ni_rmw(ni, RTL_NI_PORT_TX(port->id), PORT_ENABLE, 0);
 	}
-	rtl_fe_flush_port(ni->fe, dev);
 	rtl_ni_engine_put(ni);
 	return 0;
 }
@@ -370,17 +380,17 @@ static netdev_tx_t rtl_ni_start_xmit(struct sk_buff *skb, struct net_device *dev
 	unsigned int egress = rtl_ni_is_ge(port->id) ? port->id : RTL_NI_PORT_P6;
 	const struct rtl9617c_ni_frame frame = {
 		.header_high = TX_HDR_HIGH,
-		.header_low = TX_HDR_LOW(egress),
+		.header_low = TX_HDR_LOW(egress) | (skb->priority & 7U),
 	};
 
 	/*
-	 * A GSO super-packet is larger than an MTU-sized frame: the stack caps it
-	 * at dev->gso_max_size = RTL_NI_TX_GSO_MAX instead (see
-	 * rtl_ni_port_offload), which is what still fits one descriptor buffer.
-	 * Everything else keeps the plain 1558-byte ceiling.
+	 * GSO super-packets up to rtl_ni_tx_gso_max() (65500 B with tx_sg=1,
+	 * 2032 B linear fallback with tx_sg=0) are accepted; all other frames
+	 * stay under the 1558-byte single-frame ceiling.
 	 */
 	if (skb->len < ETH_HLEN ||
-	    skb->len > (skb_is_gso(skb) ? RTL_NI_TX_GSO_MAX : RTL_NI_TX_FRAME_MAX)) {
+	    skb->len > (skb_is_gso(skb) ? rtl_ni_tx_gso_max() :
+					  RTL_NI_TX_FRAME_MAX)) {
 		DEV_STATS_INC(dev, tx_dropped);
 		dev_kfree_skb_any(skb);
 		return NETDEV_TX_OK;
@@ -508,34 +518,47 @@ static netdev_tx_t rtl_ni_port_xmit(struct sk_buff *skb,
 	return rtl_ni_start_xmit(skb, dev);
 }
 
-#define RTL_NI_TX_OFFLOAD_FEATURES	(NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM | \
-					 NETIF_F_SG | NETIF_F_TSO | NETIF_F_TSO6)
-
 static netdev_features_t rtl_ni_fix_features(struct net_device *dev,
 					     netdev_features_t features)
 {
-	if (!rtl_ni_tx_csum && !rtl_ni_tso)
-		features &= ~(NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM);
-	if (!rtl_ni_tso)
-		features &= ~(NETIF_F_SG | NETIF_F_TSO | NETIF_F_TSO6);
-	else if (!rtl_ni_tso_v6)
-		features &= ~NETIF_F_TSO6;
-	return features;
+	return (features & ~RTL9617C_NI_TX_OFFLOAD_FEATURES) |
+	       (features & rtl9617c_ni_tx_offload_features());
+}
+
+static int rtl_ni_set_features(struct net_device *dev,
+			       netdev_features_t features)
+{
+	netdev_features_t changed = dev->features ^ features;
+
+	if (changed & NETIF_F_LOOPBACK) {
+		bool enable = !!(features & NETIF_F_LOOPBACK);
+		int speed = 0;
+
+		if (!dev->phydev)
+			return -EOPNOTSUPP;
+		if (enable && !dev->phydev->link)
+			speed = SPEED_1000;
+		return phy_loopback(dev->phydev, enable, speed);
+	}
+
+	return 0;
 }
 
 /*
- * Linux's skb_gso_ok() checks gso_type/fraglist but not skb->len against
- * dev->tso_max_size, so a GRO-coalesced forwarded packet can arrive larger
- * than a single TX DMA slot.  Force software GSO segmentation for oversized
- * or encapsulated super-packets rather than dropping them in start_xmit().
+ * Linux's skb_gso_ok() checks gso_type/fraglist/nr_frags but not skb->len against
+ * dev->tso_max_size. Force software GSO segmentation (or linearize) whenever an
+ * skb exceeds hardware SG/LSO limits rather than dropping in start_xmit().
  */
 static netdev_features_t rtl_ni_features_check(struct sk_buff *skb,
 					       struct net_device *dev,
 					       netdev_features_t features)
 {
+	if (skb_has_frag_list(skb))
+		features &= ~(NETIF_F_GSO_MASK | NETIF_F_SG);
+	if (skb_shinfo(skb)->nr_frags > MAX_SKB_FRAGS)
+		features &= ~NETIF_F_GSO_MASK;
 	if (skb_is_gso(skb) &&
-	    (skb->encapsulation ||
-	     skb->len + RTL_NI_DMA_HDR_LEN > RTL_NI_DMA_BUF_SIZE))
+	    (skb->encapsulation || skb->len > rtl_ni_tx_gso_max()))
 		features &= ~NETIF_F_GSO_MASK;
 	return features;
 }
@@ -545,6 +568,7 @@ static const struct net_device_ops rtl_ni_netdev_ops = {
 	.ndo_stop = rtl_ni_stop,
 	.ndo_start_xmit = rtl_ni_port_xmit,
 	.ndo_fix_features = rtl_ni_fix_features,
+	.ndo_set_features = rtl_ni_set_features,
 	.ndo_features_check = rtl_ni_features_check,
 	.ndo_set_mac_address = rtl_ni_set_mac_address,
 	.ndo_validate_addr = eth_validate_addr,
@@ -661,28 +685,30 @@ static void rtl_ni_port_destroy(struct rtl9617c_ni_port *port)
 }
 
 /*
- * Advertise the TX offloads from the module parameters (see ni_dma.c).  Every
- * parameter defaults to 0, so an unmodified boot advertises exactly what it did
- * before: RXCSUM only.
- *
- * TSO is dropped by the core unless NETIF_F_SG and a CSUM feature are present
- * as well (netdev_fix_features(), net/core/dev.c); this driver linearises every
- * frame with skb_copy_bits(), so consuming scatter-gather skbs is safe.  A
- * super-packet is capped at RTL_NI_TX_GSO_MAX so that it still fits one 2048-byte
- * descriptor buffer, i.e. the hardware gets 1-2 MSS-sized segments per frame.
+ * Advertise TX offloads from the module parameters in ni_dma.c (tx_csum,
+ * tso, tso_v6, tx_sg, tx_multivp).  When tx_sg=1 (default), multi-descriptor
+ * DMA LSO handles true scatter-gather super-packets up to 65500 B across 4
+ * per-CPU DMA VPs; when tx_sg=0, super-packets are capped at RTL_NI_TX_GSO_MAX
+ * (2032 B) for the single-descriptor linear bounce path.
  */
 static void rtl_ni_port_offload(struct net_device *dev)
 {
-	dev->hw_features |= RTL_NI_TX_OFFLOAD_FEATURES;
-	dev->wanted_features |= RTL_NI_TX_OFFLOAD_FEATURES;
-	dev->features |= rtl_ni_fix_features(dev, RTL_NI_TX_OFFLOAD_FEATURES);
-	netif_set_tso_max_size(dev, RTL_NI_TX_GSO_MAX);
+	unsigned int txqs = READ_ONCE(rtl_ni_tx_multivp) ? RTL_NI_TX_RINGS : 1;
+
+	dev->hw_features |= RTL9617C_NI_TX_OFFLOAD_FEATURES;
+	dev->wanted_features |= RTL9617C_NI_TX_OFFLOAD_FEATURES;
+	dev->features |= rtl_ni_fix_features(dev, RTL9617C_NI_TX_OFFLOAD_FEATURES);
+	netif_set_tso_max_size(dev, rtl_ni_tx_gso_max());
+	netif_set_tso_max_segs(dev, MAX_SKB_FRAGS + 1);
+	netif_set_real_num_tx_queues(dev, txqs);
 }
 
 void rtl_ni_ports_update_features(void)
 {
-	netdev_features_t wanted = rtl_ni_fix_features(NULL,
-						       RTL_NI_TX_OFFLOAD_FEATURES);
+	netdev_features_t wanted = rtl9617c_ni_tx_offload_features();
+	unsigned int gso_max = rtl_ni_tx_gso_max();
+	unsigned int txqs = READ_ONCE(rtl_ni_tx_multivp) ? RTL_NI_TX_RINGS : 1;
+	struct rtl9617c_ni *ni = NULL;
 	struct net_device *dev;
 
 	if (system_state < SYSTEM_RUNNING)
@@ -691,11 +717,41 @@ void rtl_ni_ports_update_features(void)
 	rtnl_lock();
 	for_each_netdev(&init_net, dev) {
 		if (dev->netdev_ops == &rtl_ni_netdev_ops) {
+			if (!ni)
+				ni = ((struct rtl9617c_ni_port *)netdev_priv(dev))->ni;
+			netif_set_real_num_tx_queues(dev, txqs);
+			netif_set_tso_max_size(dev, gso_max);
+			netif_set_tso_max_segs(dev, MAX_SKB_FRAGS + 1);
 			dev->wanted_features =
-				(dev->wanted_features & ~RTL_NI_TX_OFFLOAD_FEATURES) |
+				(dev->wanted_features & ~RTL9617C_NI_TX_OFFLOAD_FEATURES) |
 				wanted;
 			netdev_update_features(dev);
 		}
+	}
+	rtl_ni_notify_pon_features(ni);
+	rtnl_unlock();
+}
+
+void rtl_ni_ports_rss_apply(void)
+{
+	struct rtl9617c_ni *ni = NULL;
+	struct net_device *dev;
+
+	if (system_state < SYSTEM_RUNNING)
+		return;
+
+	rtnl_lock();
+	for_each_netdev(&init_net, dev) {
+		if (dev->netdev_ops == &rtl_ni_netdev_ops) {
+			ni = ((struct rtl9617c_ni_port *)netdev_priv(dev))->ni;
+			break;
+		}
+	}
+	if (ni) {
+		mutex_lock(&ni->lock);
+		if (ni->qm.ready)
+			rtl_ni_qm_rss_apply(ni);
+		mutex_unlock(&ni->lock);
 	}
 	rtnl_unlock();
 }
@@ -720,7 +776,7 @@ static int rtl_ni_port_create(struct rtl9617c_ni *ni, struct device_node *np)
 	if (ret)
 		return ret;
 
-	dev = alloc_etherdev(sizeof(*port));
+	dev = alloc_etherdev_mq(sizeof(*port), RTL_NI_TX_RINGS);
 	if (!dev)
 		return -ENOMEM;
 	SET_NETDEV_DEV(dev, ni->dev);
@@ -739,6 +795,8 @@ static int rtl_ni_port_create(struct rtl9617c_ni *ni, struct device_node *np)
 	dev->ethtool_ops = &rtl_ni_ethtool_ops;
 	dev->max_mtu = RTL_NI_PORT_MAX_MTU;
 	dev->hw_features |= NETIF_F_RXCSUM;
+	if (rtl_ni_is_ge(id))
+		dev->hw_features |= NETIF_F_LOOPBACK;
 	dev->features |= NETIF_F_RXCSUM;
 	rtl_ni_port_offload(dev);
 	ret = rtl_ni_port_mac_probe(port);

@@ -28,12 +28,16 @@
 #define RTL_NI_FRAME_MAX		(VLAN_ETH_FRAME_LEN + 4)
 #define RTL_NI_TX_TIMER_NS		NSEC_PER_MSEC
 
-#define RTL_NI_DMA_ORDER		8
+#define RTL_NI_TX_RINGS			4
+#define RTL_NI_DMA_ORDER		9
 #define RTL_NI_DMA_ENTRIES		BIT(RTL_NI_DMA_ORDER)
+#define RTL_NI_DMA_MASK			(RTL_NI_DMA_ENTRIES - 1)
 #define RTL_NI_DMA_BUF_SIZE		2048
 #define RTL_NI_DMA_HDR_LEN		16
 #define RTL_NI_DMA_VP			8
 #define RTL_NI_DMA_GUARD		2
+#define RTL_NI_TX_COPYBREAK		128U
+#define RTL_NI_TX_MAX_FRAGS		(MAX_SKB_FRAGS + 2)
 
 #define RTL_NI_QM_VOQS			8
 #define RTL_NI_QM_RING_SIZE		1024
@@ -42,6 +46,8 @@
 #define RTL_NI_QM_EQS			2
 #define RTL_NI_QM_EQ_BUFS		256
 #define RTL_NI_QM_BUFS			(RTL_NI_QM_EQS * RTL_NI_QM_EQ_BUFS)
+#define RTL_NI_RX_QUEUES		4
+#define RTL_NI_QM_CPU_EQS		(RTL_NI_RX_QUEUES * RTL_NI_QM_EQS)
 #define RTL_NI_QM_BUF_SIZE		2048
 #define RTL_NI_QM_HEADROOM		64
 #define RTL_NI_QM_TAILROOM		384
@@ -65,13 +71,42 @@ struct rtl_ni_dma_desc {
 	__le32 ctrl;
 };
 
-struct rtl_ni_dma {
-	void __iomem *base;
+enum rtl_ni_tx_map_type {
+	RTL_NI_TX_MAP_NONE = 0,
+	RTL_NI_TX_MAP_SINGLE,
+	RTL_NI_TX_MAP_PAGE,
+};
+
+struct rtl_ni_tx_slot {
+	struct sk_buff *skb;
+	dma_addr_t dma;
+	u32 len;
+	u8 map_type;
+};
+
+struct rtl_ni_dma_ring {
+	spinlock_t lock;
+	unsigned int id;
+	unsigned int vp;
 	struct rtl_ni_dma_desc *desc;
-	void *mem;
-	dma_addr_t mem_dma;
+	dma_addr_t desc_dma;
+	void *hdrs;
+	dma_addr_t hdrs_dma;
+	void *bufs;
+	dma_addr_t bufs_dma;
+	struct rtl_ni_tx_slot *slots;
 	unsigned int head;
 	unsigned int tail;
+	unsigned int zc_in_flight;
+	unsigned int zc_skbs;
+	bool stopped;
+};
+
+struct rtl_ni_dma {
+	struct device *dev;
+	void __iomem *base;
+	struct rtl_ni_dma_ring rings[RTL_NI_TX_RINGS];
+	unsigned int num_rings;
 };
 
 /*
@@ -155,18 +190,27 @@ struct rtl_ni_tx_offload {
 };
 
 /*
- * A super-packet has to fit one descriptor buffer, header included, because the
- * driver still publishes a single non-SG descriptor (ctrl[31:24] = 0x61) per
- * frame.  With the 2048-byte buffer that caps a TSO super-packet at 1-2
- * MSS-sized segments; a full-size TSO needs a bigger buffer or the OEM SG form
- * (ctrl 0xE0), neither of which this change enables.
+ * Linear single-buffer bounce ceiling vs multi-descriptor SG ceiling:
+ *  - RTL_NI_TX_GSO_MAX (2032 B) is the single-descriptor bounce limit when
+ *    tx_sg=0 (header + payload fit one 2048 B bounce buffer).
+ *  - RTL_NI_TX_GSO_MAX_SG (65500 B) is the multi-descriptor DMA LSO ceiling
+ *    when tx_sg=1 (lso_para1 holds a 16-bit frame length up to 65535 B).
  */
-#define RTL_NI_TX_GSO_MAX	(RTL_NI_DMA_BUF_SIZE - RTL_NI_DMA_HDR_LEN)
+#define RTL_NI_TX_GSO_MAX		(RTL_NI_DMA_BUF_SIZE - RTL_NI_DMA_HDR_LEN)
+#define RTL_NI_TX_GSO_MAX_SG		65500U
 
 /* TX offload switches, defined in ni_dma.c; ni_port.c advertises from them. */
 extern bool rtl_ni_tx_csum;
 extern bool rtl_ni_tso;
 extern bool rtl_ni_tso_v6;
+extern bool rtl_ni_tx_sg;
+extern bool rtl_ni_tx_multivp;
+
+static inline unsigned int rtl_ni_tx_gso_max(void)
+{
+	return READ_ONCE(rtl_ni_tx_sg) ? RTL_NI_TX_GSO_MAX_SG :
+					 RTL_NI_TX_GSO_MAX;
+}
 
 struct rtl_ni_qm_slot {
 	u32 dma;
@@ -180,20 +224,36 @@ struct rtl_ni_qm_refill {
 	unsigned int pending;
 };
 
-struct rtl_ni_qm {
-	void __iomem *axi;
+struct rtl_ni_rxq {
+	struct rtl9617c_ni *ni;
+	unsigned int id;
+	unsigned int eq0;
+	unsigned int eq1;
+	u16 bid_base;
+	int irq;
+	char irq_name[24];
+	struct napi_struct napi;
 	struct page_pool *pool;
 	struct rtl_ni_qm_slot *rx_slots;
 	void *ring;
 	dma_addr_t ring_dma;
+	unsigned int read[RTL_NI_QM_VOQS];
+	struct rtl_ni_qm_refill refill;
+	atomic_long_t rx_pkts;
+	bool napi_added;
+	bool ready;
+};
+
+struct rtl_ni_qm {
+	void __iomem *axi;
 	void *dq;
 	dma_addr_t dq_dma;
 	void *lan_dq;
 	dma_addr_t lan_dq_dma;
 	size_t lan_dq_size;
 	unsigned int lan_dq_bufs;
-	unsigned int read[RTL_NI_QM_VOQS];
-	struct rtl_ni_qm_refill refill;
+	unsigned int num_rxq;
+	struct rtl_ni_rxq rxq[RTL_NI_RX_QUEUES];
 	bool ready;
 };
 
@@ -216,15 +276,17 @@ struct rtl9617c_ni {
 	void __iomem *reset;
 	void __iomem *fe_axi;
 	struct net_device *napi_dev;
-	struct napi_struct napi;
 	struct hrtimer timer;
+	spinlock_t timer_lock;
 	spinlock_t tx_lock;
 	spinlock_t rx_lock;
 	struct mutex lock;
 	unsigned int users;
 	bool rx_active;
+	bool timer_armed;
 	bool tx_stopped;
-	int irq;
+	bool tx_closing;
+	atomic_t pon_stopped_mask;
 	struct rtl_ni_dma dma;
 	struct rtl_ni_qm qm;
 	struct rtl_fe *fe;
@@ -245,6 +307,9 @@ struct rtl9617c_ni {
 	atomic_long_t rx_zerocopy_pkts;
 	atomic_long_t rx_copybreak_pkts;
 	atomic_long_t rx_alloc_fallback;
+	atomic_long_t tx_sg_pkts;
+	atomic_long_t tx_tso_pkts;
+	atomic_long_t tx_bounce_pkts;
 };
 
 static inline u32 rtl_ni_read(struct rtl9617c_ni *ni, unsigned int reg)
@@ -275,36 +340,57 @@ netdev_tx_t rtl_ni_xmit_frame(struct rtl9617c_ni *ni, struct net_device *dev,
 			      struct sk_buff *skb,
 			      const struct rtl9617c_ni_frame *frame);
 void rtl_ni_tx_restart(struct rtl9617c_ni *ni);
+void rtl_ni_notify_pon_features(struct rtl9617c_ni *ni);
+int rtl_ni_try_tx_hook(struct net_device *dev, struct sk_buff *skb,
+		       const struct rtl9617c_ni_frame *frame);
+void rtl_ni_notify_dma_reset(void);
 
 int rtl_ni_dma_alloc(struct rtl9617c_ni *ni);
 int rtl_ni_dma_start(struct rtl_ni_dma *dma);
 void rtl_ni_dma_stop(struct rtl_ni_dma *dma);
-void rtl_ni_dma_reclaim(struct rtl_ni_dma *dma);
-bool rtl_ni_dma_avail(struct rtl_ni_dma *dma);
-int rtl_ni_dma_xmit(struct rtl_ni_dma *dma, struct sk_buff *skb,
-		    const struct rtl9617c_ni_frame *frame, unsigned int mtu);
+void rtl_ni_dma_ring_reclaim(struct rtl_ni_dma *dma,
+			     struct rtl_ni_dma_ring *ring);
+bool rtl_ni_dma_ring_avail(const struct rtl_ni_dma_ring *ring,
+			   unsigned int needed);
+int rtl_ni_dma_ring_xmit(struct rtl_ni_dma *dma, struct rtl_ni_dma_ring *ring,
+			 struct sk_buff *skb,
+			 const struct rtl9617c_ni_frame *frame,
+			 unsigned int mtu, bool *consumed, bool *used_sg);
 void rtl_ni_tx_hdr_build(struct rtl_ni_tx_hdr *hdr,
 			 const struct rtl9617c_ni_frame *frame,
 			 unsigned int len, bool full_header);
 void rtl_ni_tx_hdr_write(u8 *buf, const struct rtl_ni_tx_hdr *hdr,
 			 bool oem_layout);
+u32 rtl_ni_dma_desc_ctrl(unsigned int seg_len, bool sof, bool eof, bool hp0,
+			 bool oam);
+int rtl_ni_tx_l4_parse_head(const u8 *data, unsigned int head_len,
+			    unsigned int total_len, bool gso,
+			    struct rtl_ni_tx_l4info *info);
 int rtl_ni_tx_l4_parse(const u8 *data, unsigned int len,
 		       struct rtl_ni_tx_l4info *info);
 int rtl_ni_tx_offload_prepare(u8 *frame, unsigned int len,
 			      const struct rtl_ni_tx_offload *req, u32 *para0);
+int rtl_ni_tx_offload_prepare_sg(const u8 *head, unsigned int head_len,
+				 unsigned int total_len,
+				 const struct rtl_ni_tx_offload *req,
+				 u32 *para0);
 
 int rtl_ni_qm_alloc(struct rtl9617c_ni *ni);
 void rtl_ni_qm_free(struct rtl9617c_ni *ni);
 int rtl_ni_qm_start(struct rtl9617c_ni *ni);
 void rtl_ni_qm_stop(struct rtl9617c_ni *ni);
 void rtl_ni_qm_drain_slots(struct rtl9617c_ni *ni);
-int rtl_ni_qm_poll(struct rtl9617c_ni *ni, struct napi_struct *napi, int budget);
+int rtl_ni_qm_poll(struct rtl_ni_rxq *rxq, int budget);
+int rtl_ni_qm_rss_apply(struct rtl9617c_ni *ni);
+void rtl_ni_rss_dpid_words(unsigned int num_rxq, u32 *dpid0, u32 *dpid1);
+unsigned int rtl_ni_rx_queues_get(void);
 
 int rtl_ni_serdes_bringup(struct rtl9617c_ni *ni);
 
 int rtl_ni_ports_register(struct rtl9617c_ni *ni);
 void rtl_ni_ports_unregister(struct rtl9617c_ni *ni);
 void rtl_ni_ports_update_features(void);
+void rtl_ni_ports_rss_apply(void);
 
 void rtl_ni_mib_init(struct rtl9617c_ni *ni);
 void rtl_ni_mib_exit(struct rtl9617c_ni *ni);

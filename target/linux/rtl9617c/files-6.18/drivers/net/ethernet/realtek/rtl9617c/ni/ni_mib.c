@@ -29,6 +29,8 @@ static const char rtl_ni_mib_names[RTL9617C_NI_MIB_COUNTERS][ETH_GSTRING_LEN] = 
 static const char rtl_ni_extra_names[][ETH_GSTRING_LEN] = {
 	"ni_rx_errors", "ni_rx_dropped",
 	"ni_rx_zerocopy", "ni_rx_copybreak", "ni_rx_alloc_fallback",
+	"ni_tx_sg", "ni_tx_tso", "ni_tx_bounce",
+	"ni_rx_q0", "ni_rx_q1", "ni_rx_q2", "ni_rx_q3",
 };
 
 static bool rtl_ni_mib_skip(unsigned int dir, unsigned int index)
@@ -483,4 +485,12 @@ void rtl_ni_get_ethtool_stats(struct net_device *dev,
 	data[count + 2] = atomic_long_read(&ni->rx_zerocopy_pkts);
 	data[count + 3] = atomic_long_read(&ni->rx_copybreak_pkts);
 	data[count + 4] = atomic_long_read(&ni->rx_alloc_fallback);
+	data[count + 5] = atomic_long_read(&ni->tx_sg_pkts);
+	data[count + 6] = atomic_long_read(&ni->tx_tso_pkts);
+	data[count + 7] = atomic_long_read(&ni->tx_bounce_pkts);
+	BUILD_BUG_ON(RTL_NI_RX_QUEUES != 4);
+	data[count + 8] = atomic_long_read(&ni->qm.rxq[0].rx_pkts);
+	data[count + 9] = atomic_long_read(&ni->qm.rxq[1].rx_pkts);
+	data[count + 10] = atomic_long_read(&ni->qm.rxq[2].rx_pkts);
+	data[count + 11] = atomic_long_read(&ni->qm.rxq[3].rx_pkts);
 }

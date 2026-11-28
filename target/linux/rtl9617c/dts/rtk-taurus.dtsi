@@ -64,6 +64,10 @@
 			opp-hz = /bits/ 64 <400000000>;
 			clock-latency-ns = <20000000>;
 		};
+		opp-600000000 {
+			opp-hz = /bits/ 64 <600000000>;
+			clock-latency-ns = <20000000>;
+		};
 		opp-625000000 {
 			opp-hz = /bits/ 64 <625000000>;
 			clock-latency-ns = <20000000>;
@@ -666,6 +670,8 @@
 				 <&block_ext_rst TAURUS_USB2_PORT1_RESET>;
 			reset-names = "usbcore_reset", "usb2port1_reset";
 			portmask = <0x3>;
+			phy_data_verA = "revA v1.1 (2021.12.13)";
+			phy_data_verB = "revB v1.1 (2022.04.20)";
 			phy_sel = <&phy_param0>, <&phy_param1>;
 			status = "disabled";
 
@@ -677,7 +683,7 @@
 				phy_data_addrB = /bits/ 8
 					<0xE0 0xE2 0xE4 0xE7 0xF4 0xE7 0xF4 0xE0 0xE0 0xE0>;
 				phy_data_arrayB = /bits/ 8
-					<0x1F 0xF9 0x3B 0x71 0xDB 0x73 0xBB 0x26 0x22 0x26>;
+					<0x1F 0xF9 0x6B 0x71 0xDB 0x43 0xBB 0x26 0x22 0x26>;
 			};
 
 			phy_param1: phy_param1 {
@@ -688,7 +694,7 @@
 				phy_data_addrB = /bits/ 8
 					<0xE0 0xE2 0xE4 0xE7 0xF4 0xE7 0xF4 0xE0 0xE0 0xE0>;
 				phy_data_arrayB = /bits/ 8
-					<0x1F 0xF9 0x3B 0x71 0xDB 0x53 0xBB 0x26 0x22 0x26>;
+					<0x1F 0xF9 0x6B 0x71 0xDB 0x43 0xBB 0x26 0x22 0x26>;
 			};
 		};
 
@@ -735,45 +741,56 @@
 			dr_mode = "host";
 			reg = <0 0xf0200000 0 0x80000>;
 			interrupts = <GIC_SPI TAURUS_IRQ_GLB_USB3_0 IRQ_TYPE_LEVEL_HIGH>;
+			usb-phy = <&usb_hsphy>, <&usb_ssphy>;
 			status = "disabled";
 		};
 
 		pcie0: pcie@f4325000 {
 			compatible = "realtek,taurus-pcie";
 			reg = <0 0xf4325000 0 0x400>,
-			      <0 0xa0001000 0 0x1000>,
-			      <0 0xa0002000 0 0x2000>,
-			      <0 0xa0030000 0 0x100000>,
-			      <0 0xf4333000 0 0x2000>;
-			reg-names = "glbl_regs", "rc_dbi", "config", "iatu",
-				    "serdes_phy";
+			      <0 0xa0000000 0 0x1000>,
+			      <0 0xa0001000 0 0x2000>,
+			      <0 0xa0300000 0 0x100000>,
+			      <0 0xf4333000 0 0x2000>,
+			      <0 0xf432c000 0 0x1c>;
+			reg-names = "glbl_regs", "dbi", "config", "iatu",
+				    "serdes_phy", "coherent-atu";
+			realtek,coherent-hi-addr = <4>;
+			dma-coherent;
 			phys = <&s0_pcie_phy0>,
-			      <&s0_pcie_phy1>;
-			phy-names = "pcie-phy0";
+			       <&s0_pcie_phy1>;
+			phy-names = "pcie-phy0", "pcie-phy1";
 
 			#address-cells = <3>;
 			#size-cells = <2>;
 			device_type = "pci";
 			bus-range = <0x0 0xff>;
+			linux,pci-domain = <0>;
 			ranges = <0x81000000 0 0 0 0xa0003000 0 0x00010000>,
 				 <0x82000000 0 0xa0400000 0 0xa0400000 0 0x0fc00000>;
 
+			#interrupt-cells = <1>;
+			interrupt-map-mask = <0 0 0 7>;
+			interrupt-map = <0 0 0 1 &pcie0_intc 0>,
+					<0 0 0 2 &pcie0_intc 1>,
+					<0 0 0 3 &pcie0_intc 2>,
+					<0 0 0 4 &pcie0_intc 3>;
+
 			id = <0>;
-			num-viewport = <1>;
 			num-lanes = <1>;
 			clocks = <&gate_pcie0_clk>;
 			interrupt-parent = <&gic>;
-			interrupts = 			<GIC_SPI TAURUS_IRQ_GLB_PCI0_0 IRQ_TYPE_LEVEL_HIGH>,
-			<GIC_SPI TAURUS_IRQ_GLB_PCI0_1 IRQ_TYPE_LEVEL_HIGH>,
-			<GIC_SPI TAURUS_IRQ_GLB_PCI0_2 IRQ_TYPE_LEVEL_HIGH>,
-			<GIC_SPI TAURUS_IRQ_GLB_PCI0_3 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <GIC_SPI TAURUS_IRQ_GLB_PCI0_0 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI TAURUS_IRQ_GLB_PCI0_1 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI TAURUS_IRQ_GLB_PCI0_2 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI TAURUS_IRQ_GLB_PCI0_3 IRQ_TYPE_LEVEL_HIGH>;
 
 			resets = <&block_rst TAURUS_PCIE0_RESET>,
 				 <&dphy_rst TAURUS_PHY_S0_PCIE_RESET>;
 			reset-names = "core_reset", "phy_reset";
 
 			serdes-cfg-verA = "revA v1.3 (2022.04.22)";
-			serdes-cfg-verB = "revB v1.5 (2023.12.13)";
+			serdes-cfg-verB = "revB v1.2 (2022.04.22)";
 			serdes-cfg-dataA = /* S0_0 & S0_1 gen1 for revA */
 		              <0x04 0xa855>,
 		              <0x18 0x000a>,
@@ -819,7 +836,6 @@
 		              <0x34 0xf71a>,
 		              <0x38 0x1000>,
 		              <0x74 0xda1f>,
-				<0x78 0xe0e2>,
 		              <0x80 0xd477>,
 		              <0x88 0x0023>,
 		              <0x8c 0x0b66>,
@@ -827,6 +843,7 @@
 		              <0xa0 0xf802>,
 		              <0xc0 0x0055>,
 		              <0xc8 0xf0f3>,
+		              <0x24 0x500c>,
 		              <0x24 0x520c>,
 		              /* S0_0 & S0_1 gen2 for revB */
 		              <0x104 0xa84a>,
@@ -838,7 +855,6 @@
 		              <0x134 0xf71a>,
 		              <0x138 0x1000>,
 		              <0x174 0xda1f>,
-				<0x178 0xe0e2>,
 		              <0x180 0xd479>,
 		              <0x184 0x55aa>,
 		              <0x188 0x0023>,
@@ -848,46 +864,71 @@
 		              <0x1bc 0x3900>,
 		              <0x1c0 0x004a>,
 		              <0x1c8 0xf0f3>,
+		              <0x124 0x500c>,
 		              <0x124 0x520c>;
 			status = "disabled";
+
+			pcie0_intc: interrupt-controller {
+				interrupt-controller;
+				#address-cells = <0>;
+				#interrupt-cells = <1>;
+			};
+
+			pcie0_port: pcie@0,0 {
+				reg = <0x0000 0 0 0 0>;
+				device_type = "pci";
+				#address-cells = <3>;
+				#size-cells = <2>;
+				ranges;
+			};
 		};
 
 		pcie1: pcie@f4326000 {
 			compatible = "realtek,taurus-pcie";
 			reg = <0 0xf4326000 0 0x400>,
-			      <0 0xb0001000 0 0x1000>,
-			      <0 0xb0002000 0 0x2000>,
-			      <0 0xb0030000 0 0x100000>,
-			      <0 0xf4335000 0 0x2000>;
-			reg-names = "glbl_regs", "rc_dbi", "config", "iatu",
-				    "serdes_phy";
+			      <0 0xb0000000 0 0x1000>,
+			      <0 0xb0001000 0 0x2000>,
+			      <0 0xb0300000 0 0x100000>,
+			      <0 0xf4335000 0 0x2000>,
+			      <0 0xf432c100 0 0x1c>;
+			reg-names = "glbl_regs", "dbi", "config", "iatu",
+				    "serdes_phy", "coherent-atu";
+			realtek,coherent-hi-addr = <4>;
+			dma-coherent;
 			phys = <&s1_pcie_phy0>,
-			      <&s1_pcie_phy1>;
-			phy-names = "pcie-phy0";
+			       <&s1_pcie_phy1>;
+			phy-names = "pcie-phy0", "pcie-phy1";
 
 			#address-cells = <3>;
 			#size-cells = <2>;
 			device_type = "pci";
 			bus-range = <0x0 0xff>;
+			linux,pci-domain = <1>;
 			ranges = <0x81000000 0 0 0 0xb0003000 0 0x00010000>,
 				 <0x82000000 0 0xb0400000 0 0xb0400000 0 0x0fc00000>;
 
+			#interrupt-cells = <1>;
+			interrupt-map-mask = <0 0 0 7>;
+			interrupt-map = <0 0 0 1 &pcie1_intc 0>,
+					<0 0 0 2 &pcie1_intc 1>,
+					<0 0 0 3 &pcie1_intc 2>,
+					<0 0 0 4 &pcie1_intc 3>;
+
 			id = <1>;
-			num-viewport = <1>;
 			num-lanes = <1>;
 			clocks = <&gate_pcie1_clk>;
 			interrupt-parent = <&gic>;
-			interrupts = 			<GIC_SPI TAURUS_IRQ_GLB_PCI1_0 IRQ_TYPE_LEVEL_HIGH>,
-			<GIC_SPI TAURUS_IRQ_GLB_PCI1_1 IRQ_TYPE_LEVEL_HIGH>,
-			<GIC_SPI TAURUS_IRQ_GLB_PCI1_2 IRQ_TYPE_LEVEL_HIGH>,
-			<GIC_SPI TAURUS_IRQ_GLB_PCI1_3 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <GIC_SPI TAURUS_IRQ_GLB_PCI1_0 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI TAURUS_IRQ_GLB_PCI1_1 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI TAURUS_IRQ_GLB_PCI1_2 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI TAURUS_IRQ_GLB_PCI1_3 IRQ_TYPE_LEVEL_HIGH>;
 
 			resets = <&block_rst TAURUS_PCIE1_RESET>,
 				 <&dphy_rst TAURUS_PHY_S1_PCIE_RESET>;
 			reset-names = "core_reset", "phy_reset";
 
 			serdes-cfg-verA = "revA v1.3 (2022.04.22)";
-			serdes-cfg-verB = "revB v1.5 (2023.12.13)";
+			serdes-cfg-verB = "revB v1.2 (2022.04.22)";
 			serdes-cfg-dataA = /* S0_0 & S0_1 gen1 for revA */
 		              <0x04 0xa855>,
 		              <0x18 0x000a>,
@@ -933,7 +974,6 @@
 		              <0x34 0xf71a>,
 		              <0x38 0x1000>,
 		              <0x74 0xda1f>,
-				<0x78 0xe0e2>,
 		              <0x80 0xd477>,
 		              <0x88 0x0023>,
 		              <0x8c 0x0b66>,
@@ -953,7 +993,6 @@
 		              <0x134 0xf71a>,
 		              <0x138 0x1000>,
 		              <0x174 0xda1f>,
-				<0x178 0xe0e2>,
 		              <0x180 0xd479>,
 		              <0x184 0x55aa>,
 		              <0x188 0x0023>,
@@ -966,17 +1005,34 @@
 		              <0x124 0x500c>,
 		              <0x124 0x520c>;
 			status = "disabled";
+
+			pcie1_intc: interrupt-controller {
+				interrupt-controller;
+				#address-cells = <0>;
+				#interrupt-cells = <1>;
+			};
+
+			pcie1_port: pcie@0,0 {
+				reg = <0x0000 0 0 0 0>;
+				device_type = "pci";
+				#address-cells = <3>;
+				#size-cells = <2>;
+				ranges;
+			};
 		};
 
 		pcie2: pcie@f4327000 {
 			compatible = "realtek,taurus-pcie";
 			reg = <0 0xf4327000 0 0x400>,
-			      <0 0xc0001000 0 0x1000>,
-			      <0 0xc0002000 0 0x2000>,
-			      <0 0xc0030000 0 0x100000>,
-			      <0 0xf4337000 0 0x1000>;
-			reg-names = "glbl_regs", "rc_dbi", "config", "iatu",
-				    "serdes_phy";
+			      <0 0xc0000000 0 0x1000>,
+			      <0 0xc0001000 0 0x2000>,
+			      <0 0xc0300000 0 0x100000>,
+			      <0 0xf4337000 0 0x1000>,
+			      <0 0xf432c200 0 0x1c>;
+			reg-names = "glbl_regs", "dbi", "config", "iatu",
+				    "serdes_phy", "coherent-atu";
+			realtek,coherent-hi-addr = <4>;
+			dma-coherent;
 			phys = <&s2_pcie_phy0>;
 			phy-names = "pcie-phy0";
 
@@ -984,18 +1040,25 @@
 			#size-cells = <2>;
 			device_type = "pci";
 			bus-range = <0x0 0xff>;
+			linux,pci-domain = <2>;
 			ranges = <0x81000000 0 0 0 0xc0003000 0 0x00010000>,
 				 <0x82000000 0 0xc0400000 0 0xc0400000 0 0x0fc00000>;
 
+			#interrupt-cells = <1>;
+			interrupt-map-mask = <0 0 0 7>;
+			interrupt-map = <0 0 0 1 &pcie2_intc 0>,
+					<0 0 0 2 &pcie2_intc 1>,
+					<0 0 0 3 &pcie2_intc 2>,
+					<0 0 0 4 &pcie2_intc 3>;
+
 			id = <2>;
-			num-viewport = <1>;
 			num-lanes = <1>;
 			clocks = <&gate_pcie2_clk>;
 			interrupt-parent = <&gic>;
-			interrupts = 			<GIC_SPI TAURUS_IRQ_GLB_PCI2_0 IRQ_TYPE_LEVEL_HIGH>,
-			<GIC_SPI TAURUS_IRQ_GLB_PCI2_1 IRQ_TYPE_LEVEL_HIGH>,
-			<GIC_SPI TAURUS_IRQ_GLB_PCI2_2 IRQ_TYPE_LEVEL_HIGH>,
-			<GIC_SPI TAURUS_IRQ_GLB_PCI2_3 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <GIC_SPI TAURUS_IRQ_GLB_PCI2_0 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI TAURUS_IRQ_GLB_PCI2_1 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI TAURUS_IRQ_GLB_PCI2_2 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI TAURUS_IRQ_GLB_PCI2_3 IRQ_TYPE_LEVEL_HIGH>;
 
 			resets = <&block_rst TAURUS_PCIE2_RESET>,
 				 <&dphy_rst TAURUS_PHY_S2_PCIE_RESET>;
@@ -1083,6 +1146,20 @@
 		              <0x124 0x500c>,
 		              <0x124 0x520c>;
 			status = "disabled";
+
+			pcie2_intc: interrupt-controller {
+				interrupt-controller;
+				#address-cells = <0>;
+				#interrupt-cells = <1>;
+			};
+
+			pcie2_port: pcie@0,0 {
+				reg = <0x0000 0 0 0 0>;
+				device_type = "pci";
+				#address-cells = <3>;
+				#size-cells = <2>;
+				ranges;
+			};
 		};
 
 		trng: rng@90600200 {
@@ -1118,7 +1195,10 @@
 			      <4 0xf4320098 0 0x4>,
 			      <4 0xf432f000 0 0x1000>;
 			reg-names = "ni", "dma", "qm-axi", "reset", "fe-axi";
-			interrupts = <GIC_SPI 84 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <GIC_SPI TAURUS_IRQ_GLB_QM_CPU_FIFO0_REQ IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI TAURUS_IRQ_GLB_QM_CPU_FIFO1_REQ IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI TAURUS_IRQ_GLB_QM_CPU_FIFO2_REQ IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI TAURUS_IRQ_GLB_QM_CPU_FIFO3_REQ IRQ_TYPE_LEVEL_HIGH>;
 			status = "disabled";
 
 			ethernet-ports {

@@ -1,0 +1,25 @@
+--- a/drivers/net/phy/Kconfig
++++ b/drivers/net/phy/Kconfig
+@@ -542,6 +542,13 @@ config XILINX_GMII2RGMII
+ 	help
+ 	  This driver support xilinx GMII to RGMII IP core it provides
+ 	  the Reduced Gigabit Media Independent Interface(RGMII) between
+ 	  Ethernet physical media devices and the Gigabit Ethernet controller.
+ 
++config RTL9617C_GPHY_PHY
++	tristate "Realtek RTL9617C internal quad Gigabit PHY"
++	help
++	  Support for the integrated quad Gigabit Ethernet PHY (0x001ccac4)
++	  in Realtek RTL9617C/Taurus SoCs with chip-revision firmware patches
++	  and optional eFuse calibration.
++
+ endif # PHYLIB
+--- a/drivers/net/phy/Makefile
++++ b/drivers/net/phy/Makefile
+@@ -105,6 +105,7 @@ obj-$(CONFIG_NXP_TJA11XX_PHY)	+= nxp-tja11xx.o
+ obj-y				+= qcom/
+ obj-$(CONFIG_QSEMI_PHY)		+= qsemi.o
++obj-$(CONFIG_RTL9617C_GPHY_PHY)	+= rtl9617c_gphy.o
+ obj-$(CONFIG_REALTEK_PHY)	+= realtek/
+ obj-$(CONFIG_RENESAS_PHY)	+= uPD60620.o
+ obj-$(CONFIG_ROCKCHIP_PHY)	+= rockchip.o

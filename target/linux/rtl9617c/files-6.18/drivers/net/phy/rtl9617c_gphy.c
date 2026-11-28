@@ -461,6 +461,19 @@ static int rtl9617c_gphy_config_init(struct phy_device *phydev)
 	return 0;
 }
 
+static int rtl9617c_gphy_set_loopback(struct phy_device *phydev, bool enable,
+				      int speed)
+{
+	if (enable) {
+		if (!speed && phydev->speed == SPEED_UNKNOWN)
+			speed = SPEED_1000;
+		if (phydev->duplex == DUPLEX_UNKNOWN)
+			phydev->duplex = DUPLEX_FULL;
+	}
+
+	return genphy_loopback(phydev, enable, speed);
+}
+
 static struct phy_driver rtl9617c_gphy_drvs[] = {
 	{
 		PHY_ID_MATCH_EXACT(RTL9617C_GPHY_PHY_ID),
@@ -470,6 +483,7 @@ static struct phy_driver rtl9617c_gphy_drvs[] = {
 		.read_status	= genphy_read_status,
 		.suspend	= genphy_suspend,
 		.resume		= genphy_resume,
+		.set_loopback	= rtl9617c_gphy_set_loopback,
 		.read_page	= rtl9617c_gphy_read_page,
 		.write_page	= rtl9617c_gphy_write_page,
 		.read_mmd	= rtl9617c_gphy_read_mmd,

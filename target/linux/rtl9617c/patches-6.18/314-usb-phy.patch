@@ -1,0 +1,27 @@
+diff --git a/drivers/usb/phy/Kconfig b/drivers/usb/phy/Kconfig
+@@ -160,4 +160,18 @@
+ 	  Provides read/write operations to the ULPI phy register set for
+ 	  controllers with a viewport register (e.g. Chipidea/ARC controllers).
+ 
++config PHY_REALTEK_TAURUS_USB2
++	tristate "Realtek Taurus USB2 PHY driver"
++	depends on ARCH_REALTEK_TAURUS && OF
++	select USB_PHY
++	help
++	  USB2 high speed PHY of the Realtek Taurus SoCs.
++
++config PHY_REALTEK_TAURUS_USB3
++	tristate "Realtek Taurus USB3 PHY driver"
++	depends on ARCH_REALTEK_TAURUS && OF
++	select USB_PHY
++	help
++	  USB3 super speed PHY of the Realtek Taurus SoCs.
++
+ endmenu
+diff --git a/drivers/usb/phy/Makefile b/drivers/usb/phy/Makefile
+@@ -22,3 +22,5 @@
+ obj-$(CONFIG_USB_ULPI)			+= phy-ulpi.o
+ obj-$(CONFIG_USB_ULPI_VIEWPORT)		+= phy-ulpi-viewport.o
+ obj-$(CONFIG_KEYSTONE_USB_PHY)		+= phy-keystone.o
++obj-$(CONFIG_PHY_REALTEK_TAURUS_USB2)	+= phy-taurus-usb2.o
++obj-$(CONFIG_PHY_REALTEK_TAURUS_USB3)	+= phy-taurus-usb3.o

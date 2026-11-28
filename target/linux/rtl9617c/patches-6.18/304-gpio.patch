@@ -1,0 +1,24 @@
+diff --git a/drivers/gpio/Kconfig b/drivers/gpio/Kconfig
+@@ -640,6 +640,13 @@
+ 	  Say yes here to support GPIO functionality and GPIO interrupt on
+ 	  Realtek DHC SoCs.
+ 
++config GPIO_REALTEK_TAURUS
++	tristate "Realtek Taurus GPIO controller"
++	depends on ARCH_REALTEK_TAURUS && OF_GPIO && PINCTRL_REALTEK_TAURUS
++	help
++	  GPIO data and direction control for the five GPIO banks of the
++	  Realtek Taurus SoCs.
++
+ config GPIO_SAMA5D2_PIOBU
+ 	tristate "SAMA5D2 PIOBU GPIO support"
+ 	depends on MFD_SYSCON
+diff --git a/drivers/gpio/Makefile b/drivers/gpio/Makefile
+@@ -155,6 +155,7 @@
+ obj-$(CONFIG_GPIO_REG)			+= gpio-reg.o
+ obj-$(CONFIG_GPIO_ROCKCHIP)	+= gpio-rockchip.o
+ obj-$(CONFIG_GPIO_RTD)			+= gpio-rtd.o
++obj-$(CONFIG_GPIO_REALTEK_TAURUS)	+= gpio-taurus.o
+ obj-$(CONFIG_ARCH_SA1100)		+= gpio-sa1100.o
+ obj-$(CONFIG_GPIO_SAMA5D2_PIOBU)	+= gpio-sama5d2-piobu.o
+ obj-$(CONFIG_GPIO_SCH311X)		+= gpio-sch311x.o

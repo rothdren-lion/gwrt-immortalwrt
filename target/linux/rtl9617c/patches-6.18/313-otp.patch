@@ -1,0 +1,19 @@
+diff --git a/drivers/nvmem/Kconfig b/drivers/nvmem/Kconfig
+@@ -474,4 +474,11 @@
+ 	  This driver can also be built as a module. If so, the module
+ 	  will be called nvmem_qoriq_efuse.
+ 
++config NVMEM_REALTEK_TAURUS_OTP
++	tristate "Realtek Taurus OTP nvmem"
++	depends on ARCH_REALTEK_TAURUS || COMPILE_TEST
++	help
++	  One-time programmable memory of the Realtek Taurus SoCs, exposed
++	  through the SMC OTP service of the secure monitor.
++
+ endif
+diff --git a/drivers/nvmem/Makefile b/drivers/nvmem/Makefile
+@@ -93,3 +93,4 @@
+ nvmem_zynqmp_nvmem-y			:= zynqmp_nvmem.o
+ obj-$(CONFIG_NVMEM_QORIQ_EFUSE)		+= nvmem-qoriq-efuse.o
+ nvmem-qoriq-efuse-y			:= qoriq-efuse.o
++obj-$(CONFIG_NVMEM_REALTEK_TAURUS_OTP)	+= taurus-otp.o

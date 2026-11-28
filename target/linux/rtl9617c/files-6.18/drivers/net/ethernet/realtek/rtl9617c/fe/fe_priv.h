@@ -7,6 +7,7 @@
 #include <linux/list.h>
 #include <linux/mutex.h>
 #include <linux/netdevice.h>
+#include <linux/rcupdate.h>
 #include <linux/regmap.h>
 #include <linux/rhashtable.h>
 #include <linux/workqueue.h>
@@ -25,6 +26,7 @@
  */
 #define FE_INTERFACES			32
 #define FE_COUNTERS			32
+#define FE_TUNNEL_EIF_RESERVE		8
 #define FE_SOURCE_MACS			15
 #define FE_LAN_PORTS			5
 #define FE_MTUS				16
@@ -65,6 +67,16 @@ struct rtl_fe_mac {
 	u8 address[ETH_ALEN];
 };
 
+struct rtl_fe_dest_mac {
+	struct list_head list;
+	unsigned int users;
+	unsigned int index;
+	u32 saved[RTL_FE_FDB_WORDS];
+	u8 address[ETH_ALEN];
+	bool created;
+	bool ready;
+};
+
 struct rtl_fe_interface {
 	unsigned int users;
 	u32 saved;
@@ -87,16 +99,19 @@ struct rtl_fe_bridge_tag {
 struct rtl_fe_flow {
 	struct rhash_head node;
 	struct list_head list;
+	struct list_head retry;
+	struct list_head bridge_list;
+	struct rcu_head rcu;
 	unsigned long cookie;
 	unsigned long lastused;
 	struct rtl_fe_port *input;
 	struct rtl_fe_port *output;
+	struct rtl_fe_dest_mac *dest_mac;
 	enum rtl_fe_rule_kind kind;
 	unsigned int hash_index;
 	unsigned int counter;
 	unsigned int source_mac;
 	unsigned int destination_index;
-	u32 destination_saved[RTL_FE_FDB_WORDS];
 	unsigned int pppoe;
 	unsigned int mtu_index;
 	unsigned int ingress_session;
@@ -106,6 +121,7 @@ struct rtl_fe_flow {
 	u8 cos;
 	u8 protocol;
 	u8 ethernet_source[ETH_ALEN];
+	u8 hostpol_source[ETH_ALEN];
 	u8 destination[ETH_ALEN];
 	u64 bytes;
 	u32 packets;
@@ -118,8 +134,8 @@ struct rtl_fe_flow {
 	u16 bridge_ppp_protocol;
 	u8 bridge_tags;
 	struct rtl_fe_bridge_tag bridge_tag[2];
-	bool destination_created;
-	bool destination_owned;
+	bool mcast;
+	u16 mcast_hw_index;
 	bool source_owned;
 	bool interface_owned;
 	bool mtu_owned;
@@ -208,6 +224,9 @@ struct rtl_fe {
 	struct delayed_work cleanup_work;
 	struct list_head ports;
 	struct list_head flows;
+	struct list_head retries;
+	struct list_head bridge_flows;
+	struct list_head dest_macs;
 	struct list_head blocks;
 	struct rhashtable cookies;
 	void *memory;
@@ -283,6 +302,11 @@ static inline bool rtl_fe_has_bindings(struct rtl_fe *fe)
 	return READ_ONCE(fe->bindings);
 }
 
+static inline bool rtl_fe_is_lan_dest(unsigned int dest)
+{
+	return dest < FE_LAN_PORTS || dest == FE_SOURCE_P6;
+}
+
 static inline bool rtl_fe_use_deep_queue(const struct rtl_fe *fe,
 					 const struct rtl_fe_port *in,
 					 const struct rtl_fe_port *out)
@@ -290,7 +314,7 @@ static inline bool rtl_fe_use_deep_queue(const struct rtl_fe *fe,
 	if (out->destination >= FE_DEEPQ_DEST)
 		return true;
 	return fe->lan_deepq && in->source == FE_SOURCE_PON &&
-	       out->destination == FE_SOURCE_P6;
+	       rtl_fe_is_lan_dest(out->destination);
 }
 
 struct rtl_fe_port *rtl_fe_port_find(struct rtl_fe *fe, struct net_device *netdev);

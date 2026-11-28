@@ -15,8 +15,7 @@
  *    idle sentinel (ca-ne.ko aal_l3_te_policer_flow_cfg_set @0x6f6c0 and
  *    fc_mgr rtk_8277c_l3_flow_policer_mode_set @0xc63b4).
  *
- * Fields whose meaning is still unknown are preserved through
- * read-modify-write and never guessed; see the TODO(U*) markers.
+ * Unassigned register bits are preserved through read-modify-write.
  */
 #include <linux/bitfield.h>
 #include <linux/bitmap.h>
@@ -43,6 +42,7 @@ static_assert(L3TE_POL_GRP_DATA2 - L3TE_POL_GRP_ACC == 0x4);
 static_assert(L3TE_POL_FLOW3_DATA0 - L3TE_POL_FLOW3_ACC == 0xc);
 static_assert(L3TE_POL_FLOW3_DATA1 - L3TE_POL_FLOW3_ACC == 0x8);
 static_assert(L3TE_POL_FLOW3_DATA2 - L3TE_POL_FLOW3_ACC == 0x4);
+static_assert(L3TE_WRED_AFGS_DATA - L3TE_WRED_AFGS_ACC == 4);
 static_assert(L3TE_WRED_PROF_DATA(0) == 0x93ac);
 static_assert(L3TE_WRED_PROF_DATA(7) == 0x9390);
 static_assert(L3TE_WRED_SEL_DATA(0) == 0x93b8);
@@ -300,6 +300,43 @@ static int te_bank_cfg_set(struct rtl_te_flow *te, u32 cfg_reg, u32 acc,
 	return 0;
 }
 
+/*
+ * Enable the L3TE global policer gate (NE 0x9004 bit0) together with the two
+ * SoC policer control registers programmed by OEM fc_8277c.ko
+ * rtk_8277c_policer_init (@0xcb780): NE 0x9180[5:0]/[13:8]=0x1f and
+ * NE 0x30ac |= BIT(8)|BIT(9).  Done lazily on the first policer activation
+ * rather than unconditionally at probe so boot defaults stay intact when no
+ * policers are used.
+ */
+static int te_policer_ready(struct rtl_te_flow *te)
+{
+	u32 val;
+
+	if (te->policer_ready)
+		return 0;
+
+	val = te_read(te, L3TE_TE_GLB_CTRL);
+	if (!(val & L3TE_TE_GLB_POLICER_EN)) {
+		te_write(te, L3TE_TE_GLB_CTRL, val | L3TE_TE_GLB_POLICER_EN);
+		val = te_read(te, L3TE_TE_GLB_CTRL);
+		if (!(val & L3TE_TE_GLB_POLICER_EN))
+			return -EIO;
+	}
+
+	val = te_read(te, L3TE_POL_GLB_CFG);
+	if ((val & L3TE_POL_GLB_CFG_MASK) != L3TE_POL_GLB_CFG_VAL)
+		te_write(te, L3TE_POL_GLB_CFG,
+			 (val & ~L3TE_POL_GLB_CFG_MASK) |
+			 L3TE_POL_GLB_CFG_VAL);
+
+	val = te_read(te, L3TE_FE_POL_GLB_CFG);
+	if ((val & L3TE_FE_POL_GLB_EN) != L3TE_FE_POL_GLB_EN)
+		te_write(te, L3TE_FE_POL_GLB_CFG, val | L3TE_FE_POL_GLB_EN);
+
+	te->policer_ready = true;
+	return 0;
+}
+
 static int te_flow_alloc_locked(struct rtl_te_flow *te, u64 cir_bps,
 				u64 pir_bps, u32 cbs, u32 pbs,
 				unsigned int *slot)
@@ -321,6 +358,10 @@ static int te_flow_alloc_locked(struct rtl_te_flow *te, u64 cir_bps,
 	idx = find_first_zero_bit(te->flow_slots, RTL_TE_FLOW_SLOT_COUNT);
 	if (idx >= RTL_TE_FLOW_SLOT_COUNT)
 		return -ENOSPC;
+
+	ret = te_policer_ready(te);
+	if (ret)
+		return ret;
 
 	ret = te_pol_profile_write(te, L3TE_POL_FLOW_ACC,
 				   L3TE_POL_FLOW_IDX_BITS, idx, words);
@@ -429,6 +470,9 @@ static int te_group_alloc_locked(struct rtl_te_flow *te, u64 cir_bps,
 	int ret;
 
 	ret = te_group_depth_ready(te);
+	if (ret)
+		return ret;
+	ret = te_policer_ready(te);
 	if (ret)
 		return ret;
 
@@ -725,13 +769,18 @@ static int te_dos_field_write(struct rtl_te_flow *te,
 }
 
 /*
- * Enable or disable one attack type.  The OEM DAL writes the per-type enable
- * bit and the dos_type_en bitmap bit in the same call
- * (ca-rtk dal_rtl8277c_sec_attackPrevent_set, 0xcb20 "lsl w19,w0,w19" and
- * 0xcb50 "strh w3,[sp,#126]"), so both are programmed here.
+ * Enable or disable one attack type and select its hardware action.
+ *
+ * Verified against ca-rtk.ko dal_rtl8277c_sec_attackPrevent_get/set
+ * (@0xc538/@0xc7a8):
+ *   - dos_type_en[type] (L3 0x3304[16+type], L2 0x1228[type]):
+ *       0 = disabled (forward), 1 = enabled.
+ *   - Per-type 1-bit field (desc[type].en):
+ *       0 = ACTION_DROP (zero-CPU hardware drop; L3 -> ldpid 31),
+ *       1 = ACTION_TRAP2CPU (trap to CPU0, ldpid 16).
  */
-static int te_dos_type_enable(struct rtl_te_flow *te, bool l2,
-			      unsigned int type, bool enable)
+static int te_dos_type_set_action(struct rtl_te_flow *te, bool l2,
+				  unsigned int type, bool enable, bool trap)
 {
 	const struct te_dos_type_desc *desc = l2 ? te_dos_l2_types :
 						    te_dos_l3_types;
@@ -744,7 +793,7 @@ static int te_dos_type_enable(struct rtl_te_flow *te, bool l2,
 	if (type >= RTL_DOS_TYPE_MAX || !desc[type].en.width)
 		return -EOPNOTSUPP;
 
-	ret = te_dos_field_write(te, &desc[type].en, enable ? 1u : 0u);
+	ret = te_dos_field_write(te, &desc[type].en, (enable && trap) ? 1u : 0u);
 	if (ret)
 		return ret;
 
@@ -756,6 +805,12 @@ static int te_dos_type_enable(struct rtl_te_flow *te, bool l2,
 	wmb(); /* flush prior field write before updating type_en */
 	te_write(te, reg, value);
 	return 0;
+}
+
+static __maybe_unused int te_dos_type_enable(struct rtl_te_flow *te, bool l2,
+					     unsigned int type, bool enable)
+{
+	return te_dos_type_set_action(te, l2, type, enable, false);
 }
 
 /* dos_type_en accessor: L3 0x3304[31:16], L2 0x1228[15:0]. */
@@ -873,21 +928,29 @@ static u32 te_dos_flood_read(struct rtl_te_flow *te, bool l2)
 }
 
 /*
- * The vendor flood counter setter is a masked single field update, so the
- * reserved bits above the counter keep their value on a clear.  The L3
- * width is 11 bit (ca-ne aal_dos_atk_flood_cnt_set, bfxil #0,#11); the OEM
- * CLI writes only 10 bit there (cli-drv _cnt_cnt_set, bfxil #0,#10), which is
- * an OEM-internal inconsistency and is documented, not followed (U-f).
+ * L3 0x3310[10:0] (default 0x3fa) and L2 0x1234[9:0] (default 0xff) configure
+ * the flood detection time-window unit (dal_rtl8277c_sec_attackFloodThreshUnit_set
+ * @0xd03c). Preserve reserved upper bits on write.
  */
-static void te_dos_flood_clear_reg(struct rtl_te_flow *te, bool l2)
+static int te_dos_flood_unit_write(struct rtl_te_flow *te, bool l2, u32 unit)
 {
 	u32 reg = l2 ? L3TE_DOS_L2_FLOOD_CNT : L3TE_DOS_FLOOD_CNT;
 	u32 mask = l2 ? (u32)L3TE_DOS_L2_FLOOD_CNT_MASK :
 			(u32)L3TE_DOS_FLOOD_CNT_MASK;
-	u32 value = te_read(te, reg);
+	u32 value;
 
-	wmb(); /* order read-modify-write clear of flood counter */
-	te_write(te, reg, value & ~mask);
+	if (unit & ~mask)
+		return -EINVAL;
+
+	value = te_read(te, reg);
+	wmb(); /* order read-modify-write of flood window unit */
+	te_write(te, reg, (value & ~mask) | unit);
+	return 0;
+}
+
+static void te_dos_flood_clear_reg(struct rtl_te_flow *te, bool l2)
+{
+	(void)te_dos_flood_unit_write(te, l2, 0);
 }
 
 static u32 te_dos_evt_bits(u32 field_mask, const struct rtl_te_dos_evt *evt)
@@ -1238,6 +1301,9 @@ static int te_hostpol_add_locked(struct rtl_te_flow *te,
 	for (d = 0; d < RTL_TE_HOSTPOL_DIRS; d++)
 		h->kbps[d] = kbps[d];
 	te_hostpol_resolve(h, entry);
+	ret = te_policer_ready(te);
+	if (ret)
+		goto fail;
 	te_hostpol_pm_ready(te);
 
 	for (d = 0; d < RTL_TE_HOSTPOL_DIRS; d++) {
@@ -1579,11 +1645,9 @@ int rtl_te_wred_bind_field(struct rtl_te_flow *te, u8 queue, u8 field,
 }
 
 /*
- * Bind a queue to a WRED profile. TODO(U8): the select payload is eight
- * 5 bit fields and it is not yet known which one is the profile index, so
- * only field L3TE_WRED_SEL_FIELD_DEFAULT is replaced and the other seven are
- * preserved; rtl_te_wred_bind_field() exists so the mapping can be probed
- * from debugfs on real hardware.
+ * Bind a queue group (0..63) and VoQ/CoS field (0..7) to a WRED profile
+ * (0..31).  The 64-bit select payload holds eight 5-bit profile IDs, one
+ * per VoQ 0..7 (aal_l3_te_wred_profile_sel_set @0x72bc0).
  */
 int rtl_te_wred_bind(struct rtl_te_flow *te, u8 queue, u8 profile)
 {
@@ -1692,6 +1756,22 @@ int rtl_te_dos_flood_clear(struct rtl_te_flow *te, bool l2)
 	return 0;
 }
 
+int rtl_te_dos_flood_unit_set(struct rtl_te_flow *te, bool l2, u32 unit)
+{
+	spinlock_t *lock;
+	unsigned long flags;
+	int ret;
+
+	if (!te)
+		return -EINVAL;
+
+	lock = l2 ? &te->dos_l2_lock : &te->dos_l3_lock;
+	spin_lock_irqsave(lock, flags);
+	ret = te_dos_flood_unit_write(te, l2, unit);
+	spin_unlock_irqrestore(lock, flags);
+	return ret;
+}
+
 int rtl_te_dos_type_en_get(struct rtl_te_flow *te, bool l2, u32 *bitmap)
 {
 	spinlock_t *lock;
@@ -1725,8 +1805,8 @@ int rtl_te_dos_type_en_set(struct rtl_te_flow *te, bool l2, u32 bitmap)
 	return 0;
 }
 
-int rtl_te_dos_type_set(struct rtl_te_flow *te, bool l2,
-			enum rtl_dos_type type, bool enable)
+int rtl_te_dos_type_set_action(struct rtl_te_flow *te, bool l2,
+			       enum rtl_dos_type type, bool enable, bool trap)
 {
 	spinlock_t *lock;
 	unsigned long flags;
@@ -1739,9 +1819,15 @@ int rtl_te_dos_type_set(struct rtl_te_flow *te, bool l2,
 
 	lock = l2 ? &te->dos_l2_lock : &te->dos_l3_lock;
 	spin_lock_irqsave(lock, flags);
-	ret = te_dos_type_enable(te, l2, type, enable);
+	ret = te_dos_type_set_action(te, l2, type, enable, trap);
 	spin_unlock_irqrestore(lock, flags);
 	return ret;
+}
+
+int rtl_te_dos_type_set(struct rtl_te_flow *te, bool l2,
+			enum rtl_dos_type type, bool enable)
+{
+	return rtl_te_dos_type_set_action(te, l2, type, enable, false);
 }
 
 int rtl_te_dos_pol_id_set(struct rtl_te_flow *te, enum rtl_dos_type type,
@@ -1925,16 +2011,20 @@ int rtl_te_dos_evt_set(struct rtl_te_flow *te, bool l2, bool drop,
 int rtl_te_dos_set(struct rtl_te_flow *te, bool enable)
 {
 	static const u32 zero[L3TE_DOS_CFG_REGS] = { 0 };
+	static const u32 zero_l2[L3TE_DOS_L2_CFG_REGS] = { 0 };
 	int ret;
 
 	if (!te)
 		return -EINVAL;
 
-	/* Arming needs a concrete image, which only rtl_te_dos_l3_set() can
-	 * supply; "on" therefore writes nothing.
+	/* Arming needs explicit thresholds, types, and port masks; "on"
+	 * records software state while "off" clears both L3 and L2 blocks.
 	 */
 	if (!enable) {
 		ret = rtl_te_dos_l3_set(te, TE_DOS_L3_MASK_ALL, zero);
+		if (ret)
+			return ret;
+		ret = rtl_te_dos_l2_set(te, TE_DOS_L2_MASK_ALL, zero_l2);
 		if (ret)
 			return ret;
 	}
@@ -1942,11 +2032,27 @@ int rtl_te_dos_set(struct rtl_te_flow *te, bool enable)
 	return 0;
 }
 
+void rtl_te_flow_set_sync(struct rtl_te_flow *te, void (*sync)(void *data),
+			  void *data)
+{
+	unsigned long flags;
+
+	if (!te)
+		return;
+
+	spin_lock_irqsave(&te->lock, flags);
+	te->hostpol_sync = sync;
+	te->hostpol_sync_data = data;
+	spin_unlock_irqrestore(&te->lock, flags);
+}
+
 int rtl_te_hostpol_add_vmeter(struct rtl_te_flow *te,
 			      const u8 mac[RTL_TE_HOSTPOL_ALEN],
 			      u32 ingress_kbps, u32 egress_kbps,
 			      u8 ingress_vmeter, u8 egress_vmeter)
 {
+	void (*sync_cb)(void *data);
+	void *sync_data;
 	unsigned long flags;
 	int ret;
 
@@ -1956,7 +2062,11 @@ int rtl_te_hostpol_add_vmeter(struct rtl_te_flow *te,
 	spin_lock_irqsave(&te->lock, flags);
 	ret = te_hostpol_add_locked(te, mac, ingress_kbps, egress_kbps,
 				    ingress_vmeter, egress_vmeter);
+	sync_cb = te->hostpol_sync;
+	sync_data = te->hostpol_sync_data;
 	spin_unlock_irqrestore(&te->lock, flags);
+	if (!ret && sync_cb)
+		sync_cb(sync_data);
 	return ret;
 }
 
@@ -1972,6 +2082,8 @@ int rtl_te_hostpol_add(struct rtl_te_flow *te,
 int rtl_te_hostpol_del(struct rtl_te_flow *te,
 		       const u8 mac[RTL_TE_HOSTPOL_ALEN])
 {
+	void (*sync_cb)(void *data);
+	void *sync_data;
 	unsigned long flags;
 	int ret;
 
@@ -1980,7 +2092,11 @@ int rtl_te_hostpol_del(struct rtl_te_flow *te,
 
 	spin_lock_irqsave(&te->lock, flags);
 	ret = te_hostpol_del_locked(te, mac);
+	sync_cb = te->hostpol_sync;
+	sync_data = te->hostpol_sync_data;
 	spin_unlock_irqrestore(&te->lock, flags);
+	if (!ret && sync_cb)
+		sync_cb(sync_data);
 	return ret;
 }
 
@@ -2241,7 +2357,7 @@ static int te_cmd_wred_ctrl(struct rtl_te_flow *te, char **tok,
 			    unsigned int ntok)
 {
 	unsigned long flags;
-	u32 ena, ecn = 0, val;
+	u32 ena, ecn = 0, val, arb;
 
 	if (ntok != 1 && ntok != 2)
 		return -EINVAL;
@@ -2251,15 +2367,80 @@ static int te_cmd_wred_ctrl(struct rtl_te_flow *te, char **tok,
 		return -EINVAL;
 
 	spin_lock_irqsave(&te->lock, flags);
+	if (ena)
+		te_hostpol_pm_ready(te);
 	val = te_read(te, L3TE_TE_GLB_CTRL);
-	val &= ~(L3TE_GLB_CTRL_WRED_EN | L3TE_GLB_CTRL_WRED_ECN_EN);
+	val &= ~(L3TE_GLB_CTRL_WRED_EN | L3TE_GLB_CTRL_MARK_ECN_EN |
+		 L3TE_GLB_CTRL_WRED_ECN_EN);
 	if (ena)
 		val |= L3TE_GLB_CTRL_WRED_EN;
 	if (ecn)
-		val |= L3TE_GLB_CTRL_WRED_ECN_EN;
+		val |= L3TE_GLB_CTRL_WRED_ECN_EN | L3TE_GLB_CTRL_MARK_ECN_EN;
 	te_write(te, L3TE_TE_GLB_CTRL, val);
+
+	arb = te_read(te, L3TE_L2FE_ARB_CTRL);
+	if (ecn)
+		arb |= L3TE_L2FE_ARB_CTRL_IP_ECN_EN;
+	else
+		arb &= ~L3TE_L2FE_ARB_CTRL_IP_ECN_EN;
+	te_write(te, L3TE_L2FE_ARB_CTRL, arb);
 	spin_unlock_irqrestore(&te->lock, flags);
 	return 0;
+}
+
+static int te_cmd_wred_cfg(struct rtl_te_flow *te, char **tok,
+			   unsigned int ntok)
+{
+	unsigned long flags;
+	u32 fast_decay, weight, sel_worst = 0, val;
+
+	if (ntok != 2 && ntok != 3)
+		return -EINVAL;
+	if (te_parse_u32(tok[0], &fast_decay) || fast_decay > 1)
+		return -EINVAL;
+	if (te_parse_u32(tok[1], &weight) || weight > 15)
+		return -EINVAL;
+	if (ntok == 3 && (te_parse_u32(tok[2], &sel_worst) || sel_worst > 1))
+		return -EINVAL;
+
+	spin_lock_irqsave(&te->lock, flags);
+	val = te_read(te, L3TE_WRED_CTRL);
+	val &= ~(L3TE_WRED_CTRL_FAST_DECAY | L3TE_WRED_CTRL_AFGS_WEIGHT |
+		 L3TE_WRED_CTRL_AFGS_SEL_WORST);
+	if (fast_decay)
+		val |= L3TE_WRED_CTRL_FAST_DECAY;
+	val |= FIELD_PREP(L3TE_WRED_CTRL_AFGS_WEIGHT, weight);
+	if (sel_worst)
+		val |= L3TE_WRED_CTRL_AFGS_SEL_WORST;
+	te_write(te, L3TE_WRED_CTRL, val);
+	spin_unlock_irqrestore(&te->lock, flags);
+	return 0;
+}
+
+static int te_cmd_wred_afgs(struct rtl_te_flow *te, char **tok,
+			    unsigned int ntok)
+{
+	unsigned long flags;
+	u32 idx, depth, depth_eq1 = 0, word;
+	int ret;
+
+	if (ntok != 2 && ntok != 3)
+		return -EINVAL;
+	if (te_parse_u32(tok[0], &idx) || idx >= L3TE_WRED_AFGS_ENTRIES)
+		return -EINVAL;
+	if (te_parse_u32(tok[1], &depth) || depth > L3TE_WRED_AFGS_DEPTH_MASK)
+		return -EINVAL;
+	if (ntok == 3 &&
+	    (te_parse_u32(tok[2], &depth_eq1) ||
+	     depth_eq1 > L3TE_WRED_AFGS_DEPTH_MASK))
+		return -EINVAL;
+
+	word = depth | (depth_eq1 << L3TE_WRED_AFGS_EQ1_SHIFT);
+	spin_lock_irqsave(&te->lock, flags);
+	ret = te_table_access(te, L3TE_WRED_AFGS_ACC, L3TE_WRED_AFGS_IDX_BITS,
+			      true, idx, &word, 1);
+	spin_unlock_irqrestore(&te->lock, flags);
+	return ret;
 }
 
 static int te_cmd_wred_dump(struct rtl_te_flow *te, char **tok,
@@ -2300,8 +2481,10 @@ static int te_cmd_pie(struct rtl_te_flow *te, char **tok, unsigned int ntok)
 	if (port >= L3TE_PIE_WRED_PORTS)
 		return -EINVAL;
 
-	/* section 4.4: the vendor writes the whole 32 bit word; bit meanings are
-	 * still unknown, so the raw value is what an operator supplies.
+	/* section 4.4: 4 PIE/WRED engine instances (0..3, separate from the
+	 * 8 L3TE ports / 64 VOQs); the OEM AAL writes the whole 32-bit word
+	 * directly and per-bit field masks are undocumented, so pass through
+	 * the operator-supplied value verbatim.
 	 */
 	spin_lock_irqsave(&te->lock, flags);
 	te_write(te, L3TE_PIE_WRED_PORT_EN(port), value);
@@ -2357,6 +2540,10 @@ static ssize_t rtl_te_flow_write(struct file *file, const char __user *ubuf,
 		ret = te_cmd_wred_prof(te, tok, ntok);
 	} else if (!strcmp(cmd, "wred-ctrl")) {
 		ret = te_cmd_wred_ctrl(te, tok, ntok);
+	} else if (!strcmp(cmd, "wred-cfg")) {
+		ret = te_cmd_wred_cfg(te, tok, ntok);
+	} else if (!strcmp(cmd, "wred-afgs")) {
+		ret = te_cmd_wred_afgs(te, tok, ntok);
 	} else if (!strcmp(cmd, "wred-dump")) {
 		ret = te_cmd_wred_dump(te, tok, ntok);
 	} else if (!strcmp(cmd, "pie")) {
@@ -2384,9 +2571,11 @@ static void te_dump_slots(struct seq_file *s, struct rtl_te_flow *te)
 	u32 cfg[L3TE_POL_FLOW_SLOTS / L3TE_POL_BANK_SLOTS];
 	u32 gcfg[L3TE_POL_GRP_SLOTS / L3TE_POL_BANK_SLOTS];
 	u32 pie[L3TE_PIE_WRED_PORTS];
+	u32 glb, pol_cfg, fe_pol_cfg, wred_ctrl, arb_ctrl;
+	u32 pm_pkts, pm_pol_drop, pm_tail_drop;
+	u32 pm_wred_y_drop, pm_wred_g_drop, pm_ce;
 	unsigned long flags;
 	unsigned int i;
-	u32 glb;
 
 	spin_lock_irqsave(&te->lock, flags);
 	memcpy(flow_bm, te->flow_slots, sizeof(flow_bm));
@@ -2398,6 +2587,16 @@ static void te_dump_slots(struct seq_file *s, struct rtl_te_flow *te)
 	for (i = 0; i < ARRAY_SIZE(pie); i++)
 		pie[i] = te_read(te, L3TE_PIE_WRED_PORT_EN(i));
 	glb = te_read(te, L3TE_TE_GLB_CTRL);
+	pol_cfg = te_read(te, L3TE_POL_GLB_CFG);
+	fe_pol_cfg = te_read(te, L3TE_FE_POL_GLB_CFG);
+	wred_ctrl = te_read(te, L3TE_WRED_CTRL);
+	arb_ctrl = te_read(te, L3TE_L2FE_ARB_CTRL);
+	pm_pkts = te_read(te, L3TE_PM_PCNT);
+	pm_pol_drop = te_read(te, L3TE_PM_POL_DROP_PCNT);
+	pm_tail_drop = te_read(te, L3TE_PM_TAIL_DROP_PCNT);
+	pm_wred_y_drop = te_read(te, L3TE_PM_WRED_Y_DROP_PCNT);
+	pm_wred_g_drop = te_read(te, L3TE_PM_WRED_G_DROP_PCNT);
+	pm_ce = te_read(te, L3TE_PM_CE_PCNT);
 	spin_unlock_irqrestore(&te->lock, flags);
 
 	seq_printf(s, "group64_ready=%u group_cfg_depth=%u\n",
@@ -2423,13 +2622,24 @@ static void te_dump_slots(struct seq_file *s, struct rtl_te_flow *te)
 	for (i = 0; i < ARRAY_SIZE(pie); i++)
 		seq_printf(s, " %08x", pie[i]);
 	seq_puts(s, "\n");
-	{
-		u32 glb = te_read(te, L3TE_TE_GLB_CTRL);
-
-		seq_printf(s, "l3_glb_ctrl=0x%08x (wred_en=%u ecn=%u)\n",
-			   glb, !!(glb & L3TE_GLB_CTRL_WRED_EN),
-			   !!(glb & L3TE_GLB_CTRL_WRED_ECN_EN));
-	}
+	seq_printf(s, "l3_glb_ctrl=0x%08x (wred_en=%u ecn=%u)\n",
+		   glb, !!(glb & L3TE_GLB_CTRL_WRED_EN),
+		   !!(glb & L3TE_GLB_CTRL_WRED_ECN_EN));
+	seq_printf(s,
+		   "wred_ctrl=0x%08x (fast_decay=%u weight=%lu sel_worst=%u mark_ecn=%u arb_ecn=%u)\n",
+		   wred_ctrl, !!(wred_ctrl & L3TE_WRED_CTRL_FAST_DECAY),
+		   FIELD_GET(L3TE_WRED_CTRL_AFGS_WEIGHT, wred_ctrl),
+		   !!(wred_ctrl & L3TE_WRED_CTRL_AFGS_SEL_WORST),
+		   !!(glb & L3TE_GLB_CTRL_MARK_ECN_EN),
+		   !!(arb_ctrl & L3TE_L2FE_ARB_CTRL_IP_ECN_EN));
+	seq_printf(s,
+		   "te_pm: pkts=%u pol_drop=%u tail_drop=%u wred_y_drop=%u wred_g_drop=%u ce_mark=%u\n",
+		   pm_pkts, pm_pol_drop, pm_tail_drop,
+		   pm_wred_y_drop, pm_wred_g_drop, pm_ce);
+	seq_printf(s,
+		   "policer_en=%u policer_ready=%u pol_cfg_9180=0x%08x fe_pol_cfg_30ac=0x%08x\n",
+		   !!(glb & L3TE_TE_GLB_POLICER_EN), te->policer_ready,
+		   pol_cfg, fe_pol_cfg);
 }
 
 static void te_dump_policers(struct seq_file *s, struct rtl_te_flow *te)
@@ -2494,7 +2704,26 @@ static void te_dump_wred(struct seq_file *s, struct rtl_te_flow *te)
 	unsigned int i, j;
 	u32 words[L3TE_WRED_PROF_WORDS];
 	u32 sel[L3TE_WRED_SEL_WORDS];
+	u32 afgs;
 	int ret;
+
+	seq_puts(s, "wred_afgs=");
+	for (i = 0; i < L3TE_WRED_AFGS_ENTRIES; i++) {
+		afgs = 0;
+		spin_lock_irqsave(&te->lock, flags);
+		ret = te_table_access(te, L3TE_WRED_AFGS_ACC,
+				      L3TE_WRED_AFGS_IDX_BITS, false, i,
+				      &afgs, 1);
+		spin_unlock_irqrestore(&te->lock, flags);
+		if (ret)
+			seq_puts(s, " err");
+		else
+			seq_printf(s, " %u/%u",
+				   afgs & L3TE_WRED_AFGS_DEPTH_MASK,
+				   (afgs >> L3TE_WRED_AFGS_EQ1_SHIFT) &
+				   L3TE_WRED_AFGS_DEPTH_MASK);
+	}
+	seq_puts(s, "\n");
 
 	for (i = 0; i < L3TE_WRED_PROFILES; i++) {
 		spin_lock_irqsave(&te->lock, flags);
@@ -2597,22 +2826,26 @@ static int rtl_te_dos_show(struct seq_file *s, void *unused)
 	for (i = 0; i < RTL_DOS_TYPE_MAX; i++) {
 		const struct te_dos_type_desc *d = &te_dos_l3_types[i];
 		const struct te_dos_type_desc *d2 = &te_dos_l2_types[i];
+		bool l3_trap = !!te_dos_field_extract(l3, TE_DOS_L3_BASE,
+						      &d->en);
+		bool l2_trap = !!te_dos_field_extract(l2, TE_DOS_L2_BASE,
+						      &d2->en);
 
 		seq_printf(s, "  [%2u] %-15s l3_en=%u l3_pol=0x%03x",
-			   i, te_dos_type_name[i],
-			   te_dos_field_extract(l3, TE_DOS_L3_BASE, &d->en),
+			   i, te_dos_type_name[i], !!(ten & BIT(i)),
 			   te_dos_field_extract(l3, TE_DOS_L3_BASE, &d->pol));
 		if (d->th.width)
 			seq_printf(s, " l3_th=0x%04x",
 				   te_dos_field_extract(l3, TE_DOS_L3_BASE,
 							&d->th));
-		seq_printf(s, " l2_en=%u",
-			   te_dos_field_extract(l2, TE_DOS_L2_BASE, &d2->en));
+		seq_printf(s, " l2_en=%u", !!(l2ten & BIT(i)));
 		if (d2->th.width)
 			seq_printf(s, " l2_th=0x%04x",
 				   te_dos_field_extract(l2, TE_DOS_L2_BASE,
 							&d2->th));
-		seq_puts(s, "\n");
+		seq_printf(s, " l3_act=%s l2_act=%s\n",
+			   l3_trap ? "trap" : "drop",
+			   l2_trap ? "trap" : "drop");
 	}
 
 	rtl_te_dos_port_mask_get(te, false, &mask);
@@ -2697,10 +2930,12 @@ static int te_dos_cmd_type(struct rtl_te_flow *te, bool l2, char **tok,
 	type = te_dos_type_index(tok[0]);
 	if (type < 0)
 		return -EINVAL;
-	if (!strcmp(tok[1], "on"))
-		return rtl_te_dos_type_set(te, l2, type, true);
+	if (!strcmp(tok[1], "on") || !strcmp(tok[1], "drop"))
+		return rtl_te_dos_type_set_action(te, l2, type, true, false);
+	if (!strcmp(tok[1], "trap"))
+		return rtl_te_dos_type_set_action(te, l2, type, true, true);
 	if (!strcmp(tok[1], "off"))
-		return rtl_te_dos_type_set(te, l2, type, false);
+		return rtl_te_dos_type_set_action(te, l2, type, false, false);
 	return -EINVAL;
 }
 
@@ -2870,6 +3105,14 @@ static ssize_t rtl_te_dos_write(struct file *file, const char __user *ubuf,
 		bool l2 = cmd[0] == 'l';
 
 		ret = ntok ? -EINVAL : rtl_te_dos_flood_clear(te, l2);
+	} else if (!strcmp(cmd, "flood-unit") ||
+		   !strcmp(cmd, "l2-flood-unit")) {
+		bool l2 = cmd[0] == 'l';
+
+		if (ntok != 1 || te_parse_u32(tok[0], &value))
+			ret = -EINVAL;
+		else
+			ret = rtl_te_dos_flood_unit_set(te, l2, value);
 	} else {
 		ret = -EINVAL;
 	}
@@ -3190,6 +3433,11 @@ int rtl_te_flow_init(struct rtl9617c_ni *ni)
 	 */
 	glb = te_read(te, L3TE_TE_GLB_CTRL);
 	te->group64_ready = !!(glb & L3TE_TE_GLB_POL_GRP_64);
+	te->policer_ready = (glb & L3TE_TE_GLB_POLICER_EN) &&
+		((te_read(te, L3TE_POL_GLB_CFG) & L3TE_POL_GLB_CFG_MASK) ==
+		 L3TE_POL_GLB_CFG_VAL) &&
+		((te_read(te, L3TE_FE_POL_GLB_CFG) & L3TE_FE_POL_GLB_EN) ==
+		 L3TE_FE_POL_GLB_EN);
 	dev_dbg(te->dev, "L3TE group policer table depth is %u slots\n",
 		te->group64_ready ? 64 : 8);
 

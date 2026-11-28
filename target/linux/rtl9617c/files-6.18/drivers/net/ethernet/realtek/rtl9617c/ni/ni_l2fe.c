@@ -15,6 +15,7 @@
 #include <linux/if_vlan.h>
 #include <linux/jiffies.h>
 #include <linux/list.h>
+#include <linux/module.h>
 #include <linux/netdevice.h>
 #include <linux/notifier.h>
 #include <linux/rtnetlink.h>
@@ -31,11 +32,26 @@
 #define L2FE_ACC_BUSY			BIT(31)
 #define L2FE_ACC_RBW_WRITE		BIT(30)
 
-/* Port RX L2FE-bypass CSRs (verified against ca-ne.ko) */
+/*
+ * Legacy L2FE switchdev bridge offload is disabled by default:
+ *   - All bridged LAN ports must keep BYPASS_L2FE=1 (DPID 25 -> L3FE) because
+ *     ni_qm.c programs L2FE PONCLE catch-all rules to trap LSPID 0..4,6 -> CPU0,
+ *     and fe_main.c + fe_bridge.c already offload both L3 routing and L2
+ *     bridging inside L3FE.
+ *   - L2FE_L2E_ACC (0x1ca0) is also owned by fe_main.c for L3 next-hop MAC_DA
+ *     indices under fe->lock; concurrent unlocked switchdev FDB deletes would
+ *     corrupt active L3FE flows.
+ */
+static bool rtl_ni_l2fe_bridge_offload;
+module_param_named(l2fe_bridge, rtl_ni_l2fe_bridge_offload, bool, 0444);
+MODULE_PARM_DESC(l2fe_bridge,
+		 "Enable legacy L2FE switchdev bridge offload (default 0; keep off when L3FE is active)");
+
+/* Port RX L2FE-bypass CSRs */
 #define NI_PT_RX_CTRL_REG(id)		(0xa5f8U + (id) * 0x90U)
 #define NI_PT_RX_CTRL_BYPASS_L2FE	BIT(28)
-#define NI_XGE6_RX_CFG_REG		0xb204U
-#define NI_XGE6_RX_BYPASS_L2FE		BIT(12)
+#define NI_XGE6_RX_BYPASS_REG		RTL_NI_XGE_BYPASS_CFG
+#define NI_XGE6_RX_BYPASS_L2FE		RTL_NI_XGE_BYPASS_EN
 
 /* L2FE PP ILPB indirect table (word1 bits [14:3] hold default_vid) */
 #define L2FE_ILPB_ACC			0x11e4U
@@ -548,12 +564,16 @@ static bool l2fe_port_l2_active(const struct rtl_l2fe_port_state *ps)
 static void l2fe_set_rx_bypass_locked(struct rtl9617c_ni *ni, unsigned int p,
 				      bool bypass)
 {
+	/* Never divert LAN ports out of L3FE bypass (DPID 25) when FE is present */
+	if (!bypass && ni->fe)
+		return;
+
 	if (p < RTL_NI_GE_PORTS) {
 		rtl_ni_rmw(ni, NI_PT_RX_CTRL_REG(p),
 			   NI_PT_RX_CTRL_BYPASS_L2FE,
 			   bypass ? NI_PT_RX_CTRL_BYPASS_L2FE : 0U);
 	} else if (p == RTL_NI_PORT_P6) {
-		rtl_ni_rmw(ni, NI_XGE6_RX_CFG_REG,
+		rtl_ni_rmw(ni, NI_XGE6_RX_BYPASS_REG,
 			   NI_XGE6_RX_BYPASS_L2FE,
 			   bypass ? NI_XGE6_RX_BYPASS_L2FE : 0U);
 	}
@@ -1376,6 +1396,9 @@ int rtl_ni_l2fe_vlan_rx_add(struct net_device *dev, __be16 proto, u16 vid)
 	unsigned long flags;
 	int ret;
 
+	if (!rtl_ni_l2fe_bridge_offload)
+		return 0;
+
 	/* Preserve pon0 EVTO and stacked SVLAN handling untouched */
 	if (!port || proto != htons(ETH_P_8021Q))
 		return 0;
@@ -1405,6 +1428,9 @@ int rtl_ni_l2fe_vlan_rx_kill(struct net_device *dev, __be16 proto, u16 vid)
 	struct rtl_l2fe_vlan_slot *slot;
 	unsigned long flags;
 	int ret;
+
+	if (!rtl_ni_l2fe_bridge_offload)
+		return 0;
 
 	if (!port || proto != htons(ETH_P_8021Q) ||
 	    vid == 0 || vid >= VLAN_N_VID)
@@ -1472,7 +1498,7 @@ void rtl_ni_l2fe_register_ni(struct rtl9617c_ni *ni)
 	unsigned long flags;
 	bool init_needed = false;
 
-	if (!ni)
+	if (!ni || !rtl_ni_l2fe_bridge_offload)
 		return;
 
 	spin_lock_irqsave(&l2fe_st.lock, flags);

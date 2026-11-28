@@ -88,9 +88,9 @@ struct rtl_oam_port {
 
 /* NI Header A layout, from the RTL8277C EPON DAL OAM transmit path
  * (GP3000 GPL dal_rt_rtl8277c_epon_oam_tx and send_static_oam_pkt_tx).
- * Both call sites zero Header A and set exactly cos=7, ldpid=0xf for the
- * control container or 0x20+llid for business frames, lspid=0x11 and
- * fe_bypass. Field positions come from the ca-ne.ko Header A encoder:
+ * OAM control frames pass cos=7 (RTL_NI_HDR_OAM_COS) with ldpid=0xf, while
+ * business frames pass their per-packet PUC VoQ (0..7) with ldpid=0x20+llid,
+ * lspid=0x11 and fe_bypass. Field positions come from the ca-ne.ko Header A encoder:
  * [2:0] cos, [8:3] ldpid, [14:9] lspid, [28:15] length, [31:29] flags; the
  * DMA layer fills [28:15]. no_drop lives in the high word's pkt_info field,
  * whose bit position is not recoverable from the GPL sources, so the high word
@@ -115,7 +115,7 @@ struct rtl_oam_port {
 
 static inline u32 rtl9617c_ni_header_low(unsigned int ldpid, unsigned int queue)
 {
-	return (RTL_NI_HDR_OAM_COS & RTL_NI_HDR_COS_MASK) << RTL_NI_HDR_COS_SHIFT |
+	return (queue & RTL_NI_HDR_COS_MASK) << RTL_NI_HDR_COS_SHIFT |
 	       (ldpid & RTL_NI_HDR_LDPID_MASK) << RTL_NI_HDR_LDPID_SHIFT |
 	       (RTL_NI_HDR_OAM_LSPID & RTL_NI_HDR_LSPID_MASK) << RTL_NI_HDR_LSPID_SHIFT |
 	       RTL_NI_HDR_FE_BYPASS;
@@ -148,6 +148,7 @@ void rtl_mpcp_refresh(struct rtl9617c_pon *pon);
 void rtl_oam_netlink_receive(struct sk_buff *skb);
 void rtl_oam_receive(struct rtl9617c_ni_endpoint *endpoint, struct napi_struct *napi, struct sk_buff *skb, unsigned int source);
 void rtl_oam_wake(struct rtl9617c_ni_endpoint *endpoint);
+void rtl_oam_update_features(struct rtl9617c_ni_endpoint *endpoint);
 int rtl_oam_open(struct net_device *dev);
 int rtl_oam_stop(struct net_device *dev);
 extern const struct net_device_ops rtl_oam_ops;

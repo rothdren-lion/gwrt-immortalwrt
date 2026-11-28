@@ -43,6 +43,13 @@
 			reg = <0 0x0eeff000 0 0x1000>;
 			no-map;
 		};
+		ramoops@ff80000 {
+			compatible = "ramoops";
+			reg = <0 0x0ff80000 0 0x40000>;
+			record-size = <0x10000>;
+			console-size = <0x10000>;
+			pmsg-size = <0x10000>;
+		};
 		tz@ffc0000 {
 			reg = <0 0x0ffc0000 0 0x40000>;
 		};
@@ -71,7 +78,7 @@
 		};
 		phone {
 			label = "LED_FXS";
-			gpios = <&gpio_bank4 11 GPIO_ACTIVE_HIGH>;
+			gpios = <&gpio_bank4 11 GPIO_ACTIVE_LOW>;
 		};
 		lan1 {
 			label = "LED_EPHY0";
@@ -92,6 +99,8 @@
 		usb {
 			label = "LED_USB1";
 			gpios = <&gpio_bank0 2 GPIO_ACTIVE_LOW>;
+			linux,default-trigger = "usbport";
+			trigger-sources = <&usb_port1>;
 		};
 		wps {
 			label = "LED_WPS_G";
@@ -149,17 +158,18 @@
 &mdio {
 	status = "okay";
 
+	phy1: ethernet-phy@1 {
+		reg = <1>;
+	};
 	phy2: ethernet-phy@2 {
 		reg = <2>;
 	};
 	phy3: ethernet-phy@3 {
 		reg = <3>;
 	};
-	phy4: ethernet-phy@4 {
-		reg = <4>;
-	};
 
 	phy_2p5g: ethernet-phy@7 {
+		compatible = "ethernet-phy-ieee802.3-c45";
 		reg = <7>;
 		realtek,hisgmii;
 		realtek,serdes-option-mode = <1>;
@@ -185,27 +195,35 @@
 	status = "okay";
 
 	ethernet-ports {
+		port@0 {
+			reg = <0>;
+			label = "lan4";
+			nvmem-cells = <&base_mac 4>;
+			nvmem-cell-names = "mac-address";
+			phy-mode = "internal";
+			phy-handle = <&phy1>;
+		};
 		port@1 {
 			reg = <1>;
-			label = "lan2";
+			label = "lan3";
+			nvmem-cells = <&base_mac 3>;
+			nvmem-cell-names = "mac-address";
 			phy-mode = "internal";
 			phy-handle = <&phy2>;
 		};
 		port@2 {
 			reg = <2>;
-			label = "lan3";
+			label = "lan2";
+			nvmem-cells = <&base_mac 2>;
+			nvmem-cell-names = "mac-address";
 			phy-mode = "internal";
 			phy-handle = <&phy3>;
-		};
-		port@3 {
-			reg = <3>;
-			label = "lan4";
-			phy-mode = "internal";
-			phy-handle = <&phy4>;
 		};
 		port@4 {
 			reg = <4>;
 			label = "lan1";
+			nvmem-cells = <&base_mac 1>;
+			nvmem-cell-names = "mac-address";
 			phy-mode = "2500base-x";
 			phy-handle = <&phy_2p5g>;
 			phys = <&serdes>;
@@ -214,22 +232,34 @@
 };
 
 &pcie0 {
+	reset-gpios = <&gpio_bank3 5 GPIO_ACTIVE_LOW>;
+	irq-affinity = <1>;
 	status = "okay";
+};
 
+&pcie0_port {
 	wifi5g: wifi@0,0 {
 		compatible = "pci10ec,c852";
 		reg = <0x0000 0 0 0 0>;
+		realtek,ap-firmware;
+		realtek,rfe-type = <54>;
+		ieee80211-freq-limit = <5150000 5900000>;
 		nvmem-cells = <&wifi_cal_radio0>;
 		nvmem-cell-names = "wifi-calibration";
 	};
 };
 
 &pcie1 {
+	reset-gpios = <&gpio_bank3 6 GPIO_ACTIVE_LOW>;
+	irq-affinity = <2>;
 	status = "okay";
+};
 
+&pcie1_port {
 	wifi2g: wifi@0,0 {
 		compatible = "pci10ec,0192";
 		reg = <0x0000 0 0 0 0>;
+		realtek,rfe-type = <54>;
 		nvmem-cells = <&wifi_cal_radio1>;
 		nvmem-cell-names = "wifi-calibration";
 	};
@@ -349,7 +379,7 @@
 
 /* SoC TMS sensor reads 12C low per factory xtemp calibration; report raw + 12C */
 &cpu_thermal {
-	deviation = <0xfffcd120>;
+	deviation = <0xffffd120>;
 };
 
 &serdes {
@@ -364,4 +394,24 @@
 	reset-on-timeout;
 	delay-reset = <134>;
 	status = "okay";
+};
+
+&usb_hsphy {
+	status = "okay";
+};
+
+&usb_ssphy {
+	usb-vbus-gpios = <&gpio_bank3 4 GPIO_ACTIVE_HIGH>;
+	status = "okay";
+};
+
+&usb3 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	status = "okay";
+
+	usb_port1: port@1 {
+		reg = <1>;
+		#trigger-source-cells = <0>;
+	};
 };

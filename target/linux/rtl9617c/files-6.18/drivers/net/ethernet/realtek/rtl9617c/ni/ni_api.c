@@ -11,6 +11,70 @@
 #define NI_OAM_MAP_DEST			12
 #define NI_OAM_ES_SPEED_10G		6
 
+static DEFINE_MUTEX(rtl_ni_tx_hook_lock);
+static rtl9617c_ni_tx_hook_t __rcu rtl_ni_tx_hook;
+static rtl9617c_ni_dma_reset_cb_t __rcu rtl_ni_dma_reset_cb;
+
+int rtl9617c_ni_register_tx_hook(rtl9617c_ni_tx_hook_t fn,
+				 rtl9617c_ni_dma_reset_cb_t on_dma_reset)
+{
+	if (!fn)
+		return -EINVAL;
+	mutex_lock(&rtl_ni_tx_hook_lock);
+	if (rcu_dereference_protected(rtl_ni_tx_hook,
+				      lockdep_is_held(&rtl_ni_tx_hook_lock))) {
+		mutex_unlock(&rtl_ni_tx_hook_lock);
+		return -EBUSY;
+	}
+	rcu_assign_pointer(rtl_ni_dma_reset_cb, on_dma_reset);
+	rcu_assign_pointer(rtl_ni_tx_hook, fn);
+	mutex_unlock(&rtl_ni_tx_hook_lock);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(rtl9617c_ni_register_tx_hook);
+
+void rtl9617c_ni_unregister_tx_hook(rtl9617c_ni_tx_hook_t fn)
+{
+	mutex_lock(&rtl_ni_tx_hook_lock);
+	if (rcu_dereference_protected(rtl_ni_tx_hook,
+				      lockdep_is_held(&rtl_ni_tx_hook_lock)) == fn) {
+		RCU_INIT_POINTER(rtl_ni_tx_hook, NULL);
+		RCU_INIT_POINTER(rtl_ni_dma_reset_cb, NULL);
+	}
+	mutex_unlock(&rtl_ni_tx_hook_lock);
+	synchronize_net();
+}
+EXPORT_SYMBOL_GPL(rtl9617c_ni_unregister_tx_hook);
+
+int rtl_ni_try_tx_hook(struct net_device *dev, struct sk_buff *skb,
+		       const struct rtl9617c_ni_frame *frame)
+{
+	rtl9617c_ni_tx_hook_t fn;
+	int ret = -ENOENT;
+
+	if (frame->raw_payload)
+		return -ENOENT;
+	rcu_read_lock();
+	fn = rcu_dereference(rtl_ni_tx_hook);
+	if (unlikely(fn))
+		ret = fn(dev, skb, frame->header_high, frame->header_low,
+			 frame->prefix, frame->prefix_length, frame->oam);
+	rcu_read_unlock();
+	return ret;
+}
+
+void rtl_ni_notify_dma_reset(void)
+{
+	rtl9617c_ni_dma_reset_cb_t cb;
+
+	mutex_lock(&rtl_ni_tx_hook_lock);
+	cb = rcu_dereference_protected(rtl_ni_dma_reset_cb,
+				       lockdep_is_held(&rtl_ni_tx_hook_lock));
+	if (cb)
+		cb();
+	mutex_unlock(&rtl_ni_tx_hook_lock);
+}
+
 static struct rtl9617c_ni *rtl_ni_from_dev(struct device *dev)
 {
 	return dev_get_drvdata(dev);
@@ -42,17 +106,40 @@ EXPORT_SYMBOL_GPL(rtl9617c_ni_transmit);
 int rtl9617c_ni_pon_attach(struct device *dev,
 			   struct rtl9617c_ni_endpoint *endpoint)
 {
-	rcu_assign_pointer(rtl_ni_from_dev(dev)->pon, endpoint);
+	struct rtl9617c_ni *ni = rtl_ni_from_dev(dev);
+
+	mutex_lock(&ni->lock);
+	rcu_assign_pointer(ni->pon, endpoint);
+	mutex_unlock(&ni->lock);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(rtl9617c_ni_pon_attach);
 
 void rtl9617c_ni_pon_detach(struct device *dev)
 {
-	RCU_INIT_POINTER(rtl_ni_from_dev(dev)->pon, NULL);
+	struct rtl9617c_ni *ni = rtl_ni_from_dev(dev);
+
+	mutex_lock(&ni->lock);
+	RCU_INIT_POINTER(ni->pon, NULL);
+	mutex_unlock(&ni->lock);
 	synchronize_net();
 }
 EXPORT_SYMBOL_GPL(rtl9617c_ni_pon_detach);
+
+void rtl_ni_notify_pon_features(struct rtl9617c_ni *ni)
+{
+	struct rtl9617c_ni_endpoint *endpoint;
+
+	if (!ni)
+		return;
+	ASSERT_RTNL();
+	mutex_lock(&ni->lock);
+	endpoint = rcu_dereference_protected(ni->pon,
+					     lockdep_is_held(&ni->lock));
+	if (endpoint && endpoint->update_features)
+		endpoint->update_features(endpoint);
+	mutex_unlock(&ni->lock);
+}
 
 u32 rtl9617c_ni_pon_gate(struct device *dev, u32 enabled)
 {
@@ -191,3 +278,26 @@ int rtl9617c_ni_itu_paths(struct device *dev, struct net_device *netdev,
 	return rtl_fe_set_itu_paths(rtl_ni_from_dev(dev)->fe, netdev, paths);
 }
 EXPORT_SYMBOL_GPL(rtl9617c_ni_itu_paths);
+
+netdev_features_t rtl9617c_ni_tx_offload_features(void)
+{
+	netdev_features_t features = 0;
+
+	if (READ_ONCE(rtl_ni_tx_csum) || READ_ONCE(rtl_ni_tso))
+		features |= NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM;
+	if (READ_ONCE(rtl_ni_tx_sg))
+		features |= NETIF_F_SG;
+	if (READ_ONCE(rtl_ni_tso)) {
+		features |= NETIF_F_SG | NETIF_F_TSO;
+		if (READ_ONCE(rtl_ni_tso_v6))
+			features |= NETIF_F_TSO6;
+	}
+	return features;
+}
+EXPORT_SYMBOL_GPL(rtl9617c_ni_tx_offload_features);
+
+unsigned int rtl9617c_ni_tx_gso_max(void)
+{
+	return rtl_ni_tx_gso_max();
+}
+EXPORT_SYMBOL_GPL(rtl9617c_ni_tx_gso_max);

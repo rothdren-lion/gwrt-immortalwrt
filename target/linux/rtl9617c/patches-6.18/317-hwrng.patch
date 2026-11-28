@@ -1,0 +1,20 @@
+diff --git a/drivers/char/hw_random/Kconfig b/drivers/char/hw_random/Kconfig
+@@ -615,6 +615,12 @@
+ 
+ 	  If unsure, say Y.
+ 
++config HW_RANDOM_REALTEK_TAURUS
++	tristate "Realtek Taurus TRNG"
++	depends on HW_RANDOM && ARCH_REALTEK_TAURUS
++	help
++	  True random number generator of the Realtek Taurus SoCs.
++
+ endif # HW_RANDOM
+ 
+ config UML_RANDOM
+diff --git a/drivers/char/hw_random/Makefile b/drivers/char/hw_random/Makefile
+@@ -52,3 +52,4 @@
+ obj-$(CONFIG_HW_RANDOM_POLARFIRE_SOC) += mpfs-rng.o
+ obj-$(CONFIG_HW_RANDOM_ROCKCHIP) += rockchip-rng.o
+ obj-$(CONFIG_HW_RANDOM_JH7110) += jh7110-trng.o
++obj-$(CONFIG_HW_RANDOM_REALTEK_TAURUS) += taurus-trng.o

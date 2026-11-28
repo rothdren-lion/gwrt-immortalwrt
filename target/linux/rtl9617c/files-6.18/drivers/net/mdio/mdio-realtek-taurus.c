@@ -25,7 +25,13 @@
 #define TAURUS_MDIO_CTRL		0x10
 #define TAURUS_MDIO_CTRL_DONE		BIT(0)
 #define TAURUS_MDIO_CTRL_START		BIT(7)
-#define TAURUS_MDIO_POLL_US		1
+/*
+ * Clause 45 MDIO frames on Taurus take ~200-300 us. Polling at 1 us forces
+ * usleep_range(1, 1) to fire hundreds of hrtimer wakeups per transfer (~10k+
+ * arch_timer IRQs/s during 1 Hz PHY state-machine polls). 100 us yields
+ * usleep_range(26, 100), cutting timer wakeups by ~50x with negligible delay.
+ */
+#define TAURUS_MDIO_POLL_US		100
 #define TAURUS_MDIO_TIMEOUT_US		50000
 
 #define TAURUS_GPHY_PHY_SHIFT		7

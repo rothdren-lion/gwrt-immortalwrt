@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <linux/bitfield.h>
+#include <linux/cpumask.h>
 #include <linux/delay.h>
 #include <linux/dma-mapping.h>
 #include <linux/etherdevice.h>
@@ -10,6 +11,7 @@
 #include <linux/of_net.h>
 #include <linux/platform_device.h>
 #include <linux/rtnetlink.h>
+#include <linux/smp.h>
 #include <linux/unaligned.h>
 
 #include "ni.h"
@@ -29,7 +31,6 @@
 #define PORT_RX_CTRL_CPU		(RTL_NI_PORT_RX_CTRL_BYP_EN | \
 					 FIELD_PREP(RTL_NI_PORT_RX_CTRL_BYP_DPID, 16))
 #define GLB_PORT_TO_CPU_DMA		0xf
-#define QM_EPP64_IRQ_MASK		RTL_QM_EPP64_P0_INT_EN
 /*
  * Assert global L2TE XOFF well above L2TM_QM_GLOB_BUF_INIT's 33-buffer
  * no-drop floor (0x21) so ingress PAUSE throttles bursts before L2TM drops
@@ -53,64 +54,160 @@ static const struct regmap_config rtl_ni_regmap_config = {
 	.fast_io = true,
 };
 
-static void rtl_ni_irq_enable(struct rtl9617c_ni *ni, bool enable)
+/* Caller holds ni->rx_lock with IRQs saved/disabled. */
+static void rtl_ni_irq_enable(struct rtl9617c_ni *ni, unsigned int cpu,
+			      bool enable)
 {
-	rtl_ni_rmw(ni, RTL_QM_EPP64_P3_0_INT_EN, QM_EPP64_IRQ_MASK,
-		   enable ? QM_EPP64_IRQ_MASK : 0);
+	u32 mask = RTL_QM_EPP64_P_INT_EN(cpu);
+
+	rtl_ni_rmw(ni, RTL_QM_EPP64_P3_0_INT_EN, mask, enable ? mask : 0);
 }
 
-static void rtl_ni_wake_queues(struct rtl9617c_ni *ni)
+static bool rtl_ni_is_port_dev(const struct rtl9617c_ni *ni,
+			       const struct net_device *dev)
 {
-	struct rtl9617c_ni_endpoint *endpoint;
 	unsigned int id;
 
+	for (id = 0; id < RTL_NI_PORTS; id++)
+		if (ni->ports[id] && ni->ports[id]->dev == dev)
+			return true;
+	return false;
+}
+
+/* Caller holds ring->lock. */
+static void rtl_ni_wake_ring(struct rtl9617c_ni *ni, struct rtl_ni_dma_ring *ring)
+{
+	struct rtl9617c_ni_endpoint *endpoint;
+	unsigned int id, q = ring->id;
+	int old;
+
+	ring->stopped = false;
 	for (id = 0; id < RTL_NI_PORTS; id++) {
 		struct rtl9617c_ni_port *port = ni->ports[id];
 
-		if (port && netif_running(port->dev))
-			netif_wake_queue(port->dev);
+		if (port && netif_running(port->dev) &&
+		    q < port->dev->num_tx_queues)
+			netif_tx_wake_queue(netdev_get_tx_queue(port->dev, q));
 	}
 
-	rcu_read_lock();
-	endpoint = rcu_dereference(ni->pon);
-	if (endpoint)
-		endpoint->wake(endpoint);
-	rcu_read_unlock();
+	old = atomic_fetch_andnot(BIT(q), &ni->pon_stopped_mask);
+	if ((old & BIT(q)) && !(old & ~BIT(q))) {
+		rcu_read_lock();
+		endpoint = rcu_dereference(ni->pon);
+		if (endpoint)
+			endpoint->wake(endpoint);
+		rcu_read_unlock();
+	}
 }
 
-static void rtl_ni_stop_queues(struct rtl9617c_ni *ni)
+/* Caller holds ring->lock. */
+static void rtl_ni_stop_ring(struct rtl9617c_ni *ni, struct rtl_ni_dma_ring *ring,
+			     struct net_device *dev)
 {
-	unsigned int id;
+	unsigned int id, q = ring->id;
 
-	ni->tx_stopped = true;
-	for (id = 0; id < RTL_NI_PORTS; id++)
-		if (ni->ports[id])
-			netif_stop_queue(ni->ports[id]->dev);
-	hrtimer_start(&ni->timer, ns_to_ktime(RTL_NI_TX_TIMER_NS),
-		      HRTIMER_MODE_REL_SOFT);
+	ring->stopped = true;
+	for (id = 0; id < RTL_NI_PORTS; id++) {
+		struct rtl9617c_ni_port *port = ni->ports[id];
+
+		if (port && netif_running(port->dev) &&
+		    q < port->dev->num_tx_queues)
+			netif_tx_stop_queue(netdev_get_tx_queue(port->dev, q));
+	}
+	if (dev && !rtl_ni_is_port_dev(ni, dev)) {
+		atomic_or(BIT(q), &ni->pon_stopped_mask);
+		netif_stop_queue(dev);
+	}
+}
+
+static void rtl_ni_kick_timer(struct rtl9617c_ni *ni)
+{
+	unsigned long flags;
+
+	/* Pairs with rtl_ni_timer clearing timer_armed before ring scan. */
+	smp_mb();
+	if (READ_ONCE(ni->timer_armed) || READ_ONCE(ni->tx_closing))
+		return;
+
+	spin_lock_irqsave(&ni->timer_lock, flags);
+	if (!ni->tx_closing && !hrtimer_active(&ni->timer)) {
+		WRITE_ONCE(ni->timer_armed, true);
+		hrtimer_start(&ni->timer, ns_to_ktime(RTL_NI_TX_TIMER_NS),
+			      HRTIMER_MODE_REL_SOFT);
+	}
+	spin_unlock_irqrestore(&ni->timer_lock, flags);
+}
+
+static void rtl_ni_tx_rings_lock(struct rtl9617c_ni *ni, unsigned long *flags)
+{
+	unsigned int q;
+
+	local_irq_save(*flags);
+	for (q = 0; q < ni->dma.num_rings; q++)
+		spin_lock_nested(&ni->dma.rings[q].lock, q);
+}
+
+static void rtl_ni_tx_rings_unlock(struct rtl9617c_ni *ni, unsigned long flags)
+{
+	int q;
+
+	for (q = ni->dma.num_rings - 1; q >= 0; q--)
+		spin_unlock(&ni->dma.rings[q].lock);
+	local_irq_restore(flags);
 }
 
 static enum hrtimer_restart rtl_ni_timer(struct hrtimer *timer)
 {
 	struct rtl9617c_ni *ni = container_of(timer, struct rtl9617c_ni, timer);
 	enum hrtimer_restart restart = HRTIMER_NORESTART;
+	bool need_restart = false;
+	unsigned int c, q;
 	unsigned long flags;
 
-	if (READ_ONCE(ni->qm.refill.pending))
-		napi_schedule(&ni->napi);
+	if (READ_ONCE(ni->tx_closing)) {
+		WRITE_ONCE(ni->timer_armed, false);
+		return HRTIMER_NORESTART;
+	}
 
-	spin_lock_irqsave(&ni->tx_lock, flags);
-	if (ni->tx_stopped) {
-		rtl_ni_dma_reclaim(&ni->dma);
-		if (rtl_ni_dma_avail(&ni->dma)) {
-			ni->tx_stopped = false;
-			rtl_ni_wake_queues(ni);
-		} else {
-			hrtimer_forward_now(timer, ns_to_ktime(RTL_NI_TX_TIMER_NS));
+	WRITE_ONCE(ni->timer_armed, false);
+	/* Ensure producers observe timer_armed == false before we scan state. */
+	smp_mb();
+
+	for (c = 0; c < ni->qm.num_rxq; c++) {
+		struct rtl_ni_rxq *rxq = &ni->qm.rxq[c];
+
+		if (READ_ONCE(rxq->refill.pending))
+			napi_schedule(&rxq->napi);
+	}
+
+	for (q = 0; q < ni->dma.num_rings; q++) {
+		struct rtl_ni_dma_ring *ring = &ni->dma.rings[q];
+
+		spin_lock_irqsave(&ring->lock, flags);
+		if (ring->stopped || ring->zc_skbs) {
+			rtl_ni_dma_ring_reclaim(&ni->dma, ring);
+			if (ring->stopped) {
+				if (rtl_ni_dma_ring_avail(ring, 1))
+					rtl_ni_wake_ring(ni, ring);
+				else
+					need_restart = true;
+			}
+			if (ring->zc_skbs)
+				need_restart = true;
+		}
+		spin_unlock_irqrestore(&ring->lock, flags);
+	}
+
+	if (need_restart) {
+		spin_lock_irqsave(&ni->timer_lock, flags);
+		if (!ni->tx_closing) {
+			WRITE_ONCE(ni->timer_armed, true);
+			hrtimer_forward_now(timer,
+					    ns_to_ktime(RTL_NI_TX_TIMER_NS));
 			restart = HRTIMER_RESTART;
 		}
+		spin_unlock_irqrestore(&ni->timer_lock, flags);
 	}
-	spin_unlock_irqrestore(&ni->tx_lock, flags);
 	return restart;
 }
 
@@ -118,29 +215,71 @@ netdev_tx_t rtl_ni_xmit_frame(struct rtl9617c_ni *ni, struct net_device *dev,
 			      struct sk_buff *skb,
 			      const struct rtl9617c_ni_frame *frame)
 {
+	bool multiq = dev && dev->num_tx_queues > 1;
+	unsigned int num_rings = ni->dma.num_rings;
 	unsigned int len = skb->len;
+	bool is_gso = skb_is_gso(skb);
+	bool consumed = false, used_sg = false, need_timer = false;
+	struct rtl_ni_dma_ring *ring;
 	unsigned long flags;
+	unsigned int q;
 	int ret;
 
-	spin_lock_irqsave(&ni->tx_lock, flags);
-	ret = rtl_ni_dma_xmit(&ni->dma, skb, frame, dev->mtu);
+	if (rtl_ni_try_tx_hook(dev, skb, frame) == 0) {
+		if (dev) {
+			DEV_STATS_INC(dev, tx_packets);
+			DEV_STATS_ADD(dev, tx_bytes, len);
+		}
+		return NETDEV_TX_OK;
+	}
+
+	if (frame->oam || frame->raw_payload || frame->prefix_length > 0 ||
+	    num_rings <= 1)
+		q = 0;
+	else if (multiq)
+		q = skb_get_queue_mapping(skb) % num_rings;
+	else
+		q = raw_smp_processor_id() % num_rings;
+
+	ring = &ni->dma.rings[q];
+	spin_lock_irqsave(&ring->lock, flags);
+	ret = rtl_ni_dma_ring_xmit(&ni->dma, ring, skb, frame,
+				   dev ? dev->mtu : ETH_DATA_LEN,
+				   &consumed, &used_sg);
 	if (ret == -ENOSPC) {
-		netif_stop_queue(dev);
-		rtl_ni_stop_queues(ni);
-		spin_unlock_irqrestore(&ni->tx_lock, flags);
+		rtl_ni_stop_ring(ni, ring, dev);
+		spin_unlock_irqrestore(&ring->lock, flags);
+		rtl_ni_kick_timer(ni);
 		return NETDEV_TX_BUSY;
 	}
-	if (!ret && !rtl_ni_dma_avail(&ni->dma))
-		rtl_ni_stop_queues(ni);
-	spin_unlock_irqrestore(&ni->tx_lock, flags);
+	if (!ret && !rtl_ni_dma_ring_avail(ring, 1)) {
+		rtl_ni_stop_ring(ni, ring, dev);
+		need_timer = true;
+	} else if (!ret && ring->zc_skbs) {
+		need_timer = true;
+	}
+	spin_unlock_irqrestore(&ring->lock, flags);
+
+	if (need_timer)
+		rtl_ni_kick_timer(ni);
 
 	if (ret) {
-		DEV_STATS_INC(dev, tx_dropped);
+		if (dev)
+			DEV_STATS_INC(dev, tx_dropped);
 		dev_kfree_skb_any(skb);
 	} else {
-		DEV_STATS_INC(dev, tx_packets);
-		DEV_STATS_ADD(dev, tx_bytes, len);
-		dev_consume_skb_any(skb);
+		if (dev) {
+			DEV_STATS_INC(dev, tx_packets);
+			DEV_STATS_ADD(dev, tx_bytes, len);
+		}
+		if (used_sg)
+			atomic_long_inc(&ni->tx_sg_pkts);
+		else
+			atomic_long_inc(&ni->tx_bounce_pkts);
+		if (is_gso)
+			atomic_long_inc(&ni->tx_tso_pkts);
+		if (!consumed)
+			dev_consume_skb_any(skb);
 	}
 	return NETDEV_TX_OK;
 }
@@ -148,47 +287,62 @@ netdev_tx_t rtl_ni_xmit_frame(struct rtl9617c_ni *ni, struct net_device *dev,
 void rtl_ni_tx_restart(struct rtl9617c_ni *ni)
 {
 	unsigned long flags;
+	unsigned int q;
 	int ret;
 
-	spin_lock_irqsave(&ni->tx_lock, flags);
+	rtl_ni_tx_rings_lock(ni, &flags);
 	rtl_ni_dma_stop(&ni->dma);
 	ret = rtl_ni_dma_start(&ni->dma);
-	if (!ret) {
-		ni->tx_stopped = false;
-		rtl_ni_wake_queues(ni);
-	}
-	spin_unlock_irqrestore(&ni->tx_lock, flags);
+	if (!ret)
+		for (q = 0; q < ni->dma.num_rings; q++)
+			rtl_ni_wake_ring(ni, &ni->dma.rings[q]);
+	rtl_ni_tx_rings_unlock(ni, flags);
 	if (ret)
 		dev_err(ni->dev, "TX DMA restart failed: %d\n", ret);
+	else
+		rtl_ni_notify_dma_reset();
 }
 
 static int rtl_ni_poll(struct napi_struct *napi, int budget)
 {
-	struct rtl9617c_ni *ni = container_of(napi, struct rtl9617c_ni, napi);
+	struct rtl_ni_rxq *rxq = container_of(napi, struct rtl_ni_rxq, napi);
+	struct rtl9617c_ni *ni = rxq->ni;
 	unsigned long flags;
 	int done;
 
-	done = rtl_ni_qm_poll(ni, napi, budget);
+	if (rxq->id < ni->dma.num_rings) {
+		struct rtl_ni_dma_ring *ring = &ni->dma.rings[rxq->id];
+
+		if (READ_ONCE(ring->stopped) || READ_ONCE(ring->zc_skbs)) {
+			spin_lock_irqsave(&ring->lock, flags);
+			rtl_ni_dma_ring_reclaim(&ni->dma, ring);
+			if (ring->stopped && rtl_ni_dma_ring_avail(ring, 1))
+				rtl_ni_wake_ring(ni, ring);
+			spin_unlock_irqrestore(&ring->lock, flags);
+		}
+	}
+
+	done = rtl_ni_qm_poll(rxq, budget);
 	if (done < budget && napi_complete_done(napi, done)) {
 		spin_lock_irqsave(&ni->rx_lock, flags);
 		if (ni->rx_active)
-			rtl_ni_irq_enable(ni, true);
+			rtl_ni_irq_enable(ni, rxq->id, true);
 		spin_unlock_irqrestore(&ni->rx_lock, flags);
 	}
-	if (READ_ONCE(ni->qm.refill.pending))
-		hrtimer_start(&ni->timer, ns_to_ktime(RTL_NI_TX_TIMER_NS),
-			      HRTIMER_MODE_REL_SOFT);
+	if (READ_ONCE(rxq->refill.pending))
+		rtl_ni_kick_timer(ni);
 	return done;
 }
 
 static irqreturn_t rtl_ni_irq(int irq, void *data)
 {
-	struct rtl9617c_ni *ni = data;
+	struct rtl_ni_rxq *rxq = data;
+	struct rtl9617c_ni *ni = rxq->ni;
 
 	spin_lock(&ni->rx_lock);
-	rtl_ni_irq_enable(ni, false);
+	rtl_ni_irq_enable(ni, rxq->id, false);
 	spin_unlock(&ni->rx_lock);
-	napi_schedule_irqoff(&ni->napi);
+	napi_schedule_irqoff(&rxq->napi);
 	return IRQ_HANDLED;
 }
 
@@ -294,11 +448,21 @@ static int rtl_ni_engine_start(struct rtl9617c_ni *ni)
 	usleep_range(100, 200);
 	rtl_ni_write(ni, RTL_NI_XRAM_CFG, cfg | RTL_NI_XRAM_CPU_DISABLE);
 
-	ni->tx_stopped = false;
-	napi_enable(&ni->napi);
+	spin_lock_irqsave(&ni->timer_lock, flags);
+	WRITE_ONCE(ni->tx_closing, false);
+	WRITE_ONCE(ni->timer_armed, false);
+	spin_unlock_irqrestore(&ni->timer_lock, flags);
+
+	atomic_set(&ni->pon_stopped_mask, 0);
+	for (id = 0; id < ni->dma.num_rings; id++)
+		ni->dma.rings[id].stopped = false;
+	for (id = 0; id < ni->qm.num_rxq; id++)
+		napi_enable(&ni->qm.rxq[id].napi);
+
 	spin_lock_irqsave(&ni->rx_lock, flags);
 	ni->rx_active = true;
-	rtl_ni_irq_enable(ni, true);
+	for (id = 0; id < ni->qm.num_rxq; id++)
+		rtl_ni_irq_enable(ni, id, true);
 	spin_unlock_irqrestore(&ni->rx_lock, flags);
 	rtl_fe_start(ni->fe);
 	return 0;
@@ -307,10 +471,17 @@ static int rtl_ni_engine_start(struct rtl9617c_ni *ni)
 static void rtl_ni_engine_stop(struct rtl9617c_ni *ni)
 {
 	unsigned long flags;
+	unsigned int c;
 
 	rtl_fe_stop(ni->fe);
 	rtl_ni_l2te_fc_enable(ni, false);
+
+	spin_lock_irqsave(&ni->timer_lock, flags);
+	WRITE_ONCE(ni->tx_closing, true);
+	WRITE_ONCE(ni->timer_armed, false);
+	spin_unlock_irqrestore(&ni->timer_lock, flags);
 	hrtimer_cancel(&ni->timer);
+
 	if (ni->xge_bypass_saved) {
 		rtl_ni_rmw(ni, RTL_NI_XGE_BYPASS_CFG, RTL_NI_XGE_BYPASS_FIELDS,
 			   ni->xge_bypass & RTL_NI_XGE_BYPASS_FIELDS);
@@ -319,10 +490,14 @@ static void rtl_ni_engine_stop(struct rtl9617c_ni *ni)
 
 	spin_lock_irqsave(&ni->rx_lock, flags);
 	ni->rx_active = false;
-	rtl_ni_irq_enable(ni, false);
+	for (c = 0; c < ni->qm.num_rxq; c++)
+		rtl_ni_irq_enable(ni, c, false);
 	spin_unlock_irqrestore(&ni->rx_lock, flags);
-	synchronize_irq(ni->irq);
-	napi_disable(&ni->napi);
+
+	for (c = 0; c < ni->qm.num_rxq; c++)
+		synchronize_irq(ni->qm.rxq[c].irq);
+	for (c = 0; c < ni->qm.num_rxq; c++)
+		napi_disable(&ni->qm.rxq[c].napi);
 	hrtimer_cancel(&ni->timer);
 
 	spin_lock_irqsave(&ni->rx_lock, flags);
@@ -331,23 +506,28 @@ static void rtl_ni_engine_stop(struct rtl9617c_ni *ni)
 	usleep_range(100, 200);
 	rtl_ni_qm_drain_slots(ni);
 
-	spin_lock_irqsave(&ni->tx_lock, flags);
+	rtl_ni_tx_rings_lock(ni, &flags);
 	rtl_ni_dma_stop(&ni->dma);
-	spin_unlock_irqrestore(&ni->tx_lock, flags);
+	rtl_ni_tx_rings_unlock(ni, flags);
 	rtl_ni_rmw(ni, RTL_NI_XRAM_CFG, RTL_NI_XRAM_CPU_DISABLE,
 		   RTL_NI_XRAM_CPU_DISABLE);
 }
 
 int rtl_ni_engine_get(struct rtl9617c_ni *ni)
 {
+	bool started = false;
 	int ret = 0;
 
 	mutex_lock(&ni->lock);
-	if (!ni->users)
+	if (!ni->users) {
 		ret = rtl_ni_engine_start(ni);
+		started = !ret;
+	}
 	if (!ret)
 		ni->users++;
 	mutex_unlock(&ni->lock);
+	if (started)
+		rtl_ni_notify_dma_reset();
 	return ret;
 }
 
@@ -374,8 +554,14 @@ static int rtl_ni_base_mac(struct rtl9617c_ni *ni)
 static void rtl_ni_napi_del(void *data)
 {
 	struct rtl9617c_ni *ni = data;
+	unsigned int c;
 
-	netif_napi_del(&ni->napi);
+	for (c = 0; c < ni->qm.num_rxq; c++) {
+		if (!ni->qm.rxq[c].napi_added)
+			continue;
+		netif_napi_del(&ni->qm.rxq[c].napi);
+		ni->qm.rxq[c].napi_added = false;
+	}
 	free_netdev(ni->napi_dev);
 }
 
@@ -384,9 +570,23 @@ static void rtl_ni_qm_release(void *data)
 	rtl_ni_qm_free(data);
 }
 
+static void rtl_ni_irq_affinity_clear(void *data)
+{
+	struct rtl_ni_rxq *rxq = data;
+
+	irq_update_affinity_hint(rxq->irq, NULL);
+}
+
+static void rtl_ni_hostpol_sync(void *data)
+{
+	rtl_fe_hostpol_sync(data);
+}
+
 static int rtl_ni_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
+	unsigned int want_rxq = rtl_ni_rx_queues_get();
+	unsigned int c, irq_cnt;
 	struct rtl9617c_ni *ni;
 	void __iomem *base;
 	int ret;
@@ -399,6 +599,7 @@ static int rtl_ni_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 	ni->dev = dev;
+	spin_lock_init(&ni->timer_lock);
 	spin_lock_init(&ni->tx_lock);
 	spin_lock_init(&ni->rx_lock);
 	ret = devm_mutex_init(dev, &ni->lock);
@@ -411,11 +612,15 @@ static int rtl_ni_probe(struct platform_device *pdev)
 		dev_err(dev, "devm_mutex_init(mib_lock) failed: %d\n", ret);
 		return ret;
 	}
+	atomic_set(&ni->pon_stopped_mask, 0);
 	atomic_long_set(&ni->rx_errors, 0);
 	atomic_long_set(&ni->rx_dropped, 0);
 	atomic_long_set(&ni->rx_zerocopy_pkts, 0);
 	atomic_long_set(&ni->rx_copybreak_pkts, 0);
 	atomic_long_set(&ni->rx_alloc_fallback, 0);
+	atomic_long_set(&ni->tx_sg_pkts, 0);
+	atomic_long_set(&ni->tx_tso_pkts, 0);
+	atomic_long_set(&ni->tx_bounce_pkts, 0);
 
 	base = devm_platform_ioremap_resource_byname(pdev, "ni");
 	if (IS_ERR(base)) {
@@ -455,11 +660,21 @@ static int rtl_ni_probe(struct platform_device *pdev)
 		}
 	}
 
-	ni->irq = platform_get_irq(pdev, 0);
-	if (ni->irq < 0) {
-		dev_err(dev, "platform_get_irq failed: %d\n", ni->irq);
-		return ni->irq;
+	ni->qm.rxq[0].irq = platform_get_irq(pdev, 0);
+	if (ni->qm.rxq[0].irq < 0) {
+		dev_err(dev, "platform_get_irq failed: %d\n", ni->qm.rxq[0].irq);
+		return ni->qm.rxq[0].irq;
 	}
+	irq_cnt = 1;
+	for (c = 1; c < want_rxq; c++) {
+		int irq = platform_get_irq_optional(pdev, c);
+
+		if (irq <= 0)
+			break;
+		ni->qm.rxq[c].irq = irq;
+		irq_cnt++;
+	}
+	ni->qm.num_rxq = irq_cnt;
 
 	ret = rtl_ni_base_mac(ni);
 	if (ret) {
@@ -483,7 +698,14 @@ static int rtl_ni_probe(struct platform_device *pdev)
 		dev_err(dev, "alloc_netdev_dummy failed\n");
 		return -ENOMEM;
 	}
-	netif_napi_add(ni->napi_dev, &ni->napi, rtl_ni_poll);
+	for (c = 0; c < ni->qm.num_rxq; c++) {
+		struct rtl_ni_rxq *rxq = &ni->qm.rxq[c];
+
+		rxq->ni = ni;
+		rxq->id = c;
+		netif_napi_add(ni->napi_dev, &rxq->napi, rtl_ni_poll);
+		rxq->napi_added = true;
+	}
 	ret = devm_add_action_or_reset(dev, rtl_ni_napi_del, ni);
 	if (ret) {
 		dev_err(dev, "devm_add_action(napi_del) failed: %d\n", ret);
@@ -503,12 +725,28 @@ static int rtl_ni_probe(struct platform_device *pdev)
 	hrtimer_setup(&ni->timer, rtl_ni_timer, CLOCK_MONOTONIC,
 		      HRTIMER_MODE_REL_SOFT);
 
-	rtl_ni_irq_enable(ni, false);
-	ret = devm_request_irq(dev, ni->irq, rtl_ni_irq, 0, KBUILD_MODNAME, ni);
-	if (ret) {
-		dev_err(dev, "devm_request_irq(%d) failed: %d\n",
-			ni->irq, ret);
-		return ret;
+	rtl_ni_write(ni, RTL_QM_EPP64_P3_0_INT_EN, 0);
+	rtl_ni_write(ni, RTL_QM_EPP64_P7_4_INT_EN, 0);
+	for (c = 0; c < ni->qm.num_rxq; c++) {
+		struct rtl_ni_rxq *rxq = &ni->qm.rxq[c];
+
+		snprintf(rxq->irq_name, sizeof(rxq->irq_name), "%s-rx%u",
+			 KBUILD_MODNAME, c);
+		ret = devm_request_irq(dev, rxq->irq, rtl_ni_irq, 0,
+				       rxq->irq_name, rxq);
+		if (ret) {
+			dev_err(dev, "devm_request_irq(%d) failed: %d\n",
+				rxq->irq, ret);
+			return ret;
+		}
+		if (ni->qm.num_rxq > 1 && c < nr_cpu_ids && cpu_possible(c)) {
+			irq_set_affinity_and_hint(rxq->irq, cpumask_of(c));
+			ret = devm_add_action_or_reset(dev,
+						       rtl_ni_irq_affinity_clear,
+						       rxq);
+			if (ret)
+				return ret;
+		}
 	}
 
 	ni->fe = rtl_fe_create(dev, ni->regs, ni->fe_axi,
@@ -531,8 +769,11 @@ static int rtl_ni_probe(struct platform_device *pdev)
 	ret = rtl_te_flow_init(ni);
 	if (ret)
 		dev_warn(dev, "rtl_te_flow_init failed: %d\n", ret);
+	else if (ni->fe)
+		rtl_te_flow_set_sync(&ni->te, rtl_ni_hostpol_sync, ni->fe);
 
-	dev_info(dev, "rtl_ni_probe succeeded\n");
+	dev_info(dev, "rtl_ni_probe succeeded (rxq=%u, txq=%u)\n",
+		 ni->qm.num_rxq, ni->dma.num_rings);
 	return 0;
 }
 
@@ -568,8 +809,10 @@ static void rtl_ni_remove(struct platform_device *pdev)
 	struct rtl9617c_ni *ni = platform_get_drvdata(pdev);
 
 	rtl_ni_mib_exit(ni);
+	rtl_te_flow_set_sync(&ni->te, NULL, NULL);
 	rtl_ni_ports_unregister(ni);
 	rtl_fe_destroy(ni->fe);
+	WRITE_ONCE(ni->tx_closing, true);
 	hrtimer_cancel(&ni->timer);
 	rtl_te_flow_exit(ni);
 }

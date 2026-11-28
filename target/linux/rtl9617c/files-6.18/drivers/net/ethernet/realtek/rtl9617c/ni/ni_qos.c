@@ -396,7 +396,7 @@ out:
 	return ret;
 }
 
-#define NI_LAN_DQ_PORT		14
+#define NI_LAN_DQ_PORT(id)	(8 + (id))
 
 static void l2tm_es_set_weights(struct rtl9617c_ni *ni, unsigned int port_id,
 				const u8 weights[NI_VOQ_NUM])
@@ -418,16 +418,18 @@ static void l2tm_es_set_weights(struct rtl9617c_ni *ni, unsigned int port_id,
 	rtl_ni_write(ni, RTL_L2TM_ES_VOQ7_4_W(idx), w74);
 
 	/*
-	 * Downstream pon0 -> lan1 (port 6) offloaded flows traverse L3QM DeepQ
-	 * port 14 (NI_LAN_DQ_PORT); sync its L3TM ES weights so strict/WRR
-	 * applies across DeepQ as well as L2TM ES.
+	 * Downstream pon0 -> LAN offloaded flows traverse L3QM DeepQ port
+	 * (8 + port_id); sync its L3TM ES weights so strict/WRR applies across
+	 * DeepQ as well as L2TM ES.
 	 */
-	if (port_id == 6) {
-		rtl_ni_rmw(ni, RTL_QM_SCH_CFG(NI_LAN_DQ_PORT),
+	if (ni->qm.lan_dq_bufs &&
+	    (rtl_ni_is_ge(port_id) || port_id == RTL_NI_PORT_P6)) {
+		unsigned int dq_port = NI_LAN_DQ_PORT(port_id);
+
+		rtl_ni_rmw(ni, RTL_QM_SCH_CFG(dq_port),
 			   RTL_QM_SCH_VOQ_EN, RTL_QM_SCH_VOQ_EN);
-		rtl_ni_write(ni, RTL_QM_VOQ3_0_WEIGHT_RATIO_CFG(NI_LAN_DQ_PORT),
-			     w30);
-		rtl_ni_write(ni, RTL_QM_VOQ3_0_WEIGHT_RATIO_CFG(NI_LAN_DQ_PORT) + 4,
+		rtl_ni_write(ni, RTL_QM_VOQ3_0_WEIGHT_RATIO_CFG(dq_port), w30);
+		rtl_ni_write(ni, RTL_QM_VOQ3_0_WEIGHT_RATIO_CFG(dq_port) + 4,
 			     w74);
 	}
 }

@@ -31,14 +31,20 @@ struct rtl_fe;
 #define RTL_FE_DUAL_LAST_LEN		1024
 #define RTL_FE_DUAL_DSLITE_ADDR_LEN	16
 #define RTL_FE_DUAL_FMR_W2_VALID_MASK	0x1ffffU
+/* HDR_I.FMR_IDX sentinel (2-bit value 3 = "un-matched(DMR)") that suppresses
+ * MAP-E FMR IPv6-DA synthesis during IP4-in-IP6 (DS-Lite) encap so L3PE emits
+ * the static outer IPv6 destination address from DUAL Content verbatim.
+ */
+#define RTL_FE_DUAL_FMR_NONE		3
 
-/* DS-Lite Content template (spec phase3-re7-dualhdr-content §2.2).  word0 and
- * word1 are the constant outer IPv6 header prefix; the two 16-byte IPv6
- * addresses follow at words 2..5 (source) and 6..9 (destination).  The OEM
- * uses next_hdr=4 (pure IPv4-in-IPv6, no UDP) and hop_limit=0xff.
+/* DS-Lite Content template (fc_8277c.ko _rtk_fc_flow_setupDSLITE_by_egrPktHdr).
+ * word0 (60 00 00 00) and word1 (00 00 04 ff) are the constant outer IPv6
+ * header prefix in little-endian memory order (payload_len=0, next_hdr=4
+ * IPPROTO_IPIP, hop_limit=0xff); the two 16-byte IPv6 addresses follow at
+ * words 2..5 (source) and 6..9 (destination).
  */
 #define RTL_FE_DUAL_DSLITE_WORD0	0x00000060U
-#define RTL_FE_DUAL_DSLITE_WORD1	0xffff0400U
+#define RTL_FE_DUAL_DSLITE_WORD1	0xff040000U
 
 /* 6RD outer IPv4 header template words (be32 host memory order on ARM64 LE). */
 #define RTL_FE_DUAL_HASH_EIF_BASE	32

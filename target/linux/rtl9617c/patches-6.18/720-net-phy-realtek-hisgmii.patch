@@ -1,0 +1,307 @@
+diff --git a/drivers/net/phy/realtek/Kconfig b/drivers/net/phy/realtek/Kconfig
+index 23d453c..1463242 100644
+--- a/drivers/net/phy/realtek/Kconfig
++++ b/drivers/net/phy/realtek/Kconfig
+@@ -13,4 +13,13 @@ config REALTEK_PHY_HWMON
+ 	help
+ 	  Optional hwmon support for the temperature sensor
+ 
++config REALTEK_PHY_HISGMII
++	bool "RTL8221B HiSGMII mode support"
++	depends on OF
++	select FW_LOADER
++	help
++	  Support for the RTL8221B 2.5G PHY in HiSGMII mode, used when the
++	  PHY node has the "realtek,hisgmii" property. The PHY patch is
++	  loaded from firmware.
++
+ endif # REALTEK_PHY
+diff --git a/drivers/net/phy/realtek/Makefile b/drivers/net/phy/realtek/Makefile
+index a35e3e3..6b13f5f 100644
+--- a/drivers/net/phy/realtek/Makefile
++++ b/drivers/net/phy/realtek/Makefile
+@@ -2,5 +2,6 @@
+ realtek-y			+= realtek_main.o
+ realtek-y			+= phy_patch.o
+ realtek-y			+= phy_patch_rtl826x.o
++realtek-$(CONFIG_REALTEK_PHY_HISGMII) += realtek_hisgmii.o
+ realtek-$(CONFIG_REALTEK_PHY_HWMON) += realtek_hwmon.o
+ obj-$(CONFIG_REALTEK_PHY)	+= realtek.o
+diff --git a/drivers/net/phy/realtek/realtek.h b/drivers/net/phy/realtek/realtek.h
+index c59089a..59a1783 100644
+--- a/drivers/net/phy/realtek/realtek.h
++++ b/drivers/net/phy/realtek/realtek.h
+@@ -17,6 +17,44 @@ struct rtl826x_priv {
+ 	unsigned int sds_retries;
+ };
+ 
++struct rtl822x_led {
++	u8 active_low;
++};
++
+ int rtl822x_hwmon_init(struct phy_device *phydev);
+ 
++int rtl822x_c45_get_features(struct phy_device *phydev);
++int rtl822x_c45_config_aneg(struct phy_device *phydev);
++int rtl822x_c45_read_status(struct phy_device *phydev);
++int rtlgen_c45_resume(struct phy_device *phydev);
++
++int rtl822x_led_brightness_set(struct phy_device *phydev,
++			       struct rtl822x_led *led, u8 index,
++			       enum led_brightness value);
++int rtl822x_led_hw_is_supported(struct phy_device *phydev, u8 index,
++				unsigned long rules);
++int rtl822x_led_hw_control_get(struct phy_device *phydev, u8 index,
++			       unsigned long *rules);
++int rtl822x_led_hw_control_set(struct phy_device *phydev,
++			      struct rtl822x_led *led, u8 index,
++			      unsigned long rules);
++int rtl822x_led_polarity_set(struct phy_device *phydev,
++			     struct rtl822x_led *led, int index,
++			     unsigned long modes);
++
++#if IS_ENABLED(CONFIG_REALTEK_PHY_HISGMII)
++int rtl8221b_hisgmii_match_phy_device(struct phy_device *phydev,
++				      const struct phy_driver *phydrv);
++int rtl8221b_hisgmii_probe(struct phy_device *phydev);
++int rtl8221b_hisgmii_config_init(struct phy_device *phydev);
++int rtl8221b_hisgmii_get_features(struct phy_device *phydev);
++int rtl8221b_hisgmii_read_status(struct phy_device *phydev);
++int rtl8221b_led_brightness_set(struct phy_device *phydev, u8 index,
++					enum led_brightness value);
++int rtl8221b_led_hw_control_set(struct phy_device *phydev, u8 index,
++					unsigned long rules);
++int rtl8221b_led_polarity_set(struct phy_device *phydev, int index,
++				      unsigned long modes);
++#endif
++
+ #endif /* REALTEK_H */
+diff --git a/drivers/net/phy/realtek/realtek_main.c b/drivers/net/phy/realtek/realtek_main.c
+index c461ccc..c5c718b 100644
+--- a/drivers/net/phy/realtek/realtek_main.c
++++ b/drivers/net/phy/realtek/realtek_main.c
+@@ -368,6 +368,7 @@ struct rtl8261x_priv {
+ };
+ 
+ struct rtl822x_priv {
++	struct rtl822x_led led;
+ 	bool enable_aldps;
+ };
+ 
+@@ -2182,7 +2183,7 @@ static int rtl822xb_read_status(struct phy_device *phydev)
+ 	return 0;
+ }
+ 
+-static int rtl822x_c45_get_features(struct phy_device *phydev)
++int rtl822x_c45_get_features(struct phy_device *phydev)
+ {
+ 	linkmode_set_bit(ETHTOOL_LINK_MODE_TP_BIT,
+ 			 phydev->supported);
+@@ -2193,7 +2194,7 @@ static int rtl822x_c45_get_features(struct phy_device *phydev)
+ 	return genphy_c45_pma_read_abilities(phydev);
+ }
+ 
+-static int rtl822x_c45_config_aneg(struct phy_device *phydev)
++int rtl822x_c45_config_aneg(struct phy_device *phydev)
+ {
+ 	bool changed = false;
+ 	int ret, val;
+@@ -2221,7 +2222,7 @@ static int rtl822x_c45_config_aneg(struct phy_device *phydev)
+ 	return genphy_c45_check_and_restart_aneg(phydev, changed);
+ }
+ 
+-static int rtl822x_c45_read_status(struct phy_device *phydev)
++int rtl822x_c45_read_status(struct phy_device *phydev)
+ {
+ 	int ret, val;
+ 
+@@ -2284,9 +2285,12 @@ static int rtl822xb_c45_read_status(struct phy_device *phydev)
+ 	return 0;
+ }
+ 
+-static int rtl822xb_led_brightness_set(struct phy_device *phydev, u8 index,
+-				       enum led_brightness value)
++int rtl822x_led_brightness_set(struct phy_device *phydev,
++			       struct rtl822x_led *led, u8 index,
++			       enum led_brightness value)
+ {
++	bool active_low = led->active_low & BIT(index);
++	u16 lcr7 = 0;
+ 	int ret;
+ 
+ 	if (index >= RTL8211x_LED_COUNT)
+@@ -2304,14 +2308,19 @@ static int rtl822xb_led_brightness_set(struct phy_device *phydev, u8 index,
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	if (value != LED_OFF)
+-		return phy_set_bits_mmd(phydev, MDIO_MMD_VEND2,
+-					RTL822X_VND2_LCR7,
+-					RTL822X_VND2_LED_POLAR(index));
+-	else
+-		return phy_clear_bits_mmd(phydev, MDIO_MMD_VEND2,
+-					  RTL822X_VND2_LCR7,
+-					  RTL822X_VND2_LED_POLAR(index));
++	if ((value != LED_OFF) != active_low)
++		lcr7 = RTL822X_VND2_LED_POLAR(index);
++
++	return phy_modify_mmd(phydev, MDIO_MMD_VEND2, RTL822X_VND2_LCR7,
++			      RTL822X_VND2_LED_POLAR(index), lcr7);
++}
++
++static int rtl822xb_led_brightness_set(struct phy_device *phydev, u8 index,
++				       enum led_brightness value)
++{
++	struct rtl822x_priv *priv = phydev->priv;
++
++	return rtl822x_led_brightness_set(phydev, &priv->led, index, value);
+ }
+ 
+ static int rtl8261x_led_hw_is_supported(struct phy_device *phydev, u8 index,
+@@ -2523,8 +2532,8 @@ static int rtl8261x_led_polarity_set(struct phy_device *phydev, int index,
+ 			      active_low ? RTL822X_VND2_LED_POLAR(index) : 0);
+ }
+ 
+-static int rtl822xb_led_hw_is_supported(struct phy_device *phydev, u8 index,
+-					unsigned long rules)
++int rtl822x_led_hw_is_supported(struct phy_device *phydev, u8 index,
++				unsigned long rules)
+ {
+ 	const unsigned long  act_mask = BIT(TRIGGER_NETDEV_RX) |
+ 					BIT(TRIGGER_NETDEV_TX);
+@@ -2551,8 +2560,8 @@ static int rtl822xb_led_hw_is_supported(struct phy_device *phydev, u8 index,
+ 	return 0;
+ }
+ 
+-static int rtl822xb_led_hw_control_get(struct phy_device *phydev, u8 index,
+-				       unsigned long *rules)
++int rtl822x_led_hw_control_get(struct phy_device *phydev, u8 index,
++			       unsigned long *rules)
+ {
+ 	int val;
+ 
+@@ -2593,9 +2602,11 @@ static int rtl822xb_led_hw_control_get(struct phy_device *phydev, u8 index,
+ 	return 0;
+ }
+ 
+-static int rtl822xb_led_hw_control_set(struct phy_device *phydev, u8 index,
+-				       unsigned long rules)
++int rtl822x_led_hw_control_set(struct phy_device *phydev,
++			      struct rtl822x_led *led, u8 index,
++			      unsigned long rules)
+ {
++	u16 lcr7 = 0;
+ 	u16 val = 0;
+ 	bool act;
+ 	int ret;
+@@ -2633,9 +2644,51 @@ static int rtl822xb_led_hw_control_set(struct phy_device *phydev, u8 index,
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	/* Reset polarity to default */
+-	return phy_clear_bits_mmd(phydev, MDIO_MMD_VEND2, RTL822X_VND2_LCR7,
+-				  RTL822X_VND2_LED_POLAR(index));
++	if (led->active_low & BIT(index))
++		lcr7 = RTL822X_VND2_LED_POLAR(index);
++
++	return phy_modify_mmd(phydev, MDIO_MMD_VEND2, RTL822X_VND2_LCR7,
++			      RTL822X_VND2_LED_POLAR(index), lcr7);
++}
++
++static int rtl822xb_led_hw_control_set(struct phy_device *phydev, u8 index,
++				       unsigned long rules)
++{
++	struct rtl822x_priv *priv = phydev->priv;
++
++	return rtl822x_led_hw_control_set(phydev, &priv->led, index, rules);
++}
++
++int rtl822x_led_polarity_set(struct phy_device *phydev,
++			     struct rtl822x_led *led, int index,
++			     unsigned long modes)
++{
++	bool active_low = false;
++	u32 mode;
++
++	if (index >= RTL8211x_LED_COUNT)
++		return -EINVAL;
++
++	for_each_set_bit(mode, &modes, __PHY_LED_MODES_NUM) {
++		switch (mode) {
++		case PHY_LED_ACTIVE_LOW:
++			active_low = true;
++			break;
++		case PHY_LED_ACTIVE_HIGH:
++			break;
++		default:
++			return -EINVAL;
++		}
++	}
++
++	if (active_low)
++		led->active_low |= BIT(index);
++	else
++		led->active_low &= ~BIT(index);
++
++	return phy_modify_mmd(phydev, MDIO_MMD_VEND2, RTL822X_VND2_LCR7,
++			      RTL822X_VND2_LED_POLAR(index),
++			      active_low ? RTL822X_VND2_LED_POLAR(index) : 0);
+ }
+ 
+ static int rtl8224_cable_test_start(struct phy_device *phydev)
+@@ -3051,7 +3104,7 @@ static int rtlgen_resume(struct phy_device *phydev)
+ 	return ret;
+ }
+ 
+-static int rtlgen_c45_resume(struct phy_device *phydev)
++int rtlgen_c45_resume(struct phy_device *phydev)
+ {
+ 	int ret = genphy_c45_pma_resume(phydev);
+ 
+@@ -3812,6 +3865,24 @@ static int rtl826x_set_tunable(struct phy_device *phydev,
+ }
+ 
+ static struct phy_driver realtek_drvs[] = {
++#if IS_ENABLED(CONFIG_REALTEK_PHY_HISGMII)
++	{
++		.match_phy_device = rtl8221b_hisgmii_match_phy_device,
++		.name		= "RTL8221B HiSGMII 2.5Gbps PHY",
++		.probe		= rtl8221b_hisgmii_probe,
++		.get_features	= rtl8221b_hisgmii_get_features,
++		.config_init	= rtl8221b_hisgmii_config_init,
++		.config_aneg	= rtl822x_c45_config_aneg,
++		.read_status	= rtl8221b_hisgmii_read_status,
++		.suspend	= genphy_c45_pma_suspend,
++		.resume		= rtlgen_c45_resume,
++		.led_brightness_set = rtl8221b_led_brightness_set,
++		.led_hw_is_supported = rtl822x_led_hw_is_supported,
++		.led_hw_control_get = rtl822x_led_hw_control_get,
++		.led_hw_control_set = rtl8221b_led_hw_control_set,
++		.led_polarity_set = rtl8221b_led_polarity_set,
++	},
++#endif
+ 	{
+ 		PHY_ID_MATCH_EXACT(0x00008201),
+ 		.name		= "RTL8201CP Ethernet",
+@@ -4007,8 +4078,8 @@ static struct phy_driver realtek_drvs[] = {
+ 		.read_mmd	= rtl822xb_read_mmd,
+ 		.write_mmd	= rtl822xb_write_mmd,
+ 		.led_brightness_set = rtl822xb_led_brightness_set,
+-		.led_hw_is_supported = rtl822xb_led_hw_is_supported,
+-		.led_hw_control_get = rtl822xb_led_hw_control_get,
++		.led_hw_is_supported = rtl822x_led_hw_is_supported,
++		.led_hw_control_get = rtl822x_led_hw_control_get,
+ 		.led_hw_control_set = rtl822xb_led_hw_control_set,
+ 	}, {
+ 		.match_phy_device = rtl8221b_vm_cg_match_phy_device,
+@@ -4031,8 +4102,8 @@ static struct phy_driver realtek_drvs[] = {
+ 		.read_mmd	= rtl822xb_read_mmd,
+ 		.write_mmd	= rtl822xb_write_mmd,
+ 		.led_brightness_set = rtl822xb_led_brightness_set,
+-		.led_hw_is_supported = rtl822xb_led_hw_is_supported,
+-		.led_hw_control_get = rtl822xb_led_hw_control_get,
++		.led_hw_is_supported = rtl822x_led_hw_is_supported,
++		.led_hw_control_get = rtl822x_led_hw_control_get,
+ 		.led_hw_control_set = rtl822xb_led_hw_control_set,
+ 	}, {
+ 		.match_phy_device = rtl8251b_c45_match_phy_device,

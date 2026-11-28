@@ -1,21 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * NAPTV6 raw action encoder and NPTv6 prefix table.
+ * NAPTV6 action mode support and NPTv6 prefix table manager.
  *
  * RE-6 (phase3-re6-napt6.md) recovered the 371-bit hash-action layout from
  * convert_act_flow_naptv6_mode() (ca-ne .text+0x93250) and the 16-entry
  * NPTv6 prefix table from npt6_prefix_addr_table (ca-ne .data+0x4258).
  *
- * Deliberately debugfs-only:
- *  - hash_flow_naptv6_support_mode has no exported setter and changes the
- *    layout of the whole hash-action table, so it is never touched here;
- *  - the runtime hash_action_table entry length is UNKNOWN (the 48-byte
- *    assumption needs a device readback);
- *  - DNAT6/SNAT6 direction, PAT and L4 checksum neutrality are UNKNOWN.
- *
- * No flow is installed and no mode/pattern register is written.  The only
- * hardware access is the NPTv6 prefix table, which is a plain 32-word data
- * window (see fe_hw.h for the observed address mapping).
+ * Verified on RTL9617C silicon:
+ *  - Enabling the "napt6" module parameter switches FE hash-action mode to
+ *    384-bit entries (RTL_FE_ACTION_BYTES = 48 B, CACHE_CTRL bit 17 halving
+ *    hash cache capacity, action group bitmask 0x0114000a) and reloads live;
+ *  - Full 128-bit SNAT6 / DNAT6, TCP/UDP PAT6, and automatic hardware L4
+ *    checksum recalculation operate at wire speed;
+ *  - The 16-entry NPTv6 prefix table at NE+0x3a24..0x3aa4 supports direct
+ *    read/write via the "napt6" debugfs file.
  */
 
 #include <linux/bitmap.h>

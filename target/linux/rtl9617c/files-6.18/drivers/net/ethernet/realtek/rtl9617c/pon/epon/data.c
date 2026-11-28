@@ -11,8 +11,22 @@
 #include "pon/epon/epon.h"
 #include "pon/pon_debug.h"
 
-extern unsigned int rtl_data_queue;
+extern int rtl_data_queue;
 
+static unsigned int rtl_epon_tx_queue(const struct sk_buff *skb,
+				      unsigned int queues)
+{
+	int forced = READ_ONCE(rtl_data_queue);
+	unsigned int cos;
+
+	if (forced >= 0)
+		return (unsigned int)forced & (queues - 1);
+
+	cos = skb->priority & RTL_NI_HDR_COS_MASK;
+	if (queues < RTL_EPON_QUEUES_LOW_LLID)
+		return cos >> 1;
+	return cos;
+}
 
 static netdev_tx_t rtl_data_transmit(struct sk_buff *skb, struct net_device *dev)
 {
@@ -20,7 +34,7 @@ static netdev_tx_t rtl_data_transmit(struct sk_buff *skb, struct net_device *dev
 	struct rtl9617c_pon *pon = port->pon;
 	unsigned int queues = READ_ONCE(pon->llid_count) > RTL_EPON_QUEUE_SPLIT_LLIDS ?
 			      RTL_EPON_QUEUES_HIGH_LLID : RTL_EPON_QUEUES_LOW_LLID;
-	unsigned int queue = rtl_data_queue & (queues - 1);
+	unsigned int queue = rtl_epon_tx_queue(skb, queues);
 	/* rtl9617c_ni_fe_add_port() registers this netdev as
 	 * (source 7, destination 32 + llid, id llid), so a frame for it must
 	 * carry ldpid = 32 + llid; putting the bare LLID there leaves the
@@ -110,11 +124,38 @@ static int rtl_data_setup_tc(struct net_device *dev, enum tc_setup_type type, vo
 	return rtl9617c_ni_fe_setup_tc(port->pon->ni_dev, dev, type, data);
 }
 
+static netdev_features_t rtl_data_fix_features(struct net_device *dev,
+					       netdev_features_t features)
+{
+	return (features & ~RTL9617C_NI_TX_OFFLOAD_FEATURES) |
+	       (features & rtl9617c_ni_tx_offload_features());
+}
+
+static netdev_features_t rtl_data_features_check(struct sk_buff *skb,
+						 struct net_device *dev,
+						 netdev_features_t features)
+{
+	struct rtl_oam_port *port = netdev_priv(dev);
+
+	if (rtl_pon_mode_is_epon(READ_ONCE(port->pon->mode)))
+		return features & ~(NETIF_F_GSO_MASK | NETIF_F_CSUM_MASK);
+	if (skb_has_frag_list(skb))
+		features &= ~(NETIF_F_GSO_MASK | NETIF_F_SG);
+	if (skb_shinfo(skb)->nr_frags > MAX_SKB_FRAGS)
+		features &= ~NETIF_F_GSO_MASK;
+	if (skb_is_gso(skb) &&
+	    (skb->encapsulation || skb->len > rtl9617c_ni_tx_gso_max()))
+		features &= ~NETIF_F_GSO_MASK;
+	return features;
+}
+
 const struct net_device_ops rtl_data_ops = {
 	.ndo_setup_tc = rtl_data_setup_tc,
 	.ndo_open = rtl_oam_open,
 	.ndo_stop = rtl_oam_stop,
 	.ndo_start_xmit = rtl_data_transmit,
+	.ndo_fix_features = rtl_data_fix_features,
+	.ndo_features_check = rtl_data_features_check,
 	.ndo_set_mac_address = rtl_data_set_address,
 	.ndo_validate_addr = eth_validate_addr,
 };

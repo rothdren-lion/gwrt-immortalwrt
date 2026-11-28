@@ -17,6 +17,7 @@
 #define DMA_CTRL_RUN			(BIT(0) | GENMASK(3, 2) | BIT(4))
 #define DMA_CTRL_RESET			BIT(8)
 #define DMA_AXI_USER_SELECT		0x014
+#define DMA_AXI_USER_SELECT_ALL_PAT1	0x55555555U
 #define DMA_AXI_USER_SEL_SHIFT(vp)	((vp) * 2)
 #define DMA_AXI_USER_SEL_MASK(vp)	(GENMASK(1, 0) << \
 					 DMA_AXI_USER_SEL_SHIFT(vp))
@@ -26,9 +27,12 @@
 #define DMA_AXI_USER_PATTERN2		0x020
 #define DMA_AXI_USER_PATTERN3		0x024
 #define DMA_AXI_USER_PATTERN1_INIT	0x02008080
+#define DMA_GLB_ACE_MIRROR		0x0c8
+#define DMA_GLB_ACE_MIRROR_INIT		2U
 #define DMA_VP(n)			(0x100 + (n) * 0xa0)
 #define DMA_VP_ENABLE			0x00
 #define DMA_VP_ENABLE_EN		BIT(0)
+#define DMA_VP_ENABLE_ALL		0xffU
 #define DMA_VP_BASE_ACCESS		0x04
 #define DMA_VP_BASE_ACCESS_BUSY		BIT(31)
 #define DMA_VP_BASE_ACCESS_WRITE	BIT(30)
@@ -60,9 +64,15 @@
 #define DMA_DESC_LEN_SHIFT		8
 #define DMA_MIN_FRAME			60U
 
-#define DMA_MEM_SIZE			(RTL_NI_DMA_ENTRIES * \
-					 (sizeof(struct rtl_ni_dma_desc) + \
-					  RTL_NI_DMA_BUF_SIZE))
+#define DMA_DESC_RING_SIZE		(RTL_NI_DMA_ENTRIES * \
+					 sizeof(struct rtl_ni_dma_desc))
+#define DMA_HDR_RING_SIZE		(RTL_NI_DMA_ENTRIES * RTL_NI_DMA_HDR_LEN)
+#define DMA_BUF_RING_SIZE		(RTL_NI_DMA_ENTRIES * RTL_NI_DMA_BUF_SIZE)
+
+/* OEM ca_ni_dmalso_vp_sel uses VP 8 for CPU0 and VPs 1..3 for CPUs 1..3. */
+static const unsigned int rtl_ni_dma_vps[RTL_NI_TX_RINGS] = {
+	RTL_NI_DMA_VP, 1, 2, 3,
+};
 
 /*
  * Descriptor shape switches (RE-1 section 6, steps S1/S2) and the TX offload
@@ -137,6 +147,16 @@ bool rtl_ni_tso_v6;
 module_param_cb(tso_v6, &rtl_ni_offload_param_ops, &rtl_ni_tso_v6, 0644);
 MODULE_PARM_DESC(tso_v6,
 		 "Also allow IPv6/TCP segmentation offload (default 0)");
+
+bool rtl_ni_tx_sg = true;
+module_param_cb(tx_sg, &rtl_ni_offload_param_ops, &rtl_ni_tx_sg, 0644);
+MODULE_PARM_DESC(tx_sg,
+		 "Zero-copy multi-descriptor TX scatter-gather + 64 KiB TSO (default 1)");
+
+bool rtl_ni_tx_multivp = true;
+module_param_cb(tx_multivp, &rtl_ni_offload_param_ops, &rtl_ni_tx_multivp, 0644);
+MODULE_PARM_DESC(tx_multivp,
+		 "Use 4 per-CPU DMA LSO virtual ports {8,1,2,3} for TX (default 1)");
 
 /* BEGIN rtl-ni-tx-hdr (tests/tx-dma-layout.py extracts this region verbatim) */
 
@@ -262,35 +282,70 @@ void rtl_ni_tx_hdr_write(u8 *buf, const struct rtl_ni_tx_hdr *hdr,
 }
 
 /*
+ * Encode the DMA LSO TX descriptor control word (ca-ne.ko
+ * __ca_ni_start_xmit_by_specific_vp @0xa9178..0xa95f0):
+ *  - [30]    sof (Start of Frame)
+ *  - [29]    eof (End of Frame)
+ *  - [24]    hp0 (16-byte buffer header present; hp1[31]=0)
+ *  - [23:8]  16-bit segment byte length
+ *  - [7:0]   ACE/DMA flag (0x02 for low-2G ACE data, 0x00 for OAM)
+ *
+ * Single-descriptor bounce: sof=1, eof=1, hp0=1 -> 0x61000002 (OAM: 0x61000000)
+ * Multi-descriptor SG:
+ *  - Desc 0 (16 B buffer header): sof=1, eof=0, hp0=1 -> 0x41001002
+ *  - Desc 1..N-1 (middle segs):   sof=0, eof=0, hp0=0 -> 0x00000002 | (len<<8)
+ *  - Desc N (last segment):       sof=0, eof=1, hp0=0 -> 0x20000002 | (len<<8)
+ */
+u32 rtl_ni_dma_desc_ctrl(unsigned int seg_len, bool sof, bool eof, bool hp0,
+			 bool oam)
+{
+	u32 ctrl = (oam ? 0U : 2U) | ((seg_len & 0xffffU) << 8);
+
+	if (sof)
+		ctrl |= BIT(30);
+	if (eof)
+		ctrl |= BIT(29);
+	if (hp0)
+		ctrl |= BIT(24);
+	return ctrl;
+}
+
+/*
  * Classify a frame for the LSO/checksum path.  This is the logic OEM hides
  * behind the misleadingly named rtk_dma_lso_checksum_select @0x1a6470, which
  * touches no register at all (RE-1 1.6): walk the L2 ethertype, PPPoE and
  * IPv6 extension headers, then require an unfragmented TCP or UDP header whose
  * length fields stay inside the frame.
  *
+ * @head_len is the linearly readable prefix (skb_headlen(skb) for SG skbs) and
+ * @total_len is the full wire frame length (skb->len).  All header byte reads
+ * are bounded by @head_len while L3/L4 payload bounds validate against
+ * @total_len.  When @gso is true, a zeroed IPv6 payload_len (or IPv4 tot_len)
+ * on a 64 KiB GSO super-packet is derived from @total_len.
+ *
  * Returns 0 when info describes an offloadable TCP/UDP frame, -EOPNOTSUPP
  * when the frame is well formed but must not be offloaded (non-IP, non-TCP/UDP,
  * fragmented), and -EINVAL when a header is malformed or truncated.
- *
- * Not wired into the TX path yet: S4 will consume it.
  */
-int rtl_ni_tx_l4_parse(const u8 *data, unsigned int len,
-		       struct rtl_ni_tx_l4info *info)
+int rtl_ni_tx_l4_parse_head(const u8 *data, unsigned int head_len,
+			    unsigned int total_len, bool gso,
+			    struct rtl_ni_tx_l4info *info)
 {
 	unsigned int off = RTL_NI_ETH_HLEN;
 	unsigned int l4_off, l4_len, ihl, ip_end, ext, hdrs = 0, tags = 0;
+	unsigned int len = total_len;
 	u16 proto, frag, plen;
 	u8 next;
 
 	memset(info, 0, sizeof(*info));
-	if (len < RTL_NI_ETH_HLEN)
+	if (head_len > total_len || head_len < RTL_NI_ETH_HLEN)
 		return -EINVAL;
 
 	proto = rtl_ni_be16(data + 12);
 	while (proto == RTL_NI_ETH_P_8021Q || proto == RTL_NI_ETH_P_8021AD ||
 	       proto == RTL_NI_ETH_P_QINQ_OLD) {
 		/* At most one outer and one inner tag, as QinQ allows. */
-		if (len < off + RTL_NI_VLAN_HLEN || tags++ >= 2)
+		if (head_len < off + RTL_NI_VLAN_HLEN || tags++ >= 2)
 			return -EINVAL;
 		proto = rtl_ni_be16(data + off + 2);
 		off += RTL_NI_VLAN_HLEN;
@@ -299,18 +354,22 @@ int rtl_ni_tx_l4_parse(const u8 *data, unsigned int len,
 	if (proto == RTL_NI_ETH_P_PPP_SES) {
 		u16 ppp;
 
-		if (len < off + RTL_NI_PPPOE_HLEN)
+		if (head_len < off + RTL_NI_PPPOE_HLEN)
 			return -EINVAL;
 		if (data[off] != RTL_NI_PPPOE_VT)
 			return -EOPNOTSUPP;
 		ppp = rtl_ni_be16(data + off + 6);
 		/* PPPoE length counts the 2-byte PPP protocol field too. */
 		plen = rtl_ni_be16(data + off + 4);
-		if (plen < 2 ||
-		    (unsigned int)(plen - 2) > len - (off + RTL_NI_PPPOE_HLEN))
-			return -EINVAL;
+		if (gso && !plen && len > off + RTL_NI_PPPOE_HLEN) {
+			/* GSO over PPPoE can leave length 0 for >64K payloads */
+		} else {
+			if (plen < 2 ||
+			    (unsigned int)(plen - 2) > len - (off + RTL_NI_PPPOE_HLEN))
+				return -EINVAL;
+			len = off + RTL_NI_PPPOE_HLEN + (plen - 2);
+		}
 		info->pppoe = true;
-		len = off + RTL_NI_PPPOE_HLEN + (plen - 2);
 		off += RTL_NI_PPPOE_HLEN;
 		if (ppp == RTL_NI_PPP_IP)
 			proto = RTL_NI_ETH_P_IP;
@@ -321,38 +380,51 @@ int rtl_ni_tx_l4_parse(const u8 *data, unsigned int len,
 	}
 
 	switch (proto) {
-	case RTL_NI_ETH_P_IP:
-		if (len < off + RTL_NI_IPV4_MIN_HLEN)
+	case RTL_NI_ETH_P_IP: {
+		unsigned int ip_total;
+
+		if (head_len < off + RTL_NI_IPV4_MIN_HLEN)
 			return -EINVAL;
 		if ((data[off] >> 4) != 4)
 			return -EINVAL;
 		ihl = (data[off] & 0xf) * 4;
-		if (ihl < RTL_NI_IPV4_MIN_HLEN || len < off + ihl)
+		if (ihl < RTL_NI_IPV4_MIN_HLEN || head_len < off + ihl)
 			return -EINVAL;
 		plen = rtl_ni_be16(data + off + 2);
-		if (plen < ihl || plen > len - off)
+		if (gso && !plen && len >= off + ihl)
+			ip_total = len - off;
+		else
+			ip_total = plen;
+		if (ip_total < ihl || ip_total > len - off)
 			return -EINVAL;
 		frag = rtl_ni_be16(data + off + 6);
 		if (frag & RTL_NI_IPV4_FRAG_MASK)
 			return -EOPNOTSUPP;
 		info->ipv4 = true;
 		info->l3_off = off;
-		info->ip_len = plen;
+		info->ip_len = ip_total;
 		info->ip_proto = data[off + 9];
 		l4_off = off + ihl;
-		l4_len = plen - ihl;
+		l4_len = ip_total - ihl;
 		break;
+	}
 
-	case RTL_NI_ETH_P_IPV6:
-		if (len < off + RTL_NI_IPV6_HLEN)
+	case RTL_NI_ETH_P_IPV6: {
+		unsigned int payload_len;
+
+		if (head_len < off + RTL_NI_IPV6_HLEN)
 			return -EINVAL;
 		if ((data[off] >> 4) != 6)
 			return -EINVAL;
 		plen = rtl_ni_be16(data + off + 4);
 		ip_end = off + RTL_NI_IPV6_HLEN;
-		if (plen > len - ip_end)
+		if (gso && !plen && len > ip_end)
+			payload_len = len - ip_end;
+		else
+			payload_len = plen;
+		if (payload_len > len - ip_end)
 			return -EINVAL;
-		ip_end += plen;
+		ip_end += payload_len;
 		next = data[off + 6];
 		l4_off = off + RTL_NI_IPV6_HLEN;
 
@@ -360,13 +432,14 @@ int rtl_ni_tx_l4_parse(const u8 *data, unsigned int len,
 		       next == RTL_NI_IPV6_EXT_ROUTE ||
 		       next == RTL_NI_IPV6_EXT_DST ||
 		       next == RTL_NI_IPV6_EXT_AH) {
-			if (hdrs++ >= RTL_NI_IPV6_EXT_MAX || l4_off + 2 > ip_end)
+			if (hdrs++ >= RTL_NI_IPV6_EXT_MAX ||
+			    l4_off + 2 > ip_end || l4_off + 2 > head_len)
 				return -EINVAL;
 			if (next == RTL_NI_IPV6_EXT_AH)
 				ext = (data[l4_off + 1] + 2) * 4;
 			else
 				ext = (data[l4_off + 1] + 1) * 8;
-			if (l4_off + ext > ip_end)
+			if (l4_off + ext > ip_end || l4_off + ext > head_len)
 				return -EINVAL;
 			next = data[l4_off];
 			l4_off += ext;
@@ -380,6 +453,7 @@ int rtl_ni_tx_l4_parse(const u8 *data, unsigned int len,
 		info->ip_proto = next;
 		l4_len = ip_end - l4_off;
 		break;
+	}
 
 	default:
 		return -EOPNOTSUPP;
@@ -387,17 +461,20 @@ int rtl_ni_tx_l4_parse(const u8 *data, unsigned int len,
 
 	switch (info->ip_proto) {
 	case RTL_NI_IPPROTO_TCP:
-		if (l4_len < RTL_NI_TCP_MIN_HLEN)
+		if (l4_len < RTL_NI_TCP_MIN_HLEN ||
+		    head_len < l4_off + RTL_NI_TCP_MIN_HLEN)
 			return -EINVAL;
 		ihl = (data[l4_off + 12] >> 4) * 4;
-		if (ihl < RTL_NI_TCP_MIN_HLEN || ihl > l4_len)
+		if (ihl < RTL_NI_TCP_MIN_HLEN || ihl > l4_len ||
+		    head_len < l4_off + ihl)
 			return -EINVAL;
 		info->tcp = true;
 		l4_len -= ihl;
 		break;
 
 	case RTL_NI_IPPROTO_UDP:
-		if (l4_len < RTL_NI_UDP_HLEN)
+		if (l4_len < RTL_NI_UDP_HLEN ||
+		    head_len < l4_off + RTL_NI_UDP_HLEN)
 			return -EINVAL;
 		plen = rtl_ni_be16(data + l4_off + 4);
 		if (plen < RTL_NI_UDP_HLEN || plen > l4_len)
@@ -415,6 +492,12 @@ int rtl_ni_tx_l4_parse(const u8 *data, unsigned int len,
 	info->l4_off = l4_off;
 	info->l4_len = l4_len;
 	return 0;
+}
+
+int rtl_ni_tx_l4_parse(const u8 *data, unsigned int len,
+		       struct rtl_ni_tx_l4info *info)
+{
+	return rtl_ni_tx_l4_parse_head(data, len, len, false, info);
 }
 
 /*
@@ -474,16 +557,23 @@ static void rtl_ni_tx_udp_csum_fixup(u8 *frame,
 }
 
 /*
- * Decide lso_para0 for one frame and, for UDP, complete the checksum in place.
+ * Decide lso_para0 for a potentially non-linear (SG) frame without touching
+ * paged fragments.  For non-GSO UDP with a partial checksum, returns
+ * -EOPNOTSUPP when the UDP payload is non-linear (caller falls back to
+ * skb_checksum_help() safely) or fixes the UDP checksum in place when linear
+ * and writable.
+ *
  * Mirrors the OEM order (RE-1 section 6, S4 before S5): segmentation first,
  * then plain checksum offload.
  *
  * Returns 0 with *para0 set, -EOPNOTSUPP when this frame must not be offloaded
- * (the caller then completes the checksum in software or drops a GSO frame),
- * and -EINVAL when the request itself is inconsistent.
+ * (or requires skb_checksum_help()), and -EINVAL when the request is invalid.
  */
-int rtl_ni_tx_offload_prepare(u8 *frame, unsigned int len,
-			      const struct rtl_ni_tx_offload *req, u32 *para0)
+static int rtl_ni_tx_offload_encode(const u8 *head, unsigned int head_len,
+				    unsigned int total_len, bool writable,
+				    u8 *linear_frame,
+				    const struct rtl_ni_tx_offload *req,
+				    u32 *para0)
 {
 	struct rtl_ni_tx_l4info info;
 	unsigned int seg_mtu, seg_size;
@@ -491,7 +581,8 @@ int rtl_ni_tx_offload_prepare(u8 *frame, unsigned int len,
 	int ret;
 
 	*para0 = 0;
-	ret = rtl_ni_tx_l4_parse(frame, len, &info);
+	ret = rtl_ni_tx_l4_parse_head(head, head_len, total_len,
+				      req->segment, &info);
 	if (ret)
 		return ret;
 
@@ -502,7 +593,7 @@ int rtl_ni_tx_offload_prepare(u8 *frame, unsigned int len,
 	 *  - always set segment_en (bit 25) with segment_size equal to the
 	 *    total L2 frame length (l3_off + seg_mtu), not bare TCP MSS.
 	 */
-	if (len > info.l3_off + info.ip_len)
+	if (total_len > info.l3_off + info.ip_len)
 		lenfix = RTL_NI_LSO_PARA0_LENFIX_EN;
 
 	if (req->segment) {
@@ -517,7 +608,7 @@ int rtl_ni_tx_offload_prepare(u8 *frame, unsigned int len,
 		    req->gso_size > RTL_NI_HDR_A_PKT_SIZE_MAX)
 			return -EINVAL;
 
-		tcp_hlen = (frame[info.l4_off + 12] >> 4) * 4;
+		tcp_hlen = (head[info.l4_off + 12] >> 4) * 4;
 		seg_mtu = (info.l4_off - info.l3_off) + tcp_hlen + req->gso_size;
 		if (req->mtu && seg_mtu > req->mtu)
 			seg_mtu = req->mtu;
@@ -558,56 +649,128 @@ int rtl_ni_tx_offload_prepare(u8 *frame, unsigned int len,
 	/* OEM leaves UDP alone when the checksum field is zero. */
 	if (!info.udp_csum_present)
 		return -EOPNOTSUPP;
-	rtl_ni_tx_udp_csum_fixup(frame, &info);
+	/* Non-linear or non-writable UDP delegates to skb_checksum_help(). */
+	if (!writable || head_len < total_len || !linear_frame)
+		return -EOPNOTSUPP;
+	rtl_ni_tx_udp_csum_fixup(linear_frame, &info);
 	*para0 = bits | RTL_NI_LSO_PARA0_UDP_EN;
 	return 0;
 }
 
-/* END rtl-ni-tx-hdr */
-
-static void __iomem *rtl_ni_dma_vp(struct rtl_ni_dma *dma)
+int rtl_ni_tx_offload_prepare(u8 *frame, unsigned int len,
+			      const struct rtl_ni_tx_offload *req, u32 *para0)
 {
-	return dma->base + DMA_VP(RTL_NI_DMA_VP);
+	return rtl_ni_tx_offload_encode(frame, len, len, true, frame,
+					req, para0);
 }
 
-static unsigned int rtl_ni_dma_buf_offset(unsigned int index)
+int rtl_ni_tx_offload_prepare_sg(const u8 *head, unsigned int head_len,
+				 unsigned int total_len,
+				 const struct rtl_ni_tx_offload *req,
+				 u32 *para0)
 {
-	return RTL_NI_DMA_ENTRIES * sizeof(struct rtl_ni_dma_desc) +
-	       index * RTL_NI_DMA_BUF_SIZE;
+	return rtl_ni_tx_offload_encode(head, head_len, total_len, false, NULL,
+					req, para0);
+}
+
+/* END rtl-ni-tx-hdr */
+
+static void __iomem *rtl_ni_dma_vp(struct rtl_ni_dma *dma,
+				   const struct rtl_ni_dma_ring *ring)
+{
+	return dma->base + DMA_VP(ring->vp);
+}
+
+static void rtl_ni_tx_slot_unmap(struct device *dev, struct rtl_ni_tx_slot *slot)
+{
+	if (slot->map_type == RTL_NI_TX_MAP_SINGLE)
+		dma_unmap_single(dev, slot->dma, slot->len, DMA_TO_DEVICE);
+	else if (slot->map_type == RTL_NI_TX_MAP_PAGE)
+		dma_unmap_page(dev, slot->dma, slot->len, DMA_TO_DEVICE);
+	slot->map_type = RTL_NI_TX_MAP_NONE;
+	slot->dma = 0;
+	slot->len = 0;
+	if (slot->skb) {
+		dev_consume_skb_any(slot->skb);
+		slot->skb = NULL;
+	}
+}
+
+static void rtl_ni_dma_ring_drain(struct rtl_ni_dma *dma,
+				  struct rtl_ni_dma_ring *ring)
+{
+	while (ring->tail != ring->head) {
+		struct rtl_ni_tx_slot *slot = &ring->slots[ring->tail];
+
+		if (slot->map_type != RTL_NI_TX_MAP_NONE)
+			ring->zc_in_flight--;
+		if (slot->skb)
+			ring->zc_skbs--;
+		rtl_ni_tx_slot_unmap(dma->dev, slot);
+		ring->tail = (ring->tail + 1) & RTL_NI_DMA_MASK;
+	}
+	ring->zc_in_flight = 0;
+	ring->zc_skbs = 0;
+	ring->head = 0;
+	ring->tail = 0;
+	ring->stopped = false;
 }
 
 int rtl_ni_dma_alloc(struct rtl9617c_ni *ni)
 {
 	struct rtl_ni_dma *dma = &ni->dma;
+	unsigned int i;
 
-	dma->mem = dmam_alloc_coherent(ni->dev, DMA_MEM_SIZE, &dma->mem_dma,
-				       GFP_KERNEL);
-	if (!dma->mem)
-		return -ENOMEM;
-	dma->desc = dma->mem;
+	dma->dev = ni->dev;
+	dma->num_rings = RTL_NI_TX_RINGS;
+
+	for (i = 0; i < RTL_NI_TX_RINGS; i++) {
+		struct rtl_ni_dma_ring *ring = &dma->rings[i];
+
+		spin_lock_init(&ring->lock);
+		ring->id = i;
+		ring->vp = rtl_ni_dma_vps[i];
+
+		ring->desc = dmam_alloc_coherent(ni->dev, DMA_DESC_RING_SIZE,
+						 &ring->desc_dma, GFP_KERNEL);
+		ring->hdrs = dmam_alloc_coherent(ni->dev, DMA_HDR_RING_SIZE,
+						 &ring->hdrs_dma, GFP_KERNEL);
+		ring->bufs = dmam_alloc_coherent(ni->dev, DMA_BUF_RING_SIZE,
+						 &ring->bufs_dma, GFP_KERNEL);
+		ring->slots = devm_kcalloc(ni->dev, RTL_NI_DMA_ENTRIES,
+					   sizeof(*ring->slots), GFP_KERNEL);
+		if (!ring->desc || !ring->hdrs || !ring->bufs || !ring->slots ||
+		    upper_32_bits(ring->desc_dma) ||
+		    upper_32_bits(ring->hdrs_dma) ||
+		    upper_32_bits(ring->bufs_dma))
+			return -ENOMEM;
+	}
 	return 0;
 }
 
-int rtl_ni_dma_start(struct rtl_ni_dma *dma)
+static int rtl_ni_dma_ring_start(struct rtl_ni_dma *dma,
+				 struct rtl_ni_dma_ring *ring)
 {
-	void __iomem *vp = rtl_ni_dma_vp(dma);
-	void __iomem *base = dma->base;
+	void __iomem *vp = rtl_ni_dma_vp(dma, ring);
 	u32 val;
 	int ret;
 
-	writel(readl(base + DMA_CTRL) | DMA_CTRL_RESET, base + DMA_CTRL);
-	udelay(10);
-	writel(readl(base + DMA_CTRL) & ~(DMA_CTRL_RESET | DMA_CTRL_ENABLE),
-	       base + DMA_CTRL);
 	writel(0, vp + DMA_VP_ENABLE);
 	writel(0, vp + DMA_VP_IRQ_ENABLE);
 	writel(0, vp + DMA_VP_WRITE);
 
-	memset(dma->mem, 0, DMA_MEM_SIZE);
-	dma->head = 0;
-	dma->tail = 0;
+	memset(ring->desc, 0, DMA_DESC_RING_SIZE);
+	memset(ring->hdrs, 0, DMA_HDR_RING_SIZE);
+	memset(ring->bufs, 0, DMA_BUF_RING_SIZE);
+	memset(ring->slots, 0, RTL_NI_DMA_ENTRIES * sizeof(*ring->slots));
+	ring->head = 0;
+	ring->tail = 0;
+	ring->zc_in_flight = 0;
+	ring->zc_skbs = 0;
+	ring->stopped = false;
 
-	writel(lower_32_bits(dma->mem_dma) | RTL_NI_DMA_ORDER, vp + DMA_VP_BASE_LOW);
+	writel(lower_32_bits(ring->desc_dma) | RTL_NI_DMA_ORDER,
+	       vp + DMA_VP_BASE_LOW);
 	writel(DMA_VP_BASE_HIGH_INIT, vp + DMA_VP_BASE_HIGH);
 	writel(DMA_VP_BASE_ACCESS_BUSY | DMA_VP_BASE_ACCESS_WRITE,
 	       vp + DMA_VP_BASE_ACCESS);
@@ -618,23 +781,45 @@ int rtl_ni_dma_start(struct rtl_ni_dma *dma)
 		return ret;
 	writel(FIELD_PREP(DMA_VP_HEADER_A_LDPID, RTL_NI_CPU_PORT) |
 	       DMA_VP_HEADER_A_INIT, vp + DMA_VP_HEADER_A);
+	writel(DMA_VP_ENABLE_ALL, vp + DMA_VP_ENABLE);
+	return 0;
+}
 
-	val = readl(base + DMA_AXI_USER_SELECT);
-	val &= ~DMA_AXI_USER_SEL_MASK(RTL_NI_DMA_VP);
-	val |= DMA_AXI_USER_SEL_PAT1(RTL_NI_DMA_VP);
-	writel(val, base + DMA_AXI_USER_SELECT);
+int rtl_ni_dma_start(struct rtl_ni_dma *dma)
+{
+	void __iomem *base = dma->base;
+	u32 ss_mask = 0;
+	unsigned int i;
+	u32 val;
+	int ret;
+
+	writel(readl(base + DMA_CTRL) | DMA_CTRL_RESET, base + DMA_CTRL);
+	udelay(10);
+	writel(readl(base + DMA_CTRL) & ~(DMA_CTRL_RESET | DMA_CTRL_ENABLE),
+	       base + DMA_CTRL);
+
+	for (i = 0; i < dma->num_rings; i++) {
+		ret = rtl_ni_dma_ring_start(dma, &dma->rings[i]);
+		if (ret)
+			return ret;
+		ss_mask |= BIT(dma->rings[i].vp);
+	}
+
+	/* Route all VPs through ACE Pattern 1 and enable global ACE mirror. */
+	writel(DMA_AXI_USER_SELECT_ALL_PAT1, base + DMA_AXI_USER_SELECT);
 	writel(DMA_AXI_USER_PATTERN1_INIT, base + DMA_AXI_USER_PATTERN0);
 	writel(DMA_AXI_USER_PATTERN1_INIT, base + DMA_AXI_USER_PATTERN1);
 	writel(DMA_AXI_USER_PATTERN1_INIT, base + DMA_AXI_USER_PATTERN2);
 	writel(DMA_AXI_USER_PATTERN1_INIT, base + DMA_AXI_USER_PATTERN3);
+	val = readl(base + DMA_GLB_ACE_MIRROR);
+	writel((val & ~0xffU) | DMA_GLB_ACE_MIRROR_INIT,
+	       base + DMA_GLB_ACE_MIRROR);
 	val = readl(base + DMA_AXI_CONFIG);
 	writel((val & ~DMA_AXI_CONFIG_MASK) | DMA_AXI_CONFIG_INIT,
 	       base + DMA_AXI_CONFIG);
-	writel(readl(base + DMA_SS_CTRL) | DMA_SS_CTRL_EN | BIT(RTL_NI_DMA_VP),
+	writel(readl(base + DMA_SS_CTRL) | DMA_SS_CTRL_EN | ss_mask,
 	       base + DMA_SS_CTRL);
-
 	writel(DMA_AFT_CTRL_INIT, base + DMA_AFT_CTRL);
-	writel(DMA_VP_ENABLE_EN, vp + DMA_VP_ENABLE);
 	writel(DMA_CTRL_RUN, base + DMA_CTRL);
 	return 0;
 }
@@ -642,49 +827,255 @@ int rtl_ni_dma_start(struct rtl_ni_dma *dma)
 void rtl_ni_dma_stop(struct rtl_ni_dma *dma)
 {
 	void __iomem *base = dma->base;
+	unsigned int i;
 
-	writel(0, rtl_ni_dma_vp(dma) + DMA_VP_ENABLE);
+	for (i = 0; i < dma->num_rings; i++)
+		writel(0, rtl_ni_dma_vp(dma, &dma->rings[i]) + DMA_VP_ENABLE);
 	writel(readl(base + DMA_CTRL) & ~DMA_CTRL_ENABLE, base + DMA_CTRL);
 	writel(readl(base + DMA_CTRL) | DMA_CTRL_RESET, base + DMA_CTRL);
 	udelay(10);
 	writel(readl(base + DMA_CTRL) & ~DMA_CTRL_RESET, base + DMA_CTRL);
+
+	for (i = 0; i < dma->num_rings; i++)
+		rtl_ni_dma_ring_drain(dma, &dma->rings[i]);
 }
 
-void rtl_ni_dma_reclaim(struct rtl_ni_dma *dma)
+void rtl_ni_dma_ring_reclaim(struct rtl_ni_dma *dma,
+			     struct rtl_ni_dma_ring *ring)
 {
-	unsigned int hw = readl(rtl_ni_dma_vp(dma) + DMA_VP_READ) &
-			  (RTL_NI_DMA_ENTRIES - 1);
+	unsigned int hw = readl(rtl_ni_dma_vp(dma, ring) + DMA_VP_READ) &
+			  RTL_NI_DMA_MASK;
 
-	while (((hw - dma->tail) & (RTL_NI_DMA_ENTRIES - 1)) > RTL_NI_DMA_GUARD)
-		dma->tail = (dma->tail + 1) & (RTL_NI_DMA_ENTRIES - 1);
+	while (((hw - ring->tail) & RTL_NI_DMA_MASK) > RTL_NI_DMA_GUARD) {
+		struct rtl_ni_tx_slot *slot = &ring->slots[ring->tail];
+
+		if (slot->map_type != RTL_NI_TX_MAP_NONE)
+			ring->zc_in_flight--;
+		if (slot->skb)
+			ring->zc_skbs--;
+		rtl_ni_tx_slot_unmap(dma->dev, slot);
+		ring->tail = (ring->tail + 1) & RTL_NI_DMA_MASK;
+	}
 }
 
-bool rtl_ni_dma_avail(struct rtl_ni_dma *dma)
+bool rtl_ni_dma_ring_avail(const struct rtl_ni_dma_ring *ring,
+			   unsigned int needed)
 {
-	return ((dma->tail - dma->head - 1) & (RTL_NI_DMA_ENTRIES - 1)) >
-	       RTL_NI_DMA_GUARD;
+	unsigned int free = (ring->tail - ring->head - 1) & RTL_NI_DMA_MASK;
+
+	return free >= needed + RTL_NI_DMA_GUARD;
 }
 
-int rtl_ni_dma_xmit(struct rtl_ni_dma *dma, struct sk_buff *skb,
-		    const struct rtl9617c_ni_frame *frame, unsigned int mtu)
+static int rtl_ni_dma_ring_xmit_sg(struct rtl_ni_dma *dma,
+				   struct rtl_ni_dma_ring *ring,
+				   struct sk_buff *skb,
+				   const struct rtl9617c_ni_frame *frame,
+				   unsigned int mtu, u32 lso_para0)
 {
-	unsigned int offset = rtl_ni_dma_buf_offset(dma->head);
-	unsigned int prefix = frame->prefix_length;
+	unsigned int nr_frags = skb_shinfo(skb)->nr_frags;
+	unsigned int head_len = skb_headlen(skb);
+	dma_addr_t seg_dma[MAX_SKB_FRAGS + 1];
+	u32 seg_len[MAX_SKB_FRAGS + 1];
+	u8 seg_type[MAX_SKB_FRAGS + 1];
 	struct rtl_ni_tx_hdr hdr;
-	unsigned int len;
+	unsigned int nr_segs = 0;
+	unsigned int idx, i;
+	int err = -EFAULT;
+	void *hdr_buf;
+
+	BUILD_BUG_ON(MAX_SKB_FRAGS + 2 > RTL_NI_TX_MAX_FRAGS);
+
+	if (head_len > 0) {
+		dma_addr_t addr = dma_map_single(dma->dev, skb->data, head_len,
+						 DMA_TO_DEVICE);
+
+		if (dma_mapping_error(dma->dev, addr) || upper_32_bits(addr)) {
+			if (!dma_mapping_error(dma->dev, addr))
+				dma_unmap_single(dma->dev, addr, head_len,
+						 DMA_TO_DEVICE);
+			return -EFAULT;
+		}
+		seg_dma[nr_segs] = addr;
+		seg_len[nr_segs] = head_len;
+		seg_type[nr_segs] = RTL_NI_TX_MAP_SINGLE;
+		nr_segs++;
+	}
+
+	for (i = 0; i < nr_frags; i++) {
+		const skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
+		unsigned int flen = skb_frag_size(frag);
+		dma_addr_t addr;
+
+		if (!flen)
+			continue;
+		if (nr_segs >= ARRAY_SIZE(seg_dma)) {
+			i = nr_segs;
+			err = -EMSGSIZE;
+			goto err_unmap;
+		}
+		addr = skb_frag_dma_map(dma->dev, frag, 0, flen, DMA_TO_DEVICE);
+		if (dma_mapping_error(dma->dev, addr) || upper_32_bits(addr)) {
+			if (!dma_mapping_error(dma->dev, addr))
+				dma_unmap_page(dma->dev, addr, flen,
+					       DMA_TO_DEVICE);
+			i = nr_segs;
+			goto err_unmap;
+		}
+		seg_dma[nr_segs] = addr;
+		seg_len[nr_segs] = flen;
+		seg_type[nr_segs] = RTL_NI_TX_MAP_PAGE;
+		nr_segs++;
+	}
+
+	if (!nr_segs)
+		return -EINVAL;
+
+	/* Re-check ring space against exact descriptor chain length (1 + nr_segs). */
+	rtl_ni_dma_ring_reclaim(dma, ring);
+	if (!rtl_ni_dma_ring_avail(ring, 1 + nr_segs)) {
+		i = nr_segs;
+		err = -ENOSPC;
+		goto err_unmap;
+	}
+
+	idx = ring->head;
+	hdr_buf = ring->hdrs + idx * RTL_NI_DMA_HDR_LEN;
+	memset(hdr_buf, 0, RTL_NI_DMA_HDR_LEN);
+	rtl_ni_tx_hdr_build(&hdr, frame, skb->len,
+			    hdr_a_full || lso_para0 != 0);
+	hdr.lso_para0 = lso_para0;
+	rtl_ni_tx_hdr_write(hdr_buf, &hdr, hdr_layout_oem);
+
+	/* Descriptor 0: 16-byte buffer header (SOF | HP0, no EOF). */
+	ring->desc[idx].addr = cpu_to_le32(lower_32_bits(ring->hdrs_dma +
+							 idx * RTL_NI_DMA_HDR_LEN));
+	ring->desc[idx].ctrl = cpu_to_le32(rtl_ni_dma_desc_ctrl(RTL_NI_DMA_HDR_LEN,
+								true, false, true,
+								false));
+	ring->slots[idx].skb = NULL;
+	ring->slots[idx].dma = 0;
+	ring->slots[idx].len = 0;
+	ring->slots[idx].map_type = RTL_NI_TX_MAP_NONE;
+	idx = (idx + 1) & RTL_NI_DMA_MASK;
+
+	/* Descriptors 1..nr_segs: linear head + page fragments, EOF on last. */
+	for (i = 0; i < nr_segs; i++) {
+		bool is_last = (i == nr_segs - 1);
+		struct rtl_ni_tx_slot *slot = &ring->slots[idx];
+
+		ring->desc[idx].addr = cpu_to_le32(lower_32_bits(seg_dma[i]));
+		ring->desc[idx].ctrl = cpu_to_le32(rtl_ni_dma_desc_ctrl(seg_len[i],
+									false, is_last,
+									false, false));
+		slot->skb = is_last ? skb : NULL;
+		slot->dma = seg_dma[i];
+		slot->len = seg_len[i];
+		slot->map_type = seg_type[i];
+		ring->zc_in_flight++;
+		idx = (idx + 1) & RTL_NI_DMA_MASK;
+	}
+	ring->zc_skbs++;
+
+	dma_wmb();
+	ring->head = idx;
+	writel(ring->head, rtl_ni_dma_vp(dma, ring) + DMA_VP_WRITE);
+	writel(DMA_VP_MISC_IRQ_TX, rtl_ni_dma_vp(dma, ring) + DMA_VP_MISC_IRQ);
+	return 0;
+
+err_unmap:
+	while (i--) {
+		if (seg_type[i] == RTL_NI_TX_MAP_SINGLE)
+			dma_unmap_single(dma->dev, seg_dma[i], seg_len[i],
+					 DMA_TO_DEVICE);
+		else if (seg_type[i] == RTL_NI_TX_MAP_PAGE)
+			dma_unmap_page(dma->dev, seg_dma[i], seg_len[i],
+				       DMA_TO_DEVICE);
+	}
+	return err;
+}
+
+int rtl_ni_dma_ring_xmit(struct rtl_ni_dma *dma, struct rtl_ni_dma_ring *ring,
+			 struct sk_buff *skb,
+			 const struct rtl9617c_ni_frame *frame,
+			 unsigned int mtu, bool *consumed, bool *used_sg)
+{
+	unsigned int prefix = frame->prefix_length;
+	bool allow_sg = !frame->raw_payload && !prefix &&
+			skb->len >= DMA_MIN_FRAME && READ_ONCE(rtl_ni_tx_sg);
+	bool use_sg = allow_sg &&
+		      (skb_is_nonlinear(skb) || skb->len > RTL_NI_TX_COPYBREAK);
+	unsigned int max_len = allow_sg ? RTL_NI_TX_GSO_MAX_SG :
+					  (RTL_NI_DMA_BUF_SIZE - RTL_NI_DMA_HDR_LEN);
+	struct rtl_ni_tx_hdr hdr;
+	unsigned int len, offset;
 	u32 lso_para0 = 0;
+	int ret;
 	void *buf;
+
+	*consumed = false;
+	*used_sg = false;
+
+	if (unlikely(skb_has_frag_list(skb))) {
+		if (skb_is_gso(skb) || skb_linearize(skb))
+			return -EMSGSIZE;
+		use_sg = allow_sg &&
+			 (skb_is_nonlinear(skb) || skb->len > RTL_NI_TX_COPYBREAK);
+	}
 
 	len = frame->raw_payload ? skb->len : max(skb->len, DMA_MIN_FRAME);
 	len += prefix;
-	if (len + RTL_NI_DMA_HDR_LEN > RTL_NI_DMA_BUF_SIZE)
+	if (len > max_len)
+		return -EMSGSIZE;
+	if (!use_sg && len + RTL_NI_DMA_HDR_LEN > RTL_NI_DMA_BUF_SIZE)
 		return -EMSGSIZE;
 
-	rtl_ni_dma_reclaim(dma);
-	if (!rtl_ni_dma_avail(dma))
+	if (use_sg) {
+		unsigned int nr_frags = skb_shinfo(skb)->nr_frags;
+		unsigned int needed = 1 + (skb_headlen(skb) > 0 ? 1 : 0) + nr_frags;
+
+		rtl_ni_dma_ring_reclaim(dma, ring);
+		if (!rtl_ni_dma_ring_avail(ring, needed))
+			return -ENOSPC;
+
+		if (unlikely(skb->ip_summed == CHECKSUM_PARTIAL ||
+			     skb_is_gso(skb))) {
+			bool gso = skb_is_gso(skb);
+			const struct rtl_ni_tx_offload req = {
+				.csum = rtl_ni_tx_csum || rtl_ni_tso,
+				.segment = gso,
+				.segment_ipv6 = rtl_ni_tso_v6,
+				.gso_size = gso ? skb_shinfo(skb)->gso_size : 0,
+				.mtu = mtu,
+			};
+
+			if (rtl_ni_tx_offload_prepare_sg(skb->data,
+							 skb_headlen(skb),
+							 skb->len, &req,
+							 &lso_para0)) {
+				if (gso)
+					return -EOPNOTSUPP;
+				/* Non-linear or UDP CSUM_PARTIAL: let kernel compute. */
+				if (skb_checksum_help(skb))
+					return -EFAULT;
+				lso_para0 = 0;
+			}
+		}
+
+		ret = rtl_ni_dma_ring_xmit_sg(dma, ring, skb, frame, mtu,
+					      lso_para0);
+		if (!ret) {
+			*consumed = true;
+			*used_sg = true;
+		}
+		return ret;
+	}
+
+	rtl_ni_dma_ring_reclaim(dma, ring);
+	if (!rtl_ni_dma_ring_avail(ring, 1))
 		return -ENOSPC;
 
-	buf = dma->mem + offset;
+	offset = ring->head * RTL_NI_DMA_BUF_SIZE;
+	buf = ring->bufs + offset;
 	memset(buf, 0, RTL_NI_DMA_HDR_LEN);
 	if (prefix)
 		memcpy(buf + RTL_NI_DMA_HDR_LEN, frame->prefix, prefix);
@@ -695,12 +1086,11 @@ int rtl_ni_dma_xmit(struct rtl_ni_dma *dma, struct sk_buff *skb,
 
 	/*
 	 * Checksum/LSO offload (RE-1 steps S4/S5).  Only frames the stack marks
-	 * CHECKSUM_PARTIAL or GSO are candidates, and only the plain Ethernet
-	 * frames of this driver: PON frames carry a private prefix and are
-	 * never marked for offload.  A declining frame gets its checksum
-	 * completed in software, so an offload can never corrupt a frame.
+	 * CHECKSUM_PARTIAL or GSO are candidates, and only plain Ethernet/ITU
+	 * frames: EPON/OMCI control frames carry a private prefix and are never
+	 * marked for offload.
 	 */
-	if (unlikely(!frame->raw_payload &&
+	if (unlikely(!frame->raw_payload && !prefix &&
 		     (skb->ip_summed == CHECKSUM_PARTIAL || skb_is_gso(skb)))) {
 		bool gso = skb_is_gso(skb);
 		const struct rtl_ni_tx_offload req = {
@@ -713,16 +1103,10 @@ int rtl_ni_dma_xmit(struct rtl_ni_dma *dma, struct sk_buff *skb,
 
 		if (rtl_ni_tx_offload_prepare(buf + RTL_NI_DMA_HDR_LEN, len,
 					      &req, &lso_para0)) {
-			/*
-			 * A GSO frame cannot be checksum-helped: dropping it is
-			 * better than sending unsegmented garbage.  Unreachable
-			 * while the advertised limits hold.
-			 */
 			if (gso)
 				return -EOPNOTSUPP;
 			if (skb_checksum_help(skb))
 				return -EFAULT;
-			/* The software checksum went into the skb, not the buffer. */
 			skb_copy_bits(skb, 0,
 				      buf + RTL_NI_DMA_HDR_LEN + prefix,
 				      skb->len);
@@ -734,14 +1118,17 @@ int rtl_ni_dma_xmit(struct rtl_ni_dma *dma, struct sk_buff *skb,
 	hdr.lso_para0 = lso_para0;
 	rtl_ni_tx_hdr_write(buf, &hdr, hdr_layout_oem);
 
-	dma->desc[dma->head].addr = cpu_to_le32(dma->mem_dma + offset);
-	dma->desc[dma->head].ctrl = cpu_to_le32((frame->oam ? DMA_DESC_CTRL_OAM :
+	ring->slots[ring->head].skb = NULL;
+	ring->slots[ring->head].map_type = RTL_NI_TX_MAP_NONE;
+	ring->desc[ring->head].addr = cpu_to_le32(lower_32_bits(ring->bufs_dma +
+								offset));
+	ring->desc[ring->head].ctrl = cpu_to_le32((frame->oam ? DMA_DESC_CTRL_OAM :
 						 DMA_DESC_CTRL) |
 						((len + RTL_NI_DMA_HDR_LEN) <<
 						 DMA_DESC_LEN_SHIFT));
 	dma_wmb();
-	dma->head = (dma->head + 1) & (RTL_NI_DMA_ENTRIES - 1);
-	writel(dma->head, rtl_ni_dma_vp(dma) + DMA_VP_WRITE);
-	writel(DMA_VP_MISC_IRQ_TX, rtl_ni_dma_vp(dma) + DMA_VP_MISC_IRQ);
+	ring->head = (ring->head + 1) & RTL_NI_DMA_MASK;
+	writel(ring->head, rtl_ni_dma_vp(dma, ring) + DMA_VP_WRITE);
+	writel(DMA_VP_MISC_IRQ_TX, rtl_ni_dma_vp(dma, ring) + DMA_VP_MISC_IRQ);
 	return 0;
 }

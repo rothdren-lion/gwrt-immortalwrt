@@ -3,8 +3,10 @@
 #include <linux/delay.h>
 #include <linux/file.h>
 #include <linux/io.h>
+#include <linux/kstrtox.h>
 #include <linux/mm.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/seq_file.h>
@@ -20,6 +22,7 @@
 #define TAURUS_VSFC_REG_RECV_CTRL3	0x1c
 #define TAURUS_VSFC_REG_RECV_CTRL4	0x20
 #define TAURUS_VSFC_REG_STATUS		0x2c
+#define TAURUS_VSFC_REG_PORF_ST0	0x30
 
 #define TAURUS_VSFC_CTRL_GLB_EN		BIT(0)
 #define TAURUS_VSFC_CTRL_DIV_SEL	BIT(4)
@@ -36,6 +39,9 @@
 
 #define TAURUS_VSFC_STATUS_IDLE_ST	BIT(0)
 
+#define TAURUS_VSFC_PORF_ST0_TRIG_CNT	GENMASK(11, 0)
+#define TAURUS_VSFC_PORF_ST0_OVFL	BIT(31)
+
 #define TAURUS_VSFC_TRIG_SEL_CPU_INTERNAL	BIT(0)
 #define TAURUS_VSFC_TRIG_SEL_UVLO		BIT(1)
 #define TAURUS_VSFC_TRIG_SEL_SPEED_SENESOR	BIT(2)
@@ -43,6 +49,7 @@
 struct realtek_vsfc {
 	struct platform_device *pdev;
 	void __iomem *regs;
+	struct mutex lock; /* serializes sysfs enabled toggles */
 	u32 gainn;
 	u32 gainp;
 	u32 ctrl;
@@ -60,10 +67,10 @@ static void taurus_vsfc_writel_2t(struct realtek_vsfc *vsfc, u32 off, u32 val)
 	writel(val, vsfc->regs + off);
 }
 
-static int taurus_vsfc_init(struct realtek_vsfc *vsfc)
+static void taurus_vsfc_disable(struct realtek_vsfc *vsfc)
 {
 	ktime_t timeout;
-	u32 ctrl, trig_ctrl, status;
+	u32 ctrl, status;
 
 	ctrl = readl(vsfc->regs + TAURUS_VSFC_REG_CONTROL);
 	ctrl &= ~TAURUS_VSFC_CTRL_GLB_EN;
@@ -72,9 +79,18 @@ static int taurus_vsfc_init(struct realtek_vsfc *vsfc)
 	timeout = ktime_add_ms(ktime_get(), 100);
 	do {
 		status = readl(vsfc->regs + TAURUS_VSFC_REG_STATUS);
+		/* Ensure status read completes before polling idle bit */
 		rmb();
 	} while (!(status & TAURUS_VSFC_STATUS_IDLE_ST) &&
 		 ktime_before(ktime_get(), timeout));
+}
+
+static int taurus_vsfc_init(struct realtek_vsfc *vsfc)
+{
+	u32 ctrl, trig_ctrl;
+
+	taurus_vsfc_disable(vsfc);
+	ctrl = readl(vsfc->regs + TAURUS_VSFC_REG_CONTROL);
 
 	switch (FIELD_GET(TAURUS_VSFC_CTRL_TRIG_SEL, vsfc->ctrl)) {
 	case TAURUS_VSFC_TRIG_SEL_CPU_INTERNAL:
@@ -101,6 +117,7 @@ static int taurus_vsfc_init(struct realtek_vsfc *vsfc)
 				      vsfc->recv_ctrl2);
 		taurus_vsfc_writel_2t(vsfc, TAURUS_VSFC_REG_RECV_CTRL3,
 				      vsfc->recv_ctrl3);
+		/* Commit recovery parameters before setting global enable */
 		wmb();
 
 		ctrl |= TAURUS_VSFC_CTRL_GLB_EN;
@@ -133,6 +150,7 @@ static int taurus_vsfc_init(struct realtek_vsfc *vsfc)
 				      vsfc->recv_ctrl2);
 		taurus_vsfc_writel_2t(vsfc, TAURUS_VSFC_REG_RECV_CTRL3,
 				      vsfc->recv_ctrl3);
+		/* Commit recovery parameters before setting global enable */
 		wmb();
 		ctrl |= TAURUS_VSFC_CTRL_GLB_EN;
 		taurus_vsfc_writel_2t(vsfc, TAURUS_VSFC_REG_CONTROL, ctrl);
@@ -143,10 +161,77 @@ static int taurus_vsfc_init(struct realtek_vsfc *vsfc)
 	return 0;
 }
 
+static ssize_t enabled_show(struct device *dev, struct device_attribute *attr,
+			    char *buf)
+{
+	struct realtek_vsfc *vsfc = dev_get_drvdata(dev);
+	u32 ctrl = readl(vsfc->regs + TAURUS_VSFC_REG_CONTROL);
+
+	return sysfs_emit(buf, "%u\n", !!(ctrl & TAURUS_VSFC_CTRL_GLB_EN));
+}
+
+static ssize_t enabled_store(struct device *dev, struct device_attribute *attr,
+			     const char *buf, size_t count)
+{
+	struct realtek_vsfc *vsfc = dev_get_drvdata(dev);
+	bool en;
+	int ret;
+
+	ret = kstrtobool(buf, &en);
+	if (ret)
+		return ret;
+
+	mutex_lock(&vsfc->lock);
+	if (en)
+		taurus_vsfc_init(vsfc);
+	else
+		taurus_vsfc_disable(vsfc);
+	mutex_unlock(&vsfc->lock);
+
+	return count;
+}
+static DEVICE_ATTR_RW(enabled);
+
+static ssize_t trig_cnt_show(struct device *dev, struct device_attribute *attr,
+			     char *buf)
+{
+	struct realtek_vsfc *vsfc = dev_get_drvdata(dev);
+	u32 st0 = readl(vsfc->regs + TAURUS_VSFC_REG_PORF_ST0);
+
+	return sysfs_emit(buf, "%lu\n",
+			  FIELD_GET(TAURUS_VSFC_PORF_ST0_TRIG_CNT, st0));
+}
+static DEVICE_ATTR_RO(trig_cnt);
+
+static ssize_t status_show(struct device *dev, struct device_attribute *attr,
+			   char *buf)
+{
+	struct realtek_vsfc *vsfc = dev_get_drvdata(dev);
+	u32 ctrl = readl(vsfc->regs + TAURUS_VSFC_REG_CONTROL);
+	u32 trig_ctrl = readl(vsfc->regs + TAURUS_VSFC_REG_TRIG_CONTROL);
+	u32 status = readl(vsfc->regs + TAURUS_VSFC_REG_STATUS);
+	u32 st0 = readl(vsfc->regs + TAURUS_VSFC_REG_PORF_ST0);
+
+	return sysfs_emit(buf,
+			  "enabled=%u ctrl=0x%08x trig_ctrl=0x%08x status=0x%08x idle=%u trig_cnt=%lu ovfl=%u\n",
+			  !!(ctrl & TAURUS_VSFC_CTRL_GLB_EN), ctrl, trig_ctrl,
+			  status, !!(status & TAURUS_VSFC_STATUS_IDLE_ST),
+			  FIELD_GET(TAURUS_VSFC_PORF_ST0_TRIG_CNT, st0),
+			  !!(st0 & TAURUS_VSFC_PORF_ST0_OVFL));
+}
+static DEVICE_ATTR_RO(status);
+
+static struct attribute *taurus_vsfc_attrs[] = {
+	&dev_attr_enabled.attr,
+	&dev_attr_trig_cnt.attr,
+	&dev_attr_status.attr,
+	NULL,
+};
+ATTRIBUTE_GROUPS(taurus_vsfc);
+
 static int taurus_vsfc_probe(struct platform_device *pdev)
 {
 	struct realtek_vsfc *vsfc;
-	struct resource *res;
 	int ret;
 	u32 value;
 
@@ -155,9 +240,10 @@ static int taurus_vsfc_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	vsfc->pdev = pdev;
+	mutex_init(&vsfc->lock);
+	platform_set_drvdata(pdev, vsfc);
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	vsfc->regs = devm_ioremap(&pdev->dev, res->start, resource_size(res));
+	vsfc->regs = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(vsfc->regs))
 		return PTR_ERR(vsfc->regs);
 
@@ -231,7 +317,9 @@ static int taurus_vsfc_probe(struct platform_device *pdev)
 
 	ret = taurus_vsfc_init(vsfc);
 
-	dev_info(&pdev->dev, "RTK VSFC driver init\n");
+	dev_info(&pdev->dev, "RTK VSFC init (ctrl=0x%08x trig_ctrl=0x%08x)\n",
+		 readl(vsfc->regs + TAURUS_VSFC_REG_CONTROL),
+		 readl(vsfc->regs + TAURUS_VSFC_REG_TRIG_CONTROL));
 
 	return ret;
 }
@@ -247,6 +335,7 @@ static struct platform_driver taurus_vsfc_driver = {
 	.driver = {
 		.name = "taurus-vsfc",
 		.of_match_table = taurus_vsfc_of_match,
+		.dev_groups = taurus_vsfc_groups,
 	},
 };
 module_platform_driver(taurus_vsfc_driver);

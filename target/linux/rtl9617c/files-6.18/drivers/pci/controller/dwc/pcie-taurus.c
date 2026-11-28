@@ -1,74 +1,62 @@
 // SPDX-License-Identifier: GPL-2.0
+#include <linux/bitfield.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
+#include <linux/gpio/consumer.h>
 #include <linux/interrupt.h>
+#include <linux/io.h>
+#include <linux/iopoll.h>
+#include <linux/irqdomain.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/pci.h>
-#include <linux/platform_device.h>
-#include <linux/resource.h>
-#include <linux/reboot.h>
-#include <linux/signal.h>
-#include <linux/types.h>
-#include <linux/reset.h>
-#include <linux/of_irq.h>
+#include <linux/of.h>
 #include <linux/of_address.h>
+#include <linux/of_irq.h>
+#include <linux/pci.h>
 #include <linux/phy/phy.h>
-#include <linux/gpio.h>
-#include <linux/of_gpio.h>
+#include <linux/platform_device.h>
+#include <linux/reset.h>
+#include <linux/sizes.h>
 #include <linux/soc/realtek/taurus-soc.h>
+#include <linux/spinlock.h>
 
 #include "pcie-designware.h"
 
-#define CA_PCIE_SERDES_CFG_VER_UNKNOWN "unknown"
+#define TAURUS_PCIE_SERDES_CFG_VER_UNKNOWN	"unknown"
 
-#define MAX_INTR_PINS       4
+#define MAX_INTX_HOST_IRQS		4
+#define MAX_BER_POLL_COUNT		50
+#define MAX_LANE_NUM			2
+#define MAX_NAME_LEN			16
+#define SERDES_LANE_STRIDE		0x1000
 
-#define SERDES_PHY_INIT		0
-#define SERDES_PHY_AUTO_CAL	1
-
-#define MAX_INTX_HOST_IRQS	4
-
-#define MAX_BER_POLL_COUNT	50
-#define MAX_LINKUP_POLL_COUNT	500
-
-#define MAX_LANE_NUM		2
-#define MAX_NAME_LEN		16
-
-#define to_cortina_pcie(x)	dev_get_drvdata((x)->dev)
-#define CONFIG_RTK_PCIE_AFFINITY 1
+#define to_taurus_pcie(x)		dev_get_drvdata((x)->dev)
 
 struct serdes_cfg {
 	u32 addr;
 	u32 val;
 };
 
-struct irq_lut {
-	void *pcie;
-	u32 reg;
-	u32 mask;
-	int irq;
-};
-
-struct cortina_pcie {
+struct taurus_pcie {
 	struct dw_pcie *pci;
-	void __iomem *reg_base; 
-	void __iomem *serdes_base; 
+	void __iomem *reg_base;
+	void __iomem *serdes_base;
 	phys_addr_t dbi_start;
 	phys_addr_t dbi_end;
 
 	phys_addr_t iatu_unroll_start;
 	void __iomem *iatu_unroll_base;
-
-	struct clk *bus_clk;
+	void __iomem *coherent_atu;
+	u32 coherent_hi_addr;
+	bool dma_coherent;
 
 	struct reset_control *core_reset;
 	struct reset_control *phy_reset;
 	struct reset_control *device_reset;
 	struct reset_control *device_power;
+	struct gpio_desc *perst;
 
 	struct phy *phy[MAX_LANE_NUM];
-	phys_addr_t serdes_addr;
 	resource_size_t serdes_size;
 	const char *serdes_cfg_ver;
 	struct serdes_cfg *cfg[MAX_LANE_NUM];
@@ -76,36 +64,20 @@ struct cortina_pcie {
 
 	u32 idx;
 	u8 lanes;
+	bool rev_a;
+	bool phy_on;
+	int irq_affinity;
 
-	bool auto_calibration;
-	bool init;
-	u32 cur_irq_sts;
-	unsigned long msi_pages;
-
-	u16 device_ready_time;
-
-	struct notifier_block reboot_nb;
-
-#ifdef CONFIG_RTK_PCIE_AFFINITY
-	int         irq_affinity;
-#endif
-#ifdef CONFIG_EXTD_INTR_PIN
-	DECLARE_BITMAP(intr_en_bitmap, MAX_INTR_PINS);
-#endif
-	struct irq_lut luts[MAX_INTR_PINS];
+	raw_spinlock_t intr_lock;
+	struct irq_domain *intx_domain;
 };
 
 #define PCIE_GLBL_INTERRUPT_0					0x00
 #define INT_RADM_INTA_ASSERTED					0x00000001
-#define INT_RADM_INTA_DEASSERTED				0x00000002
 #define INT_RADM_INTB_ASSERTED					0x00000004
-#define INT_RADM_INTB_DEASSERTED				0x00000008
 #define INT_RADM_INTC_ASSERTED					0x00000010
-#define INT_RADM_INTC_DEASSERTED				0x00000020
 #define INT_RADM_INTD_ASSERTED					0x00000040
-#define INT_RADM_INTD_DEASSERTED				0x00000080
 #define INT_MSI_CTR_INT							0x00000100
-#define INT_SMLH_LINK_UP						0x00000200
 #define INT_HP_INT								0x00000400
 #define INT_RADM_CORRECTABLE_ERR				0x00000800
 #define INT_RADM_NONFATAL_ERR					0x00001000
@@ -120,97 +92,52 @@ struct cortina_pcie {
 #define INT_HP_MSI								0x04000000
 #define INT_CFG_UR_RESP							0x08000000
 #define PCIE_GLBL_INTERRUPT_ENABLE_0			0x04
-#define PCIE_GLBL_INTERRUPT_1					0x08
-#define PCIE_GLBL_INTERRUPT_ENABLE_1				0x0C
-#ifdef CONFIG_EXTD_INTR_PIN
-#define PCIE_GLBL_INTERRUPT_2					0x180
-#define PCIE_GLBL_INTERRUPT_ENABLE_2				0x184
-#define PCIE_GLBL_INTERRUPT_3					0x188
-#define PCIE_GLBL_INTERRUPT_ENABLE_3				0x18C
-#define PCIE_GLBL_INTERRUPT_4					0x190
-#define PCIE_GLBL_INTERRUPT_ENABLE_4				0x194
-#define PCIE_GLBL_INTERRUPT_5					0x198
-#define PCIE_GLBL_INTERRUPT_ENABLE_5				0x19C
-#endif
-#define PCIE_GLBL_AXI_MASTER_RESP_MISC_INFO			0x10
-#define PCIE_GLBL_AXI_MSTR_SLV_RESP_ERR_LOW_PW_MAP	0x14
 #define PCIE_GLBL_CORE_CONFIG_REG					0x18
 #define PCIE_LTSSM_ENABLE							BIT(0)
 #define PCIE_LINK_DOWN_RST							BIT(6)
 #define PCIE_GLBL_PM_INFO_RESET_VOLT_LOW_PWR_STATUS	0x1C
-#define PWR_STATUS_SMLH_LTSSM_STATE_OFFSET			0x4
 #define PWR_STATUS_SMLH_LTSSM_STATE_MASK			0x000003F0
 #define PWR_STATUS_RDLH_LINK_UP						BIT(18)
-#define PCIE_GLBL_RTLH_INFO							0x20
-#define PCIE_GLBL_AXI_MASTER_WR_MISC_INFO			0x24
-#define PCIE_GLBL_AXI_MASTER_RD_MISC_INFO			0x28
-#define PCIE_GLBL_AXI_SLAVE_BRESP_MISC_INFO			0x2C
-#define PCIE_GLBL_AXI_SLAVE_RD_RESP_MISC_INFO_COMP_TIMEOUT	0x30
-#define PCIE_GLBL_CORE_DEBUG_0						0x34
-#define PCIE_GLBL_CORE_DEBUG_1						0x38
-#define PCIE_GLBL_CORE_DEBUG_E1						0x3C
 #define PCIE_GLBL_PCIE_CONTR_CFG_START_ADDR			0x40
 #define PCIE_GLBL_PCIE_CONTR_CFG_END_ADDR			0x44
 #define PCIE_GLBL_PCIE_CONTR_IATU_BASE_ADDR			0x48
-#if 0
-#define RMLH_RCVD_ERR                 			0x124
-#endif
 #define RC_IATU_BASE_ADDR_MASK					0xFFF80000
-#if 1
-#define PCIE_MSI_INTERRUPT_STATUS_0				0x1a0
 #define PCIE_MSI_INTERRUPT_ENABLE_0				0x1a4
-#define PCIE_MSI_INTERRUPT_STATUS_1				0x1a8
-#define PCIE_MSI_INTERRUPT_ENABLE_1				0x1ac
-#ifdef CONFIG_EXTD_INTR_PIN
-#define PCIE_MSI_INTERRUPT_STATUS_2				0x1b0
-#define PCIE_MSI_INTERRUPT_ENABLE_2				0x1b4
-#define PCIE_MSI_INTERRUPT_STATUS_3				0x1b8
-#define PCIE_MSI_INTERRUPT_ENABLE_3				0x1bc
-#define PCIE_MSI_INTERRUPT_STATUS_4				0x1c0
-#define PCIE_MSI_INTERRUPT_ENABLE_4				0x1c4
-#define PCIE_MSI_INTERRUPT_STATUS_5				0x1c8
-#define PCIE_MSI_INTERRUPT_ENABLE_5				0x1cc
-#endif
-#endif
 
-#define LTSSM_DETECT_QUIET		0x00
-#define LTSSM_DETECT_ACT		0x01
-#define LTSSM_POLL_ACTIVE		0x02
-#define LTSSM_POLL_COMPLIANCE	0x03
-#define LTSSM_POLL_CONFIG		0x04
-#define LTSSM_PRE_DETECT_QUIET	0x05
-#define LTSSM_DETECT_WAIT		0x06
-#define LTSSM_CFG_LINKWD_START	0x07
-#define LTSSM_CFG_LINKWD_ACEPT	0x08
-#define LTSSM_CFG_LANENUM_WAI	0x09
-#define LTSSM_CFG_LANENUM_ACEPT	0x0A
-#define LTSSM_CFG_COMPLETE		0x0B
-#define LTSSM_CFG_IDLE			0x0C
-#define LTSSM_RCVRY_LOCK		0x0D
-#define LTSSM_RCVRY_SPEED		0x0E
-#define LTSSM_RCVRY_RCVRCFG		0x0F
-#define LTSSM_RCVRY_IDLE		0x10
-#define LTSSM_L0				0x11
-#define LTSSM_L0S				0x12
-#define LTSSM_L123_SEND_EIDLE	0x13
-#define LTSSM_L1_IDLE			0x14
-#define LTSSM_L2_IDLE			0x15
-#define LTSSM_L2_WAKE			0x16
-#define LTSSM_DISABLED_ENTRY	0x17
-#define LTSSM_DISABLED_IDLE		0x18
-#define LTSSM_DISABLED			0x19
-#define LTSSM_ENTRY				0x1A
-#define LTSSM_LPBK_ACTIVE		0x1B
-#define LTSSM_LPBK_EXIT			0x1C
-#define LTSSM_LPBK_EXIT_TIMEOUT	0x1D
-#define LTSSM_HOT_RESET_ENTRY	0X1E
-#define LTSSM_HOT_RESET			0x1F
-#define LTSSM_RCVRY_EQ0			0x20
-#define LTSSM_RCVRY_EQ1			0x21
-#define LTSSM_RCVRY_EQ2			0x22
-#define LTSSM_RCVRY_EQ3			0x23
+#define TAURUS_ATU_CTRL						0x00
+#define TAURUS_ATU_CTRL_IDX_MASK				GENMASK(29, 24)
+#define TAURUS_ATU_CTRL_R					BIT(30)
+#define TAURUS_ATU_CTRL_W					BIT(31)
+#define TAURUS_ATU_INPUT					0x04
+#define TAURUS_ATU_MASK						0x08
+#define TAURUS_ATU_OUTPUT					0x0c
+#define TAURUS_ATU_ACE_CFG					0x10
+#define TAURUS_ATU_AXI_ARUSER					0x14
+#define TAURUS_ATU_AXI_AWUSER					0x18
 
-static const char *__ltssm_str[] = {
+#define TAURUS_ATU_ACE_ARPROT_NS				FIELD_PREP(GENMASK(2, 0), 2)
+#define TAURUS_ATU_ACE_AWPROT_NS				FIELD_PREP(GENMASK(6, 4), 2)
+#define TAURUS_ATU_ACE_ARCACHE_WB_RWA				FIELD_PREP(GENMASK(19, 16), 0xf)
+#define TAURUS_ATU_ACE_AWCACHE_WB_RWA				FIELD_PREP(GENMASK(23, 20), 0xf)
+#define TAURUS_ATU_ACE_USER_EN					BIT(24)
+#define TAURUS_ATU_ACE_PROT_EN					BIT(25)
+#define TAURUS_ATU_ACE_CACHE_EN					BIT(26)
+#define TAURUS_ATU_ACE_COHERENT_CFG				(TAURUS_ATU_ACE_ARPROT_NS | \
+								 TAURUS_ATU_ACE_AWPROT_NS | \
+								 TAURUS_ATU_ACE_ARCACHE_WB_RWA | \
+								 TAURUS_ATU_ACE_AWCACHE_WB_RWA | \
+								 TAURUS_ATU_ACE_USER_EN | \
+								 TAURUS_ATU_ACE_PROT_EN | \
+								 TAURUS_ATU_ACE_CACHE_EN)
+#define TAURUS_ATU_AXUSER_OUTER_SHAREABLE			FIELD_PREP(GENMASK(7, 6), 2)
+
+#define TAURUS_ATU_TLB_COUNT					8
+#define TAURUS_ATU_DDR_LOW_INPUT				0x00000
+#define TAURUS_ATU_DDR_HIGH_INPUT				0x18000
+#define TAURUS_ATU_DDR_WINDOW_PAGES				(SZ_2G / SZ_64K)
+#define TAURUS_ATU_DEFAULT_HI_ADDR				0x4
+
+static const char * const taurus_pcie_ltssm_names[] = {
 	"DETECT_QUIET",
 	"DETECT_ACT",
 	"POLL_ACTIVE",
@@ -249,314 +176,243 @@ static const char *__ltssm_str[] = {
 	"RCVRY_EQ3"
 };
 
-static const char *ltssm_str(int state) {
-	if ((state >=0) && (state < ARRAY_SIZE(__ltssm_str)))
-		return __ltssm_str[state];
-	else
-		return "";
+static const char *taurus_pcie_ltssm_name(unsigned int state)
+{
+	if (state < ARRAY_SIZE(taurus_pcie_ltssm_names))
+		return taurus_pcie_ltssm_names[state];
+
+	return "UNKNOWN";
 }
 
-static inline u32 cortina_pcie_readl(struct cortina_pcie *pcie, u32 reg);
-static inline void cortina_pcie_writel(struct cortina_pcie *pcie, u32 val,
-                                       u32 reg);
+static u32 taurus_pcie_readl(struct taurus_pcie *pcie, u32 reg);
+static void taurus_pcie_writel(struct taurus_pcie *pcie, u32 val, u32 reg);
 
-static int cortina_pcie_device_reset(struct cortina_pcie *pcie);
-static int cortina_pcie_ltssm(struct cortina_pcie *pcie);
+static int taurus_pcie_device_reset(struct taurus_pcie *pcie);
+static unsigned int taurus_pcie_ltssm(struct taurus_pcie *pcie);
 
-
-static ssize_t cortina_pcie_device_reset_store(struct device *dev,
-        struct device_attribute *attr,
-        const char *buf, size_t count)
+static ssize_t taurus_pcie_device_reset_store(struct device *dev,
+					       struct device_attribute *attr,
+					       const char *buf, size_t count)
 {
-	struct cortina_pcie *pcie = dev_get_drvdata(dev);
-	int result;
+	struct taurus_pcie *pcie = dev_get_drvdata(dev);
+	int ret;
 
-	result = cortina_pcie_device_reset(pcie);
-	if (result < 0)
-		return result;
+	ret = taurus_pcie_device_reset(pcie);
+	if (ret)
+		return ret;
 
 	return count;
 }
 
-static int cortina_pcie_serdes_phy_switch_oobs(void __iomem *phy_base)
+static void taurus_pcie_serdes_switch_oobs(void __iomem *phy_base)
 {
-
-        writel(0xf75a, phy_base + 0x0034);
-        usleep_range(10, 20);
-        writel(0xf75a, phy_base + 0x0134);
-        usleep_range(10, 20);
-        writel(0x4500, phy_base + 0x00bc);
-        usleep_range(10, 20);
-        writel(0x3d00, phy_base + 0x01bc);
-        usleep_range(10, 20);
-        writel(0x0011, phy_base + 0x006c);
-        usleep_range(10, 20);
-        writel(0x0011, phy_base + 0x016c);
-        usleep_range(10, 20);
-        writel(0x01a4, phy_base + 0x0040);
-        usleep_range(10, 20);
-        writel(0x01a4, phy_base + 0x0140);
-        usleep_range(10, 20);
-
-        return 0;
+	writel(0xf75a, phy_base + 0x0034);
+	usleep_range(10, 20);
+	writel(0xf75a, phy_base + 0x0134);
+	usleep_range(10, 20);
+	writel(0x4500, phy_base + 0x00bc);
+	usleep_range(10, 20);
+	writel(0x3d00, phy_base + 0x01bc);
+	usleep_range(10, 20);
+	writel(0x0011, phy_base + 0x006c);
+	usleep_range(10, 20);
+	writel(0x0011, phy_base + 0x016c);
+	usleep_range(10, 20);
+	writel(0x01a4, phy_base + 0x0040);
+	usleep_range(10, 20);
+	writel(0x01a4, phy_base + 0x0140);
+	usleep_range(10, 20);
 }
 
 static DEVICE_ATTR(device_reset, 0200, NULL,
-                   cortina_pcie_device_reset_store);
+		   taurus_pcie_device_reset_store);
 
-static ssize_t cortina_pcie_serdes_phy_show(struct device *dev,
-        struct device_attribute *attr,
-        char *buf)
+static ssize_t taurus_pcie_serdes_phy_show(struct device *dev,
+					    struct device_attribute *attr,
+					    char *buf)
 {
-	struct cortina_pcie *cortina_pcie = dev_get_drvdata(dev);
-	ssize_t ret = 0;
+	struct taurus_pcie *pcie = dev_get_drvdata(dev);
+	ssize_t len = 0;
 	void __iomem *phy_base;
-	int lane, addr;
-	u16 val;
+	unsigned int lane, addr;
+	u32 val;
 
-	ret += sprintf(buf, "PCIe PHY ver: %s\n", cortina_pcie->serdes_cfg_ver);
+	len += sysfs_emit_at(buf, len, "PCIe PHY ver: %s\n",
+			     pcie->serdes_cfg_ver);
 
-	for (lane = 0; lane < cortina_pcie->lanes; lane++) {
-		ret += sprintf(buf + ret, "lane [%d]\n", lane);
-		ret += sprintf(buf + ret, "Gen 1:  \tGen 2:\n");
+	for (lane = 0; lane < pcie->lanes; lane++) {
+		len += sysfs_emit_at(buf, len, "lane [%u]\n", lane);
+		len += sysfs_emit_at(buf, len, "Gen 1:  \tGen 2:\n");
 
-		phy_base = cortina_pcie->serdes_base + lane*0x1000;
-		cortina_pcie_serdes_phy_switch_oobs(phy_base);
-		ret += sprintf(buf + ret, "Page 0  \tPage 0\n");
-		for (addr = 0x0; addr <= 0x1f; addr++) {
-			val = readl(phy_base + addr*0x4) & 0xffff;
-			ret += sprintf(buf + ret, "%02x: %04x\t", addr, val);
-			val = readl(phy_base + (addr+0x40)*0x4) & 0xffff;
-			ret += sprintf(buf + ret, "%02x: %04x\n", addr, val);
+		phy_base = pcie->serdes_base + lane * SERDES_LANE_STRIDE;
+		taurus_pcie_serdes_switch_oobs(phy_base);
+		len += sysfs_emit_at(buf, len, "Page 0  \tPage 0\n");
+		for (addr = 0; addr <= 0x1f; addr++) {
+			val = readl(phy_base + addr * 4) & 0xffff;
+			len += sysfs_emit_at(buf, len, "%02x: %04x\t", addr,
+					     val);
+			val = readl(phy_base + (addr + 0x40) * 4) & 0xffff;
+			len += sysfs_emit_at(buf, len, "%02x: %04x\n", addr,
+					     val);
 		}
-		ret += sprintf(buf + ret, "Page 1  \tPage 1\n");
+		len += sysfs_emit_at(buf, len, "Page 1  \tPage 1\n");
 		for (addr = 0x20; addr <= 0x34; addr++) {
-			val = readl(phy_base + addr*0x4) & 0xffff;
-			ret += sprintf(buf + ret, "%02x: %04x\t", addr-0x20, val);
-			val = readl(phy_base + (addr+0x40)*0x4) & 0xffff;
-			ret += sprintf(buf + ret, "%02x: %04x\n", addr-0x20, val);
+			val = readl(phy_base + addr * 4) & 0xffff;
+			len += sysfs_emit_at(buf, len, "%02x: %04x\t",
+					     addr - 0x20, val);
+			val = readl(phy_base + (addr + 0x40) * 4) & 0xffff;
+			len += sysfs_emit_at(buf, len, "%02x: %04x\n",
+					     addr - 0x20, val);
 		}
-		ret += sprintf(buf + ret, "\n");
+		len += sysfs_emit_at(buf, len, "\n");
 	}
 
-	return ret;
+	return len;
 }
 
-static ssize_t cortina_pcie_serdes_phy_store(struct device *dev,
-        struct device_attribute *attr,
-        const char *buf, size_t count)
+static ssize_t taurus_pcie_serdes_phy_store(struct device *dev,
+					     struct device_attribute *attr,
+					     const char *buf, size_t count)
 {
-	pr_info("Use \"devmem 0xf433[serdes phy id]000 + addr*0x4 32 [value]\" to write PHY parameter\n");
-	pr_info("ex: devmem 0xf4333004 32 0x1852\n");
+	dev_info(dev, "Use \"devmem 0xf433[serdes phy id]000 + addr*0x4 32 [value]\" to write PHY parameters\n");
+	dev_info(dev, "Example: devmem 0xf4333004 32 0x1852\n");
 	return count;
 }
 
-static DEVICE_ATTR(serdes_phy, S_IRUSR|S_IWUSR, cortina_pcie_serdes_phy_show, cortina_pcie_serdes_phy_store);
+static DEVICE_ATTR(serdes_phy, 0600, taurus_pcie_serdes_phy_show,
+		   taurus_pcie_serdes_phy_store);
 
-static struct attribute *cortina_pcie_attributes[] = {
+static struct attribute *taurus_pcie_attrs[] = {
 	&dev_attr_device_reset.attr,
 	&dev_attr_serdes_phy.attr,
-	NULL
+	NULL,
 };
 
-static const struct attribute_group cortina_pcie_attr_group = {
-	.attrs = cortina_pcie_attributes,
+static const struct attribute_group taurus_pcie_attr_group = {
+	.attrs = taurus_pcie_attrs,
 };
 
-static struct attribute *cortina_pcie_dbg_attributes[] = {
-	&dev_attr_serdes_phy.attr,
-	NULL
-};
-
-static const struct attribute_group cortina_pcie_dbg_attr_group = {
-	.attrs = cortina_pcie_dbg_attributes,
-};
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-static void ca_pcie_intx_enable(struct cortina_pcie *pcie)
+static void taurus_pcie_intr_update(struct taurus_pcie *pcie, u32 clr, u32 set)
 {
+	unsigned long flags;
 	u32 val;
 
-	val = cortina_pcie_readl(pcie, PCIE_GLBL_INTERRUPT_ENABLE_0);
-
-	val |= (INT_RADM_INTA_ASSERTED | INT_RADM_INTB_ASSERTED |
-	        INT_RADM_INTC_ASSERTED | INT_RADM_INTD_ASSERTED);
-
-	cortina_pcie_writel(pcie, val, PCIE_GLBL_INTERRUPT_ENABLE_0);
-
-#if defined(CONFIG_EXTD_INTR_PIN) && defined(INTx_IN_EXTD_INTR)
-
-	int i;
-	u32 reg;
-
-	for (i = 1; i < MAX_INTR_PINS; i++) {
-		if (test_bit(i, pcie->intr_en_bitmap)) {
-			reg = PCIE_GLBL_INTERRUPT_ENABLE_2 + 8*(i-1);
-
-			val = cortina_pcie_readl(pcie, reg);
-
-			val |= (INT_RADM_INTA_ASSERTED | INT_RADM_INTB_ASSERTED |
-			        INT_RADM_INTC_ASSERTED | INT_RADM_INTD_ASSERTED);
-
-			cortina_pcie_writel(pcie, val, reg);
-		}
-	}
-#endif
+	raw_spin_lock_irqsave(&pcie->intr_lock, flags);
+	val = taurus_pcie_readl(pcie, PCIE_GLBL_INTERRUPT_ENABLE_0);
+	val &= ~clr;
+	val |= set;
+	taurus_pcie_writel(pcie, val, PCIE_GLBL_INTERRUPT_ENABLE_0);
+	raw_spin_unlock_irqrestore(&pcie->intr_lock, flags);
 }
 
-static void ca_pcie_mask_intx_irq(struct irq_data *irqd)
+static void taurus_pcie_intx_mask(struct irq_data *d)
 {
-	struct dw_pcie_rp *pp = irq_data_get_irq_chip_data(irqd);
-	struct dw_pcie *pci = to_dw_pcie_from_pp(pp);
-	struct cortina_pcie *pcie = to_cortina_pcie(pci);
-	u32 val;
+	struct dw_pcie_rp *pp = irq_data_get_irq_chip_data(d);
+	struct taurus_pcie *pcie = to_taurus_pcie(to_dw_pcie_from_pp(pp));
 
-	val = cortina_pcie_readl(pcie, PCIE_GLBL_INTERRUPT_ENABLE_0);
-
-	val &= ~(INT_RADM_INTA_ASSERTED | INT_RADM_INTB_ASSERTED |
-	         INT_RADM_INTC_ASSERTED | INT_RADM_INTD_ASSERTED);
-
-	cortina_pcie_writel(pcie, val, PCIE_GLBL_INTERRUPT_ENABLE_0);
-
-#if defined(CONFIG_EXTD_INTR_PIN) && defined(INTx_IN_EXTD_INTR)
-
-	int i;
-	u32 reg;
-
-	for (i = 1; i < MAX_INTR_PINS; i++) {
-		if (test_bit(i, pcie->intr_en_bitmap)) {
-			reg = PCIE_GLBL_INTERRUPT_ENABLE_2 + 8*(i-1);
-
-			val = cortina_pcie_readl(pcie, reg);
-
-			val &= ~(INT_RADM_INTA_ASSERTED | INT_RADM_INTB_ASSERTED |
-			         INT_RADM_INTC_ASSERTED | INT_RADM_INTD_ASSERTED);
-
-			cortina_pcie_writel(pcie, val, reg);
-		}
-	}
-#endif
+	taurus_pcie_intr_update(pcie, BIT(2 * d->hwirq), 0);
 }
 
-static void ca_pcie_unmask_intx_irq(struct irq_data *irqd)
+static void taurus_pcie_intx_unmask(struct irq_data *d)
 {
-	struct dw_pcie_rp *pp = irq_data_get_irq_chip_data(irqd);
-	struct dw_pcie *pci = to_dw_pcie_from_pp(pp);
-	struct cortina_pcie *pcie = to_cortina_pcie(pci);
+	struct dw_pcie_rp *pp = irq_data_get_irq_chip_data(d);
+	struct taurus_pcie *pcie = to_taurus_pcie(to_dw_pcie_from_pp(pp));
 
-	ca_pcie_intx_enable(pcie);
+	taurus_pcie_intr_update(pcie, 0, BIT(2 * d->hwirq));
 }
 
-static struct irq_chip ca_pcie_intx_irq_chip = {
+static struct irq_chip taurus_pcie_intx_chip = {
 	.name = "PCI-INTx",
-	.irq_enable = ca_pcie_unmask_intx_irq,
-	.irq_disable = ca_pcie_mask_intx_irq,
-	.irq_mask = ca_pcie_mask_intx_irq,
-	.irq_unmask = ca_pcie_unmask_intx_irq,
+	.irq_mask = taurus_pcie_intx_mask,
+	.irq_unmask = taurus_pcie_intx_unmask,
 };
 
-static int ca_pcie_intx_map(struct irq_domain *domain, unsigned int irq,
-                            irq_hw_number_t hwirq)
+static int taurus_pcie_intx_map(struct irq_domain *domain, unsigned int irq,
+				 irq_hw_number_t hwirq)
 {
-	irq_set_chip_and_handler(irq, &ca_pcie_intx_irq_chip,
-	                         handle_simple_irq);
+	irq_set_chip_and_handler(irq, &taurus_pcie_intx_chip,
+				 handle_simple_irq);
 	irq_set_chip_data(irq, domain->host_data);
 
 	return 0;
 }
 
-static const struct irq_domain_ops intx_domain_ops = {
-	.map = ca_pcie_intx_map,
+static const struct irq_domain_ops taurus_pcie_intx_domain_ops = {
+	.map = taurus_pcie_intx_map,
+	.xlate = irq_domain_xlate_onecell,
 };
 
-static int cortina_pcie_serdes_phy_init(struct cortina_pcie *ca_pcie)
+static void taurus_pcie_serdes_load_cfg(struct taurus_pcie *pcie)
 {
-	u32 off, val;
-	int i, lane;
-	struct dw_pcie *pci = ca_pcie->pci;
-	struct device *dev = pci->dev;
+	struct device *dev = pcie->pci->dev;
+	unsigned int lane;
+	int i;
 
-	dev_info(dev, "PCIe Serdes CFG version: %s\n",
-	         ca_pcie->serdes_cfg_ver);
+	dev_info(dev, "SerDes configuration %s\n", pcie->serdes_cfg_ver);
 
-	for (lane = 0; lane < ca_pcie->lanes; lane++) {
-		if (ca_pcie->cfg_cnt[lane] <= 0 ||
-		        !ca_pcie->cfg[lane]) {
-			dev_warn(dev, "lane %d no serdes cfg!\n",
-			         lane);
+	for (lane = 0; lane < pcie->lanes; lane++) {
+		if (pcie->cfg_cnt[lane] <= 0 || !pcie->cfg[lane]) {
+			dev_warn(dev, "lane %u has no SerDes configuration\n",
+				 lane);
 			continue;
 		}
 
-		for (i = 0; i < ca_pcie->cfg_cnt[lane]; i++) {
-			off = (phys_addr_t)ca_pcie->cfg[lane][i].addr - ca_pcie->serdes_addr;
-			val = ca_pcie->cfg[lane][i].val;
+		for (i = 0; i < pcie->cfg_cnt[lane]; i++) {
+			u32 off = pcie->cfg[lane][i].addr;
 
-			if (off < ca_pcie->serdes_size)
-				writel(val, ca_pcie->serdes_base + off);
+			if (off < pcie->serdes_size)
+				writel(pcie->cfg[lane][i].val,
+				       pcie->serdes_base + off);
 		}
 	}
-
-	return 0;
 }
 
-static int cortina_pcie_serdes_ber_notify(struct cortina_pcie *ca_pcie)
+static bool taurus_pcie_serdes_wait_ber(struct taurus_pcie *pcie)
 {
-	int cnt = 0;
-	int reg;
+	unsigned int cnt;
+	u32 val;
 
-	do {
-		reg = 1;
-		reg &= readl(ca_pcie->serdes_base + 0x007c);
-		reg &= readl(ca_pcie->serdes_base + 0x017c);
-
-		if (ca_pcie->lanes == 2) {
-			reg &= readl(ca_pcie->serdes_base + 0x107c);
-			reg &= readl(ca_pcie->serdes_base + 0x117c);
-		}
-
-		if (reg)
-			return reg;
-
+	for (cnt = 0; cnt < MAX_BER_POLL_COUNT; cnt++) {
+		val = readl(pcie->serdes_base + 0x007c) &
+		      readl(pcie->serdes_base + 0x017c);
+		if (pcie->lanes == 2)
+			val &= readl(pcie->serdes_base + 0x107c) &
+			       readl(pcie->serdes_base + 0x117c);
+		if (val & BIT(0))
+			return true;
 		usleep_range(1000, 2000);
-	} while (cnt++ < MAX_BER_POLL_COUNT);
+	}
 
-	return reg;
+	return false;
 }
 
-static inline u32 cortina_pcie_readl(struct cortina_pcie *pcie, u32 reg)
+static u32 taurus_pcie_readl(struct taurus_pcie *pcie, u32 reg)
 {
 	return readl(pcie->reg_base + reg);
 }
 
-static inline void cortina_pcie_writel(struct cortina_pcie *pcie, u32 val,
-                                       u32 reg)
+static void taurus_pcie_writel(struct taurus_pcie *pcie, u32 val, u32 reg)
 {
 	writel(val, pcie->reg_base + reg);
 }
 
-static int cortina_pcie_device_reset(struct cortina_pcie *pcie)
+static int taurus_pcie_device_reset(struct taurus_pcie *pcie)
 {
-	return reset_control_reset(pcie->device_reset);
+	if (pcie->device_reset)
+		return reset_control_reset(pcie->device_reset);
+
+	if (pcie->perst) {
+		gpiod_set_value_cansleep(pcie->perst, 1);
+		msleep(PCIE_T_PVPERL_MS);
+		gpiod_set_value_cansleep(pcie->perst, 0);
+		return 0;
+	}
+
+	return -ENODEV;
 }
 
-static void serdes_phy_toggle(struct cortina_pcie *pcie)
+static void taurus_pcie_serdes_toggle(struct taurus_pcie *pcie)
 {
-
 	writel(0x500c, pcie->serdes_base + 0x0024);
 	usleep_range(10, 20);
 	writel(0x520c, pcie->serdes_base + 0x0024);
@@ -578,18 +434,57 @@ static void serdes_phy_toggle(struct cortina_pcie *pcie)
 	}
 }
 
-static void serdes_phy_calibration(struct cortina_pcie *pcie)
+static int taurus_pcie_phy_power_on(struct taurus_pcie *pcie)
 {
-	int i;
-	unsigned long vall;
+	unsigned int i;
+	int ret;
+
+	for (i = 0; i < pcie->lanes; i++) {
+		ret = phy_power_on(pcie->phy[i]);
+		if (ret) {
+			while (i--)
+				phy_power_off(pcie->phy[i]);
+			return ret;
+		}
+	}
+
+	pcie->phy_on = true;
+
+	return 0;
+}
+
+static void taurus_pcie_phy_power_off(struct taurus_pcie *pcie)
+{
+	unsigned int i;
+
+	if (!pcie->phy_on)
+		return;
+
+	for (i = 0; i < pcie->lanes; i++)
+		phy_power_off(pcie->phy[i]);
+
+	pcie->phy_on = false;
+}
+
+static int taurus_pcie_serdes_wait_cal(struct taurus_pcie *pcie)
+{
+	u32 val;
+
+	return readl_poll_timeout(pcie->serdes_base + 0x007c, val,
+				  val & BIT(4), 10, 100000);
+}
+
+static int taurus_pcie_serdes_calibrate(struct taurus_pcie *pcie)
+{
+	int ret;
 	u32 val, reg;
 	unsigned int lane, addr;
 
 	if (pcie->idx != 0)
-		return;
+		return 0;
 
 	for (lane = 0; lane < pcie->lanes; lane++) {
-		addr = lane * 0x1000;
+		addr = lane * SERDES_LANE_STRIDE;
 		writel(0x500c, pcie->serdes_base + addr + 0x0024);
 		usleep_range(10, 20);
 		writel(0x520c, pcie->serdes_base + addr + 0x0024);
@@ -601,7 +496,7 @@ static void serdes_phy_calibration(struct cortina_pcie *pcie)
 	}
 
 	for (lane = 0; lane < pcie->lanes; lane++) {
-		addr = lane * 0x1000;
+		addr = lane * SERDES_LANE_STRIDE;
 		val = readl(pcie->serdes_base + addr + 0x0034);
 		val |= BIT(6);
 		writel(val, pcie->serdes_base + addr + 0x0034);
@@ -613,7 +508,7 @@ static void serdes_phy_calibration(struct cortina_pcie *pcie)
 	}
 
 	for (lane = 0; lane < pcie->lanes; lane++) {
-		addr = lane * 0x1000;
+		addr = lane * SERDES_LANE_STRIDE;
 		val = readl(pcie->serdes_base + addr + 0x0008);
 		val |= BIT(9);
 		writel(val, pcie->serdes_base + addr + 0x0008);
@@ -625,7 +520,7 @@ static void serdes_phy_calibration(struct cortina_pcie *pcie)
 	}
 
 	for (lane = 0; lane < pcie->lanes; lane++) {
-		addr = lane * 0x1000;
+		addr = lane * SERDES_LANE_STRIDE;
 		writel(0x194, pcie->serdes_base + addr + 0x0040);
 		usleep_range(10, 20);
 		writel(0x194, pcie->serdes_base + addr + 0x0140);
@@ -633,7 +528,7 @@ static void serdes_phy_calibration(struct cortina_pcie *pcie)
 	}
 
 	for (lane = 0; lane < pcie->lanes; lane++) {
-		addr = lane * 0x1000;
+		addr = lane * SERDES_LANE_STRIDE;
 		val = readl(pcie->serdes_base + addr + 0x00bc);
 		val |= BIT(10);
 		writel(val, pcie->serdes_base + addr + 0x00bc);
@@ -645,7 +540,7 @@ static void serdes_phy_calibration(struct cortina_pcie *pcie)
 	}
 
 	for (lane = 0; lane < pcie->lanes; lane++) {
-		addr = lane * 0x1000;
+		addr = lane * SERDES_LANE_STRIDE;
 		val = readl(pcie->serdes_base + addr + 0x006c);
 		val &= ~GENMASK(6, 5);
 		writel(val, pcie->serdes_base + addr + 0x006c);
@@ -656,15 +551,13 @@ static void serdes_phy_calibration(struct cortina_pcie *pcie)
 		usleep_range(10, 20);
 	}
 
-	do {
-		vall = readl(pcie->serdes_base + 0x007c);
-		usleep_range(10, 20);
-	} while (test_bit(4, &vall) != 1);
+	ret = taurus_pcie_serdes_wait_cal(pcie);
+	if (ret)
+		return ret;
 
 	if (pcie->lanes == 2) {
-
 		for (lane = 0; lane < pcie->lanes; lane++) {
-			addr = lane * 0x1000;
+			addr = lane * SERDES_LANE_STRIDE;
 			val = readl(pcie->serdes_base + addr + 0x006c);
 			val &= ~GENMASK(6, 5);
 			val |= BIT(5);
@@ -677,14 +570,13 @@ static void serdes_phy_calibration(struct cortina_pcie *pcie)
 			usleep_range(10, 20);
 		}
 
-		do {
-			vall = readl(pcie->serdes_base + 0x007c);
-			usleep_range(10, 20);
-		} while (test_bit(4, &vall) != 1);
+		ret = taurus_pcie_serdes_wait_cal(pcie);
+		if (ret)
+			return ret;
 	}
 
 	for (lane = 0; lane < pcie->lanes; lane++) {
-		addr = lane * 0x1000;
+		addr = lane * SERDES_LANE_STRIDE;
 		val = readl(pcie->serdes_base + addr + 0x0008);
 		val &= ~BIT(9);
 		writel(val, pcie->serdes_base + addr + 0x0008);
@@ -696,19 +588,19 @@ static void serdes_phy_calibration(struct cortina_pcie *pcie)
 	}
 
 	for (lane = 0; lane < pcie->lanes; lane++) {
-		addr = lane * 0x1000;
-		val = readl(pcie->serdes_base + addr + 0x006c); 
+		addr = lane * SERDES_LANE_STRIDE;
+		val = readl(pcie->serdes_base + addr + 0x006c);
 		val &= ~GENMASK(6, 5);
 		writel(val, pcie->serdes_base + addr + 0x006c);
 		usleep_range(10, 20);
-		val = readl(pcie->serdes_base + addr + 0x016c); 
+		val = readl(pcie->serdes_base + addr + 0x016c);
 		val &= ~GENMASK(6, 5);
 		writel(val, pcie->serdes_base + addr + 0x016c);
 		usleep_range(10, 20);
 	}
 
 	for (lane = 0; lane < pcie->lanes; lane++) {
-		addr = lane * 0x1000;
+		addr = lane * SERDES_LANE_STRIDE;
 		writel(0x1a4, pcie->serdes_base + addr + 0x0040);
 		usleep_range(10, 20);
 		writel(0x1a4, pcie->serdes_base + addr + 0x0140);
@@ -731,7 +623,7 @@ static void serdes_phy_calibration(struct cortina_pcie *pcie)
 
 	if (pcie->lanes == 2) {
 		for (lane = 0; lane < pcie->lanes; lane++) {
-			addr = lane * 0x1000;
+			addr = lane * SERDES_LANE_STRIDE;
 			val = readl(pcie->serdes_base + addr + 0x006c);
 			val &= ~GENMASK(6, 5);
 			val |= BIT(5);
@@ -760,7 +652,7 @@ static void serdes_phy_calibration(struct cortina_pcie *pcie)
 	}
 
 	for (lane = 0; lane < pcie->lanes; lane++) {
-		addr = lane * 0x1000;
+		addr = lane * SERDES_LANE_STRIDE;
 		writel(0x501c, pcie->serdes_base + addr + 0x0024);
 		usleep_range(10, 20);
 		writel(0x521c, pcie->serdes_base + addr + 0x0024);
@@ -772,7 +664,7 @@ static void serdes_phy_calibration(struct cortina_pcie *pcie)
 	}
 
 	for (lane = 0; lane < pcie->lanes; lane++) {
-		addr = lane * 0x1000;
+		addr = lane * SERDES_LANE_STRIDE;
 		val = readl(pcie->serdes_base + addr + 0x0034);
 		val &= ~BIT(6);
 		writel(val, pcie->serdes_base + addr + 0x0034);
@@ -784,7 +676,7 @@ static void serdes_phy_calibration(struct cortina_pcie *pcie)
 	}
 
 	for (lane = 0; lane < pcie->lanes; lane++) {
-		addr = lane * 0x1000;
+		addr = lane * SERDES_LANE_STRIDE;
 		val = readl(pcie->serdes_base + addr + 0x00bc);
 		val &= ~BIT(10);
 		writel(val, pcie->serdes_base + addr + 0x00bc);
@@ -796,7 +688,7 @@ static void serdes_phy_calibration(struct cortina_pcie *pcie)
 	}
 
 	for (lane = 0; lane < pcie->lanes; lane++) {
-		addr = lane * 0x1000;
+		addr = lane * SERDES_LANE_STRIDE;
 		val = readl(pcie->serdes_base + addr + 0x006c);
 		val &= ~GENMASK(6, 5);
 		writel(val, pcie->serdes_base + addr + 0x006c);
@@ -808,7 +700,7 @@ static void serdes_phy_calibration(struct cortina_pcie *pcie)
 	}
 
 	for (lane = 0; lane < pcie->lanes; lane++) {
-		addr = lane * 0x1000;
+		addr = lane * SERDES_LANE_STRIDE;
 		writel(0xc, pcie->serdes_base + addr + 0x0040);
 		usleep_range(10, 20);
 		writel(0xc, pcie->serdes_base + addr + 0x0140);
@@ -846,7 +738,7 @@ static void serdes_phy_calibration(struct cortina_pcie *pcie)
 	}
 
 	for (lane = 0; lane < pcie->lanes; lane++) {
-		addr = lane * 0x1000;
+		addr = lane * SERDES_LANE_STRIDE;
 		val = readl(pcie->serdes_base + addr + 0x0034);
 		val &= ~BIT(13);
 		writel(val, pcie->serdes_base + addr + 0x0034);
@@ -857,8 +749,7 @@ static void serdes_phy_calibration(struct cortina_pcie *pcie)
 		usleep_range(10, 20);
 	}
 
-	for (i = 0; i < pcie->lanes; i++)
-		phy_power_off(pcie->phy[i]);
+	taurus_pcie_phy_power_off(pcie);
 	usleep_range(1000, 2000);
 
 	reset_control_assert(pcie->phy_reset);
@@ -867,8 +758,9 @@ static void serdes_phy_calibration(struct cortina_pcie *pcie)
 	reset_control_assert(pcie->core_reset);
 	usleep_range(1000, 2000);
 
-	for (i = 0; i < pcie->lanes; i++)
-		phy_power_on(pcie->phy[i]);
+	ret = taurus_pcie_phy_power_on(pcie);
+	if (ret)
+		return ret;
 	usleep_range(1000, 2000);
 
 	reset_control_deassert(pcie->phy_reset);
@@ -876,20 +768,32 @@ static void serdes_phy_calibration(struct cortina_pcie *pcie)
 
 	reset_control_deassert(pcie->core_reset);
 	usleep_range(1000, 2000);
+
+	return 0;
 }
 
-static int cortina_pcie_host_reset(struct cortina_pcie *pcie, int serdes_phase)
+static void taurus_pcie_perst_assert(struct taurus_pcie *pcie)
 {
-	int i, ret;
+	if (pcie->device_reset)
+		reset_control_assert(pcie->device_reset);
+	if (pcie->perst)
+		gpiod_set_value_cansleep(pcie->perst, 1);
+}
+
+static void taurus_pcie_perst_deassert(struct taurus_pcie *pcie)
+{
+	if (pcie->device_reset)
+		reset_control_deassert(pcie->device_reset);
+	if (pcie->perst)
+		gpiod_set_value_cansleep(pcie->perst, 0);
+}
+
+static int taurus_pcie_host_reset(struct taurus_pcie *pcie)
+{
 	struct dw_pcie *pci = pcie->pci;
-	struct taurus_soc_data soc;
+	int ret;
 
-	memset(&soc, 0, sizeof(soc));
-	ret = taurus_soc_data_get(&soc);
-	if (ret != 0)
-		dev_err(pci->dev, "Cannot get chip revision\n");
-
-	reset_control_assert(pcie->device_reset);
+	taurus_pcie_perst_assert(pcie);
 
 	reset_control_assert(pcie->core_reset);
 	usleep_range(1000, 2000);
@@ -897,10 +801,11 @@ static int cortina_pcie_host_reset(struct cortina_pcie *pcie, int serdes_phase)
 	reset_control_assert(pcie->phy_reset);
 	usleep_range(1000, 2000);
 
-	cortina_pcie_serdes_phy_init(pcie);
+	taurus_pcie_serdes_load_cfg(pcie);
 
-	for (i = 0; i < pcie->lanes; i++)
-		phy_power_on(pcie->phy[i]);
+	ret = taurus_pcie_phy_power_on(pcie);
+	if (ret)
+		return ret;
 	usleep_range(1000, 2000);
 
 	reset_control_deassert(pcie->phy_reset);
@@ -909,413 +814,341 @@ static int cortina_pcie_host_reset(struct cortina_pcie *pcie, int serdes_phase)
 	reset_control_deassert(pcie->core_reset);
 	usleep_range(1000, 2000);
 
-	switch (soc.chip_revision) {
-	case 'A':
-		serdes_phy_toggle(pcie);
-		break;
-	case 'B':
-	default:
-		serdes_phy_calibration(pcie);
-		break;
+	if (pcie->rev_a) {
+		taurus_pcie_serdes_toggle(pcie);
+	} else {
+		ret = taurus_pcie_serdes_calibrate(pcie);
+		if (ret)
+			return ret;
 	}
-	if (!cortina_pcie_serdes_ber_notify(pcie))
-		dev_err(pci->dev, "No BER Notify!\n");
 
-	reset_control_deassert(pcie->device_reset);
+	if (!taurus_pcie_serdes_wait_ber(pcie))
+		dev_warn(pci->dev, "SerDes BER notification timed out\n");
+
+	msleep(PCIE_T_PVPERL_MS);
+	taurus_pcie_perst_deassert(pcie);
 
 	return 0;
 }
 
-static int cortina_pcie_host_setup(struct cortina_pcie *pcie)
+static int taurus_pcie_atu_write_ctrl(struct taurus_pcie *pcie, u32 idx,
+				      bool enable)
 {
-	cortina_pcie_writel(pcie, pcie->dbi_start,
-	                    PCIE_GLBL_PCIE_CONTR_CFG_START_ADDR);
-	cortina_pcie_writel(pcie, pcie->dbi_end,
-	                    PCIE_GLBL_PCIE_CONTR_CFG_END_ADDR);
+	u32 ctrl, val;
 
-	if (pcie->iatu_unroll_start) {
-		u32 base_addr = (u32)pcie->iatu_unroll_start &
-		                RC_IATU_BASE_ADDR_MASK;
-		cortina_pcie_writel(pcie, base_addr,
-		                    PCIE_GLBL_PCIE_CONTR_IATU_BASE_ADDR);
+	ctrl = readl(pcie->coherent_atu + TAURUS_ATU_CTRL);
+	ctrl &= ~(TAURUS_ATU_CTRL_IDX_MASK | TAURUS_ATU_CTRL_R);
+	if (enable)
+		ctrl |= BIT(idx);
+	else
+		ctrl &= ~BIT(idx);
+	ctrl |= FIELD_PREP(TAURUS_ATU_CTRL_IDX_MASK, idx) | TAURUS_ATU_CTRL_W;
+	writel(ctrl, pcie->coherent_atu + TAURUS_ATU_CTRL);
+
+	return readl_poll_timeout(pcie->coherent_atu + TAURUS_ATU_CTRL, val,
+				  !(val & TAURUS_ATU_CTRL_W), 1, 100000);
+}
+
+static int taurus_pcie_atu_clear(struct taurus_pcie *pcie)
+{
+	u32 idx;
+	int ret;
+
+	if (!pcie->coherent_atu)
+		return 0;
+
+	for (idx = 0; idx < TAURUS_ATU_TLB_COUNT; idx++) {
+		writel(0, pcie->coherent_atu + TAURUS_ATU_INPUT);
+		writel(0, pcie->coherent_atu + TAURUS_ATU_MASK);
+		writel(0, pcie->coherent_atu + TAURUS_ATU_OUTPUT);
+		writel(0, pcie->coherent_atu + TAURUS_ATU_ACE_CFG);
+		writel(0, pcie->coherent_atu + TAURUS_ATU_AXI_ARUSER);
+		writel(0, pcie->coherent_atu + TAURUS_ATU_AXI_AWUSER);
+
+		ret = taurus_pcie_atu_write_ctrl(pcie, idx, false);
+		if (ret)
+			return ret;
 	}
 
 	return 0;
 }
 
-static void cortina_pcie_stop_link(struct dw_pcie *pci)
+static int taurus_pcie_atu_set_entry(struct taurus_pcie *pcie, u32 idx,
+				     u32 input, u32 pages, u32 output)
 {
-	struct cortina_pcie *pcie = to_cortina_pcie(pci);
+	writel(input, pcie->coherent_atu + TAURUS_ATU_INPUT);
+	writel(~(pages - 1), pcie->coherent_atu + TAURUS_ATU_MASK);
+	writel(output, pcie->coherent_atu + TAURUS_ATU_OUTPUT);
+	writel(TAURUS_ATU_ACE_COHERENT_CFG,
+	       pcie->coherent_atu + TAURUS_ATU_ACE_CFG);
+	writel(TAURUS_ATU_AXUSER_OUTER_SHAREABLE,
+	       pcie->coherent_atu + TAURUS_ATU_AXI_ARUSER);
+	writel(TAURUS_ATU_AXUSER_OUTER_SHAREABLE,
+	       pcie->coherent_atu + TAURUS_ATU_AXI_AWUSER);
 
-	cortina_pcie_writel(pcie, 0x40, PCIE_GLBL_CORE_CONFIG_REG);
-	usleep_range(100, 200);
-	cortina_pcie_writel(pcie, 0x0,  PCIE_GLBL_CORE_CONFIG_REG);
-	usleep_range(100, 200);
-	printk("stop link\n");
+	return taurus_pcie_atu_write_ctrl(pcie, idx, true);
 }
 
-static int cortina_pcie_establish_link(struct dw_pcie *pci)
+static int taurus_pcie_atu_init(struct taurus_pcie *pcie)
 {
-	struct cortina_pcie *pcie = to_cortina_pcie(pci);
+	u32 hi_offset;
+	int ret;
+
+	if (!pcie->coherent_atu)
+		return 0;
+
+	ret = taurus_pcie_atu_clear(pcie);
+	if (ret)
+		return ret;
+
+	if (!pcie->dma_coherent)
+		return 0;
+
+	hi_offset = pcie->coherent_hi_addr << 16;
+
+	ret = taurus_pcie_atu_set_entry(pcie, 0, TAURUS_ATU_DDR_LOW_INPUT,
+					TAURUS_ATU_DDR_WINDOW_PAGES, hi_offset);
+	if (ret)
+		return ret;
+
+	ret = taurus_pcie_atu_set_entry(pcie, 1, TAURUS_ATU_DDR_HIGH_INPUT,
+					TAURUS_ATU_DDR_WINDOW_PAGES,
+					TAURUS_ATU_DDR_HIGH_INPUT + hi_offset);
+	if (ret)
+		return ret;
+
+	dev_info(pcie->pci->dev, "coherent ATU enabled (hi_addr 0x%x)\n",
+		 pcie->coherent_hi_addr);
+
+	return 0;
+}
+
+static void taurus_pcie_host_setup(struct taurus_pcie *pcie)
+{
+	u32 base_addr = (u32)pcie->iatu_unroll_start & RC_IATU_BASE_ADDR_MASK;
+
+	taurus_pcie_writel(pcie, pcie->dbi_start,
+			    PCIE_GLBL_PCIE_CONTR_CFG_START_ADDR);
+	taurus_pcie_writel(pcie, pcie->dbi_end,
+			    PCIE_GLBL_PCIE_CONTR_CFG_END_ADDR);
+	taurus_pcie_writel(pcie, base_addr,
+			    PCIE_GLBL_PCIE_CONTR_IATU_BASE_ADDR);
+}
+
+static void taurus_pcie_stop_link(struct dw_pcie *pci)
+{
+	struct taurus_pcie *pcie = to_taurus_pcie(pci);
+
+	taurus_pcie_writel(pcie, PCIE_LINK_DOWN_RST,
+			    PCIE_GLBL_CORE_CONFIG_REG);
+	usleep_range(100, 200);
+	taurus_pcie_writel(pcie, 0, PCIE_GLBL_CORE_CONFIG_REG);
+	usleep_range(100, 200);
+}
+
+static int taurus_pcie_start_link(struct dw_pcie *pci)
+{
+	struct taurus_pcie *pcie = to_taurus_pcie(pci);
 
 	if (dw_pcie_link_up(pci))
 		return 0;
 
-	cortina_pcie_writel(pcie, PCIE_LTSSM_ENABLE,
-	                    PCIE_GLBL_CORE_CONFIG_REG);
-
+	taurus_pcie_writel(pcie, PCIE_LTSSM_ENABLE,
+			    PCIE_GLBL_CORE_CONFIG_REG);
 	usleep_range(1000, 2000);
 
 	return 0;
 }
 
-static void cortina_pcie_misc_enable(struct cortina_pcie *pcie)
+static void taurus_pcie_misc_enable(struct taurus_pcie *pcie)
 {
+	taurus_pcie_intr_update(pcie, 0,
+				INT_HP_INT | INT_RADM_CORRECTABLE_ERR |
+				INT_RADM_NONFATAL_ERR | INT_RADM_FATAL_ERR |
+				INT_RADM_PM_TO_ACK | INT_RADM_PM_PME |
+				INT_RADM_QOVERFLOW | INT_LINK_DOWN |
+				INT_CFG_AER_RC_ERR_MSI | INT_CFG_PME_MSI |
+				INT_HP_PME | INT_HP_MSI | INT_CFG_UR_RESP);
+}
+
+static void taurus_pcie_msi_enable(struct taurus_pcie *pcie)
+{
+	if (!pci_msi_enabled())
+		return;
+
+	taurus_pcie_writel(pcie, 0xffffffff, PCIE_MSI_INTERRUPT_ENABLE_0);
+	taurus_pcie_intr_update(pcie, 0, INT_MSI_CTR_INT);
+}
+
+static void taurus_pcie_enable_interrupts(struct taurus_pcie *pcie)
+{
+	taurus_pcie_misc_enable(pcie);
+	taurus_pcie_msi_enable(pcie);
+}
+
+static irqreturn_t taurus_pcie_irq_handler(int irq, void *arg)
+{
+	struct taurus_pcie *pcie = arg;
+	struct dw_pcie_rp *pp = &pcie->pci->pp;
 	u32 val;
-#ifdef CONFIG_EXTD_INTR_PIN
 
-	int i;
-	u32 reg;
-#endif
+	val = taurus_pcie_readl(pcie, PCIE_GLBL_INTERRUPT_0);
+	if (!val)
+		return IRQ_NONE;
 
-	val = cortina_pcie_readl(pcie, PCIE_GLBL_INTERRUPT_ENABLE_0);
+	if ((val & INT_MSI_CTR_INT) && pp->irq_domain)
+		dw_handle_msi_irq(pp);
 
-	val |= (
-	           INT_HP_INT |
-	           INT_RADM_CORRECTABLE_ERR |
-	           INT_RADM_NONFATAL_ERR |
-	           INT_RADM_FATAL_ERR |
-	           INT_RADM_PM_TO_ACK |
-	           INT_RADM_PM_PME |
-	           INT_RADM_QOVERFLOW |
-	           INT_LINK_DOWN |
-	           INT_CFG_AER_RC_ERR_MSI |
-	           INT_CFG_PME_MSI	|
-	           INT_HP_PME |
-	           INT_HP_MSI |
-	           INT_CFG_UR_RESP
-	       );
-
-	cortina_pcie_writel(pcie, val, PCIE_GLBL_INTERRUPT_ENABLE_0);
-
-#ifdef CONFIG_EXTD_INTR_PIN
-
-	for (i = 1; i < MAX_INTR_PINS; i++) {
-		if (test_bit(i, pcie->intr_en_bitmap)) {
-			reg = PCIE_GLBL_INTERRUPT_ENABLE_2 + 8*(i-1);
-
-			cortina_pcie_writel(pcie, 0, reg);
-		}
+	if (pcie->intx_domain) {
+		if (val & INT_RADM_INTA_ASSERTED)
+			generic_handle_domain_irq(pcie->intx_domain, 0);
+		if (val & INT_RADM_INTB_ASSERTED)
+			generic_handle_domain_irq(pcie->intx_domain, 1);
+		if (val & INT_RADM_INTC_ASSERTED)
+			generic_handle_domain_irq(pcie->intx_domain, 2);
+		if (val & INT_RADM_INTD_ASSERTED)
+			generic_handle_domain_irq(pcie->intx_domain, 3);
 	}
-#endif
-}
-
-static void cortina_pcie_msi_enable(struct cortina_pcie *pcie)
-{
-	u32 val;
-#ifdef CONFIG_EXTD_INTR_PIN
-
-	int i;
-	u32 reg;
-#endif
-
-#if CONFIG_ARCH_REALTEK_TAURUS
-
-	val = pcie->luts[0].mask;
-	cortina_pcie_writel(pcie, val, PCIE_MSI_INTERRUPT_ENABLE_0);
-#endif
-
-	val = cortina_pcie_readl(pcie, PCIE_GLBL_INTERRUPT_ENABLE_0);
-	val |= INT_MSI_CTR_INT;
-	cortina_pcie_writel(pcie, val, PCIE_GLBL_INTERRUPT_ENABLE_0);
-
-#ifdef CONFIG_EXTD_INTR_PIN
-
-	for (i = 1; i < MAX_INTR_PINS; i++) {
-		if (test_bit(i, pcie->intr_en_bitmap)) {
-
-			reg = PCIE_MSI_INTERRUPT_ENABLE_2 + 8*(i-1);
-			val = pcie->luts[i].mask;
-			cortina_pcie_writel(pcie, val, reg);
-
-			reg = PCIE_GLBL_INTERRUPT_ENABLE_2 + 8*(i-1);
-			val = cortina_pcie_readl(pcie, reg);
-			val |= INT_MSI_CTR_INT;
-			cortina_pcie_writel(pcie, val, reg);
-		}
-	}
-#endif
-}
-
-static void cortina_pcie_enable_interrupts(struct cortina_pcie *pcie)
-{
-
-	cortina_pcie_misc_enable(pcie);
-	cortina_pcie_msi_enable(pcie);
-}
-
-static irqreturn_t cortina_pcie_irq_handler(int irq, void *arg)
-{
-	struct irq_lut *lut = arg;
-	struct cortina_pcie *pcie = (struct cortina_pcie *)lut->pcie;
-	struct dw_pcie *pci = pcie->pci;
-	struct dw_pcie_rp *pp = &pci->pp;
-	u32 val;
-#ifdef CONFIG_EXTD_INTR_PIN
-	val = cortina_pcie_readl(pcie, lut->reg);
-#else
-	val = cortina_pcie_readl(pcie, PCIE_GLBL_INTERRUPT_0);
-#endif
-
-	if (val & INT_RADM_INTA_ASSERTED)
-		generic_handle_irq(irq_find_mapping(pp->irq_domain, 0));
-	if (val & INT_RADM_INTB_ASSERTED)
-		generic_handle_irq(irq_find_mapping(pp->irq_domain, 1));
-	if (val & INT_RADM_INTC_ASSERTED)
-		generic_handle_irq(irq_find_mapping(pp->irq_domain, 2));
-	if (val & INT_RADM_INTD_ASSERTED)
-		generic_handle_irq(irq_find_mapping(pp->irq_domain, 3));
 	if (val & INT_LINK_DOWN) {
-		int ltssm = cortina_pcie_ltssm(pcie);
-		dev_err(pci->dev,
-		        "Link Down!!!(ltssm = 0x%x - %s)\n",
-		        ltssm, ltssm_str(ltssm));
-		cortina_pcie_writel(pcie, PCIE_LINK_DOWN_RST,
-		                    PCIE_GLBL_CORE_CONFIG_REG);
+		unsigned int ltssm = taurus_pcie_ltssm(pcie);
+
+		dev_err(pcie->pci->dev, "link down, LTSSM %s\n",
+			taurus_pcie_ltssm_name(ltssm));
+		taurus_pcie_writel(pcie, PCIE_LINK_DOWN_RST,
+				    PCIE_GLBL_CORE_CONFIG_REG);
 	}
 
-#ifdef CONFIG_EXTD_INTR_PIN
-	cortina_pcie_writel(pcie, val, lut->reg);
-#else
-	cortina_pcie_writel(pcie, val, PCIE_GLBL_INTERRUPT_0);
-#endif
+	taurus_pcie_writel(pcie, val, PCIE_GLBL_INTERRUPT_0);
 
 	return IRQ_HANDLED;
 }
 
-static int cortina_pcie_ltssm(struct cortina_pcie *pcie)
-{
-	u32 reg, val;
-
-	reg = PCIE_GLBL_PM_INFO_RESET_VOLT_LOW_PWR_STATUS;
-	val = cortina_pcie_readl(pcie, reg);
-	val = (val & PWR_STATUS_SMLH_LTSSM_STATE_MASK) >>
-	      PWR_STATUS_SMLH_LTSSM_STATE_OFFSET;
-
-	return val;
-}
-
-
-static void dw_pcie_link_check(struct dw_pcie *pci, u8 *speed, u8 *lanes)
+static unsigned int taurus_pcie_ltssm(struct taurus_pcie *pcie)
 {
 	u32 val;
 
-	val = readb(pci->dbi_base + 0x82);
-	if (speed)
-		*speed = val & PCI_EXP_LNKSTA_CLS;
-	if (lanes)
-		*lanes = (val & PCI_EXP_LNKSTA_NLW) >> 4;
+	val = taurus_pcie_readl(pcie, PCIE_GLBL_PM_INFO_RESET_VOLT_LOW_PWR_STATUS);
+
+	return FIELD_GET(PWR_STATUS_SMLH_LTSSM_STATE_MASK, val);
 }
 
-static int cortina_pcie_host_init(struct dw_pcie_rp *pp)
+static void taurus_pcie_link_status(struct dw_pcie *pci, u8 *speed, u8 *lanes)
 {
-	struct dw_pcie *pci = to_dw_pcie_from_pp(pp);
-	struct cortina_pcie *pcie = to_cortina_pcie(pci);
-	int ret;
+	u8 offset = dw_pcie_find_capability(pci, PCI_CAP_ID_EXP);
+	u16 status = dw_pcie_readw_dbi(pci, offset + PCI_EXP_LNKSTA);
 
-	cortina_pcie_writel(pcie, 0, PCIE_GLBL_INTERRUPT_ENABLE_0);
-
-	cortina_pcie_host_reset(pcie, SERDES_PHY_INIT);
-	cortina_pcie_host_setup(pcie);
-
-	dw_pcie_setup_rc(pp);
-
-	cortina_pcie_establish_link(pci);
-
-	ret = dw_pcie_wait_for_link(pci);
-	if (ret) {
-		int ltssm = cortina_pcie_ltssm(pcie);
-
-		dev_err(pci->dev,
-		        "Link Fail!!!(ltssm = 0x%x - %s)\n",
-		        ltssm, ltssm_str(ltssm));
-		return (ltssm == LTSSM_DETECT_QUIET ?
-		        -ENODEV : -EIO);
-	}
-
-	{
-		u8 speed, lanes;
-
-		dw_pcie_link_check(pci, &speed, &lanes);
-		dev_info(pci->dev, "Speed Gen%d Lanes x%d", speed, lanes);
-	}
-
-	cortina_pcie_enable_interrupts(pcie);
-
-	return 0;
+	*speed = FIELD_GET(PCI_EXP_LNKSTA_CLS, status);
+	*lanes = FIELD_GET(PCI_EXP_LNKSTA_NLW, status);
 }
 
-static void cortina_pcie_intx_host_init(struct dw_pcie_rp *pp)
+static int taurus_pcie_intx_host_init(struct dw_pcie_rp *pp)
 {
 	struct dw_pcie *pci = to_dw_pcie_from_pp(pp);
+	struct taurus_pcie *pcie = to_taurus_pcie(pci);
 	struct device *dev = pci->dev;
 	struct device_node *node = dev->of_node;
-	struct device_node *pcie_intc_node = of_get_next_child(node, NULL);
+	struct device_node *pcie_intc_node;
 
-	if (IS_ERR(pcie_intc_node)) {
-		dev_err(dev, "No PCIe Intc node found(%ld)\n",
-			PTR_ERR(pcie_intc_node));
-		return;
-	}
+	pcie_intc_node = of_get_child_by_name(node, "interrupt-controller");
+	if (!pcie_intc_node)
+		return dev_err_probe(dev, -ENODEV,
+				     "missing interrupt-controller node\n");
 
-	pp->irq_domain = irq_domain_add_linear(pcie_intc_node,
-					       MAX_INTX_HOST_IRQS,
-					       &intx_domain_ops, pp);
-	if (IS_ERR(pp->irq_domain)) {
-		dev_err(dev, "Failed to get a INTx IRQ domain(%ld)\n",
-			PTR_ERR(pp->irq_domain));
-		return;
-	}
-
+	pcie->intx_domain = irq_domain_create_linear(of_fwnode_handle(pcie_intc_node),
+						     MAX_INTX_HOST_IRQS,
+						     &taurus_pcie_intx_domain_ops,
+						     pp);
 	of_node_put(pcie_intc_node);
-}
-
-static int taurus_pcie_msi_host_init(struct dw_pcie_rp *pp)
-{
-	return dw_pcie_msi_host_init(pp);
-}
-
-static const struct dw_pcie_host_ops cortina_pcie_host_ops = {
-	.init = cortina_pcie_host_init,
-	.post_init = cortina_pcie_intx_host_init,
-	.msi_init = taurus_pcie_msi_host_init,
-};
-
-static bool cortina_pcie_link_up(struct dw_pcie *pci)
-{
-	struct cortina_pcie *pcie = to_cortina_pcie(pci);
-	u32 reg, val;
-
-	reg = PCIE_GLBL_PM_INFO_RESET_VOLT_LOW_PWR_STATUS;
-	val = cortina_pcie_readl(pcie, reg);
-	val &= PWR_STATUS_RDLH_LINK_UP;
-
-	return val ? true : false;
-}
-
-#if 0
-static u32 cortina_pcie_read_dbi(struct dw_pcie *pci, void __iomem *base,
-                                 u32 reg, size_t size)
-{
-	struct cortina_pcie *pcie = to_cortina_pcie(pci);
-	u32 val;
-	u32 offset;
-	int ret;
-
-	if (reg >= DEFAULT_DBI_ATU_OFFSET) {
-		if (!pcie->iatu_unroll_start) {
-			dev_err(pci->dev, "iatu_unroll_base is missed\n");
-			return 0;
-		}
-
-		offset = reg - DEFAULT_DBI_ATU_OFFSET;
-
-		if (size == 4)
-			val = readl(pcie->iatu_unroll_base + offset);
-		else if (size == 2)
-			val = readw(pcie->iatu_unroll_base + offset);
-		else if (size == 1)
-			val = readb(pcie->iatu_unroll_base + offset);
-		else
-			return 0;
-	} else {
-		ret = dw_pcie_read(base + reg, size, &val);
-		if (ret)
-			dev_err(pci->dev, "%s read DBI failed\n", __func__);
-	}
-
-	return val;
-}
-
-static void cortina_pcie_write_dbi(struct dw_pcie *pci, void __iomem *base,
-                                   u32 reg, size_t size, u32 val)
-{
-	struct cortina_pcie *pcie = to_cortina_pcie(pci);
-	u32 offset;
-	int ret;
-
-	if (reg >= DEFAULT_DBI_ATU_OFFSET) {
-		if (!pcie->iatu_unroll_start) {
-			dev_err(pci->dev, "iatu_unroll_base is missed\n");
-			return;
-		}
-
-		offset = reg - DEFAULT_DBI_ATU_OFFSET;
-
-		if (size == 4)
-			writel(val, pcie->iatu_unroll_base + offset);
-		else if (size == 2)
-			writew(val, pcie->iatu_unroll_base + offset);
-		else if (size == 1)
-			writeb(val, pcie->iatu_unroll_base + offset);
-		else
-			return;
-	} else {
-		ret = dw_pcie_write(base + reg, size, val);
-		if (ret)
-			dev_err(pci->dev, "%s write DBI failed\n", __func__);
-	}
-}
-#endif
-
-static const struct dw_pcie_ops ca_pcie_ops = {
-	.link_up = cortina_pcie_link_up,
-	.start_link = cortina_pcie_establish_link,
-	.stop_link = cortina_pcie_stop_link,
-
-};
-
-#ifdef CONFIG_EXTD_INTR_PIN
-static int rtk_pcie_request_extended_irqs(struct platform_device *pd, struct cortina_pcie *pcie)
-{
-	struct device *dev = &pd->dev;
-	int i, ret, irq, bound, nr_cpus;
-	char *name;
-
-	nr_cpus = num_online_cpus();
-	bound = min(MAX_INTR_PINS, nr_cpus);
-	for (i = 1; i < bound; i++) {
-		if (test_bit(i, pcie->intr_en_bitmap)) {
-			irq = platform_get_irq(pd, i); 
-			if (irq < 0)
-				return irq;
-			#define NAME_LEN 32
-			name = kmalloc(NAME_LEN, GFP_KERNEL);
-			snprintf(name, NAME_LEN, "taurus-pcie%dintr%d", pcie->idx, i);
-
-			pcie->luts[i].pcie = (void*)pcie;
-			pcie->luts[i].reg  = PCIE_GLBL_INTERRUPT_2 + ((i-1)*8);
-			pcie->luts[i].irq  = irq;
-
-			ret = devm_request_irq(dev, irq, cortina_pcie_irq_handler,
-			                       IRQF_NO_THREAD, name, &pcie->luts[i]);
-			if (ret) {
-				dev_err(dev, "Failed to request irq for pin[%d] (%d)\n", i, ret);
-				return ret;
-			}
-
-			dev_info(dev, "pcie extended interrupt pin[%d] irq is %d\n", i, irq);
-
-			irq_set_affinity(irq, cpumask_of(i));
-		}
-	}
+	if (!pcie->intx_domain)
+		return dev_err_probe(dev, -ENOMEM, "failed to create INTx domain\n");
 
 	return 0;
 }
-#endif
 
-static int __init cortina_add_pcie_port(struct cortina_pcie *pcie,
-                                        struct platform_device *pdev)
+static int taurus_pcie_host_init(struct dw_pcie_rp *pp)
+{
+	struct dw_pcie *pci = to_dw_pcie_from_pp(pp);
+	struct taurus_pcie *pcie = to_taurus_pcie(pci);
+	int ret;
+
+	taurus_pcie_writel(pcie, 0, PCIE_GLBL_INTERRUPT_ENABLE_0);
+	taurus_pcie_writel(pcie,
+			   taurus_pcie_readl(pcie, PCIE_GLBL_INTERRUPT_0),
+			   PCIE_GLBL_INTERRUPT_0);
+
+	ret = taurus_pcie_host_reset(pcie);
+	if (ret)
+		return ret;
+
+	ret = taurus_pcie_atu_init(pcie);
+	if (ret)
+		return ret;
+
+	taurus_pcie_host_setup(pcie);
+
+	return taurus_pcie_intx_host_init(pp);
+}
+
+static void taurus_pcie_host_post_init(struct dw_pcie_rp *pp)
+{
+	struct dw_pcie *pci = to_dw_pcie_from_pp(pp);
+	struct taurus_pcie *pcie = to_taurus_pcie(pci);
+
+	if (dw_pcie_link_up(pci)) {
+		u8 speed, lanes;
+
+		taurus_pcie_link_status(pci, &speed, &lanes);
+		dev_info(pci->dev, "link up: Gen%u, x%u lanes\n", speed, lanes);
+	} else {
+		dev_err(pci->dev, "link down, LTSSM %s\n",
+			taurus_pcie_ltssm_name(taurus_pcie_ltssm(pcie)));
+	}
+
+	taurus_pcie_enable_interrupts(pcie);
+}
+
+static void taurus_pcie_host_deinit(struct dw_pcie_rp *pp)
+{
+	struct dw_pcie *pci = to_dw_pcie_from_pp(pp);
+	struct taurus_pcie *pcie = to_taurus_pcie(pci);
+
+	taurus_pcie_writel(pcie, 0, PCIE_GLBL_INTERRUPT_ENABLE_0);
+	taurus_pcie_perst_assert(pcie);
+	taurus_pcie_atu_clear(pcie);
+	reset_control_assert(pcie->core_reset);
+	reset_control_assert(pcie->phy_reset);
+	taurus_pcie_phy_power_off(pcie);
+
+	if (pcie->intx_domain) {
+		irq_domain_remove(pcie->intx_domain);
+		pcie->intx_domain = NULL;
+	}
+}
+
+static const struct dw_pcie_host_ops taurus_pcie_host_ops = {
+	.init = taurus_pcie_host_init,
+	.post_init = taurus_pcie_host_post_init,
+	.deinit = taurus_pcie_host_deinit,
+};
+
+static bool taurus_pcie_link_up(struct dw_pcie *pci)
+{
+	struct taurus_pcie *pcie = to_taurus_pcie(pci);
+	u32 val;
+
+	val = taurus_pcie_readl(pcie, PCIE_GLBL_PM_INFO_RESET_VOLT_LOW_PWR_STATUS);
+
+	return !!(val & PWR_STATUS_RDLH_LINK_UP);
+}
+
+static const struct dw_pcie_ops taurus_pcie_ops = {
+	.link_up = taurus_pcie_link_up,
+	.start_link = taurus_pcie_start_link,
+	.stop_link = taurus_pcie_stop_link,
+};
+
+static int taurus_pcie_add_port(struct taurus_pcie *pcie,
+				 struct platform_device *pdev)
 {
 	struct dw_pcie *pci = pcie->pci;
 	struct dw_pcie_rp *pp = &pci->pp;
@@ -1327,231 +1160,195 @@ static int __init cortina_add_pcie_port(struct cortina_pcie *pcie,
 	if (pp->irq < 0)
 		return pp->irq;
 
-	pcie->luts[0].pcie = (void*)pcie;
-	pcie->luts[0].reg  = PCIE_GLBL_INTERRUPT_0;
-	pcie->luts[0].irq  = pp->irq;
+	taurus_pcie_writel(pcie, 0, PCIE_GLBL_INTERRUPT_ENABLE_0);
 
-	ret = devm_request_irq(dev, pp->irq, cortina_pcie_irq_handler,
-	                       IRQF_SHARED | IRQF_PROBE_SHARED, dev_name(dev), &pcie->luts[0]);
-	if (ret) {
-		dev_err(dev, "fail to request irq\n");
-		return ret;
-	}
-
-#ifdef CONFIG_EXTD_INTR_PIN
-	rtk_pcie_request_extended_irqs(pdev, pcie);
-#endif
+	ret = devm_request_irq(dev, pp->irq, taurus_pcie_irq_handler,
+			       IRQF_NO_THREAD, dev_name(dev), pcie);
+	if (ret)
+		return dev_err_probe(dev, ret, "failed to request IRQ\n");
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "rc_dbi");
-	pci->dbi_base = devm_ioremap_resource(dev, res);
-	if (!pci->dbi_base)
-		return -ENOMEM;
+	if (!res)
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "dbi");
+	if (!res)
+		return dev_err_probe(dev, -ENODEV, "missing DBI resource\n");
 
-	dev_info(dev, "resource - %pr mapped at 0x%llx\n", res,
-	         (u64)pci->dbi_base);
+	pci->dbi_base = devm_ioremap_resource(dev, res);
+	if (IS_ERR(pci->dbi_base))
+		return PTR_ERR(pci->dbi_base);
+	pci->dbi_phys_addr = res->start;
+
+	dev_dbg(dev, "DBI %pR\n", res);
 
 	pcie->dbi_start = res->start;
 	pcie->dbi_end = res->end;
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "iatu");
+	if (!res)
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "atu");
+	if (!res)
+		return dev_err_probe(dev, -ENODEV, "missing iATU resource\n");
+
 	pcie->iatu_unroll_base = devm_ioremap_resource(dev, res);
-	if (IS_ERR(pcie->iatu_unroll_base)) {
-		ret = PTR_ERR(pcie->iatu_unroll_base);
-		return ret;
-	}
+	if (IS_ERR(pcie->iatu_unroll_base))
+		return PTR_ERR(pcie->iatu_unroll_base);
 
 	pci->atu_base = pcie->iatu_unroll_base;
-	if (!pcie->iatu_unroll_base) {
-		dev_info(dev, "outbound iATU not used\n");
-		pcie->iatu_unroll_start = 0;
-	} else {
-		dev_info(dev, "outbound iATU enable\n");
-		pcie->iatu_unroll_start = res->start;
-	}
+	pci->atu_size = resource_size(res);
+	pci->atu_phys_addr = res->start;
+	pcie->iatu_unroll_start = res->start;
 
-	pp->ops = &cortina_pcie_host_ops;
+	pp->ops = &taurus_pcie_host_ops;
+	pp->msi_irq[0] = -ENODEV;
 
 	ret = dw_pcie_host_init(pp);
-	if (ret) {
-		dev_err(dev, "Failed to initialize host(%d)\n", ret);
-		return ret;
-	}
+	if (ret)
+		return dev_err_probe(dev, ret, "failed to initialize host\n");
 
-#if defined(CONFIG_RTK_PCIE_AFFINITY) && !defined(CONFIG_EXTD_INTR_PIN)
-	if (pcie->irq_affinity >= 0) {
-		if (irq_set_affinity(pp->irq, cpumask_of(pcie->irq_affinity))) {
-			dev_info(dev, "unable to set irq affinity (irq=%d, cpu=%u)\n",
-			         pp->irq,  pcie->irq_affinity);
-		}
-	}
-#endif
+	if (pcie->irq_affinity >= 0 &&
+	    irq_set_affinity(pp->irq, cpumask_of(pcie->irq_affinity)))
+		dev_warn(dev, "failed to set IRQ affinity to CPU %d\n",
+			 pcie->irq_affinity);
 
 	return 0;
 }
 
-enum chip_rev {
-	REV_A = 0,
-	REV_B,
-	REV_CNT,
+enum taurus_pcie_rev {
+	TAURUS_PCIE_REV_A,
+	TAURUS_PCIE_REV_B,
 };
 
-const char *cfg_ver_str[] = {
+static const char * const serdes_cfg_ver_prop[] = {
 	"serdes-cfg-verA",
 	"serdes-cfg-verB",
 };
 
-const char *cfg_data_str[] = {
+static const char * const serdes_cfg_data_prop[] = {
 	"serdes-cfg-dataA",
 	"serdes-cfg-dataB",
 };
 
-static void __serdes_probe_chip_rev_aware(struct device *dev, struct device_node *np,
-                                          struct cortina_pcie *pcie)
+static int taurus_pcie_serdes_parse_lane(struct device *dev,
+					  struct device_node *np,
+					  struct taurus_pcie *pcie,
+					  const char *prop,
+					  unsigned int lane,
+					  bool per_lane_prop)
 {
-	int rev, lane, i, size, cnt, ret;
-	struct taurus_soc_data soc;
+	struct serdes_cfg *cfg;
+	int ncells, ncfg, i, ret;
 
-	memset(&soc, 0, sizeof(soc));
-	ret = taurus_soc_data_get(&soc);
+	ncells = of_property_count_u32_elems(np, prop);
+	if (ncells <= 0)
+		return 0;
+	if (ncells % 2)
+		return dev_err_probe(dev, -EINVAL,
+				     "%s: odd number of cells\n", prop);
 
-	switch (soc.chip_revision) {
-	case 'A':
-		rev = REV_A;
-		break;
-	case 'B':
-	default:
-		rev = REV_B;
-		break;
-	}
-	dev_info(dev, "Chip revision is %d using params %s\n", soc.chip_revision, cfg_ver_str[rev]);
+	ncfg = ncells / 2;
+	cfg = devm_kcalloc(dev, ncfg, sizeof(*cfg), GFP_KERNEL);
+	if (!cfg)
+		return -ENOMEM;
 
-	ret = of_property_read_string(np, cfg_ver_str[rev], &pcie->serdes_cfg_ver);
-	if (ret) {
-		pcie->serdes_cfg_ver = CA_PCIE_SERDES_CFG_VER_UNKNOWN;
-	}
+	for (i = 0; i < ncfg; i++) {
+		ret = of_property_read_u32_index(np, prop, 2 * i,
+						 &cfg[i].addr);
+		if (ret)
+			return ret;
+		ret = of_property_read_u32_index(np, prop, 2 * i + 1,
+						 &cfg[i].val);
+		if (ret)
+			return ret;
 
-	size = sizeof(struct serdes_cfg);
-
-	for (lane = 0; lane < pcie->lanes; lane++) {
-		pcie->cfg_cnt[lane] = of_property_count_elems_of_size(np, cfg_data_str[rev],
-		                   size);
-		if (pcie->cfg_cnt[lane] < 1) {
-			pcie->cfg_cnt[lane] = 0;
-			continue;
-		}
-
-		pcie->cfg[lane] = devm_kmalloc_array(dev, pcie->cfg_cnt[lane], size,
-		                                  GFP_KERNEL);
-		cnt = pcie->cfg_cnt[lane] * size / sizeof(u32);
-		of_property_read_u32_array(np, cfg_data_str[rev], (u32 *)pcie->cfg[lane], cnt);
+		if (!per_lane_prop)
+			cfg[i].addr += lane * SERDES_LANE_STRIDE;
 	}
 
-	for (lane = 0; lane < pcie->lanes; lane++) {
-		if (pcie->cfg_cnt[lane] <= 0 || !pcie->cfg[lane])
-			continue;
+	pcie->cfg[lane] = cfg;
+	pcie->cfg_cnt[lane] = ncfg;
 
-		for (i = 0; i < pcie->cfg_cnt[lane]; i++) {
-			pcie->cfg[lane][i].addr += pcie->serdes_addr + 0x1000*lane;
-
-		}
-	}
+	return 0;
 }
 
-static void cortina_serdes_probe(struct device *dev, struct device_node *np,
-                                 struct cortina_pcie *pcie)
+static int taurus_pcie_serdes_parse_rev(struct device *dev,
+					 struct device_node *np,
+					 struct taurus_pcie *pcie)
 {
-	int i, size, cnt, ret;
+	enum taurus_pcie_rev rev = pcie->rev_a ? TAURUS_PCIE_REV_A :
+						  TAURUS_PCIE_REV_B;
+	unsigned int lane;
+	int ret;
+
+	ret = of_property_read_string(np, serdes_cfg_ver_prop[rev],
+				      &pcie->serdes_cfg_ver);
+	if (ret)
+		pcie->serdes_cfg_ver = TAURUS_PCIE_SERDES_CFG_VER_UNKNOWN;
+
+	dev_info(dev, "Chip revision %c, SerDes configuration %s\n",
+		 pcie->rev_a ? 'A' : 'B', pcie->serdes_cfg_ver);
+
+	for (lane = 0; lane < pcie->lanes; lane++) {
+		ret = taurus_pcie_serdes_parse_lane(dev, np, pcie,
+						     serdes_cfg_data_prop[rev],
+						     lane, false);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
+static int taurus_pcie_serdes_parse(struct device *dev,
+				     struct device_node *np,
+				     struct taurus_pcie *pcie)
+{
+	const char *ver;
+	unsigned int lane;
 	char name[MAX_NAME_LEN];
+	int ret;
 
-	ret = of_property_read_string(np, "serdes-cfg-ver", &pcie->serdes_cfg_ver);
-	if (ret) {
+	if (of_property_read_string(np, "serdes-cfg-ver", &ver))
+		return taurus_pcie_serdes_parse_rev(dev, np, pcie);
 
-		return __serdes_probe_chip_rev_aware(dev, np, pcie);
+	pcie->serdes_cfg_ver = ver;
+
+	for (lane = 0; lane < pcie->lanes; lane++) {
+		snprintf(name, sizeof(name), "serdes-cfg%u", lane);
+		ret = taurus_pcie_serdes_parse_lane(dev, np, pcie, name,
+						     lane, true);
+		if (ret)
+			return ret;
 	}
 
-	size = sizeof(struct serdes_cfg);
-
-	for (i = 0; i < pcie->lanes; i++) {
-		snprintf(name, MAX_NAME_LEN, "serdes-cfg%d", i);
-		pcie->cfg_cnt[i] = of_property_count_elems_of_size(np, name,
-		                   size);
-		if (pcie->cfg_cnt[i] < 1) {
-			pcie->cfg_cnt[i] = 0;
-			continue;
-		}
-
-		pcie->cfg[i] = devm_kmalloc_array(dev, pcie->cfg_cnt[i], size,
-		                                  GFP_KERNEL);
-		cnt = pcie->cfg_cnt[i] * size / sizeof(u32);
-		of_property_read_u32_array(np, name, (u32 *)pcie->cfg[i], cnt);
-	}
+	return 0;
 }
 
-#ifdef CONFIG_RTK_PCIE_AFFINITY
-static void __init rtk_pcie_get_affinity(struct device *dev, struct cortina_pcie *pcie)
+static void taurus_pcie_get_affinity(struct device *dev,
+				      struct taurus_pcie *pcie)
 {
-	u32 affinity_cpu = 0;
-	struct device_node *np = dev->of_node;
+	u32 cpu;
 
-	if (of_property_read_u32(np, "irq-affinity", &affinity_cpu)) {
+	if (of_property_read_u32(dev->of_node, "irq-affinity", &cpu) ||
+	    cpu >= nr_cpu_ids) {
 		pcie->irq_affinity = -1;
-		dev_info(dev, "irq-affinity is not assigned\n");
-	} else {
-		if (affinity_cpu < nr_cpu_ids) {
-			pcie->irq_affinity = affinity_cpu;
-			dev_info(dev, "irq-affinity cpu: %d, nr_cpu_ids(%d)\n", pcie->irq_affinity, nr_cpu_ids);
-		} else {
-			dev_info(dev, "irq-affinity cpu: %d >= nr_cpu_ids(%d)\n", pcie->irq_affinity, nr_cpu_ids);
-		}
+		return;
 	}
-}
-#endif
 
-static void __maybe_unused rtk_pcie_set_default_msi_intr_mask(struct cortina_pcie *pcie)
-{
-	int i;
-	pcie->luts[0].mask = 0xffffffff;
-	for (i = 1; i < MAX_INTR_PINS; i++) {
-		pcie->luts[i].mask = 0x0;
-	}
+	pcie->irq_affinity = cpu;
+	dev_info(dev, "IRQ affinity set to CPU %u\n", cpu);
 }
 
-static void __maybe_unused rtk_pcie_show_msi_intr_mask(struct cortina_pcie *pcie)
+static int taurus_pcie_probe(struct platform_device *pdev)
 {
-	int i;
-
-	printk("MSI mask for each interrupt pin:\n");
-	for (i = 0; i < MAX_INTR_PINS; i++) {
-		printk("INTR[%d]: 0x%08x\n", i, pcie->luts[i].mask);
-	}
-}
-
-static int cortina_pcie_reboot_notifier(struct notifier_block *nb,
-				    unsigned long code, void *data)
-{
-#if 0 
-	struct cortina_pcie *pcie;
-
-	pcie = container_of(nb, struct cortina_pcie, reboot_nb);
-	if (code == SYS_DOWN || code == SYS_HALT) {
-
-		reset_control_assert(pcie->device_reset);
-	}
-#endif
-
-	return NOTIFY_DONE;
-}
-
-static int cortina_pcie_probe(struct platform_device *pdev)
-{
-	struct dw_pcie *pci;
-	struct cortina_pcie *pcie;
 	struct device *dev = &pdev->dev;
 	struct device_node *np = dev->of_node;
-	struct resource *reg_res;
-	int lanes, i, ret;
-	char name[MAX_NAME_LEN];
-	char *pcie_name = NULL;
+	struct taurus_soc_data soc;
+	struct taurus_pcie *pcie;
+	struct dw_pcie *pci;
+	struct resource *res;
+	struct clk *clk;
+	unsigned int i;
+	int lanes, ret;
 
 	pcie = devm_kzalloc(dev, sizeof(*pcie), GFP_KERNEL);
 	if (!pcie)
@@ -1562,266 +1359,156 @@ static int cortina_pcie_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	pci->dev = dev;
-	pci->ops = &ca_pcie_ops;
-
+	pci->ops = &taurus_pcie_ops;
 	pcie->pci = pci;
+	raw_spin_lock_init(&pcie->intr_lock);
+	platform_set_drvdata(pdev, pcie);
 
-	pcie->bus_clk = devm_clk_get(dev, NULL);
-	if (IS_ERR(pcie->bus_clk)) {
-		dev_err(dev, "Failed to get pcie bus clk\n");
-		return PTR_ERR(pcie->bus_clk);
-	}
+	clk = devm_clk_get_enabled(dev, NULL);
+	if (IS_ERR(clk))
+		return dev_err_probe(dev, PTR_ERR(clk),
+				     "failed to enable bus clock\n");
 
-	ret = clk_prepare_enable(pcie->bus_clk);
+	ret = taurus_soc_data_get(&soc);
 	if (ret)
-		return ret;
+		return dev_err_probe(dev, -EPROBE_DEFER,
+				     "SoC data not available\n");
 
-	reg_res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
-	                                       "glbl_regs");
-	pcie->reg_base = devm_ioremap_resource(dev, reg_res);
-	if (IS_ERR(pcie->reg_base)) {
-		ret = PTR_ERR(pcie->reg_base);
-		goto fail_bus_clk;
-	}
-	dev_info(dev, "resource - %pr mapped at 0x%llx\n", reg_res,
-	         (u64)pcie->reg_base);
+	pcie->rev_a = soc.chip_revision == 'A';
 
-	if (of_property_read_u32(np, "id", &pcie->idx)) {
-		dev_err(dev, "missing id property\n");
-		goto fail_bus_clk;
-	}
-	dev_info(dev, "id %d\n", pcie->idx);
+	ret = of_property_read_u32(np, "id", &pcie->idx);
+	if (ret)
+		return dev_err_probe(dev, ret, "missing id property\n");
 
 	ret = of_property_read_u32(np, "num-lanes", &lanes);
 	if (ret || lanes < 1 || lanes > MAX_LANE_NUM)
 		pcie->lanes = 1;
 	else
 		pcie->lanes = lanes;
-	dev_info(dev, "num-lanes %d\n", pcie->lanes);
 
-	reg_res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
-	                                       "serdes_phy");
-	pcie->serdes_base = devm_ioremap_resource(dev, reg_res);
-	if (IS_ERR(pcie->serdes_base)) {
-		ret = PTR_ERR(pcie->serdes_base);
-		goto fail_bus_clk;
-	}
-	dev_info(dev, "resource - %pr mapped at 0x%llx\n", reg_res,
-	         (u64)pcie->serdes_base);
+	pcie->reg_base = devm_platform_ioremap_resource_byname(pdev, "glbl_regs");
+	if (IS_ERR(pcie->reg_base))
+		return PTR_ERR(pcie->reg_base);
 
-	pcie->serdes_addr = reg_res->start;
-	pcie->serdes_size = resource_size(reg_res);
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "serdes_phy");
+	if (!res)
+		return dev_err_probe(dev, -ENODEV, "missing SerDes resource\n");
 
-	for (i = 0; i < MAX_LANE_NUM; i++)
-		pcie->cfg[i] = NULL;
+	pcie->serdes_base = devm_ioremap_resource(dev, res);
+	if (IS_ERR(pcie->serdes_base))
+		return PTR_ERR(pcie->serdes_base);
+	pcie->serdes_size = resource_size(res);
 
-	cortina_serdes_probe(dev, np, pcie);
-
-#if 0
-	if (of_property_read_bool(np, "auto-calibration"))
-		pcie->auto_calibration = true;
-	else
-		pcie->auto_calibration = false;
-#endif
-
-	pcie->core_reset = of_reset_control_get(np, "core_reset");
-	if (IS_ERR(pcie->core_reset)) {
-		dev_err(dev, "failed to get core_reset\n");
-		ret = PTR_ERR(pcie->core_reset);
-		goto fail_bus_clk;
+	pcie->dma_coherent = of_dma_is_coherent(np);
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
+					   "coherent-atu");
+	if (res) {
+		pcie->coherent_atu = devm_ioremap_resource(dev, res);
+		if (IS_ERR(pcie->coherent_atu))
+			return PTR_ERR(pcie->coherent_atu);
+	} else if (pcie->dma_coherent) {
+		return dev_err_probe(dev, -EINVAL,
+				     "dma-coherent requires coherent-atu resource\n");
 	}
 
-	pcie->phy_reset = of_reset_control_get(np, "phy_reset");
-	if (IS_ERR(pcie->phy_reset)) {
-		dev_err(dev, "failed to get phy_reset\n");
-		ret = PTR_ERR(pcie->phy_reset);
-		goto fail_bus_clk;
-	}
+	if (of_property_read_u32(np, "realtek,coherent-hi-addr",
+				 &pcie->coherent_hi_addr))
+		pcie->coherent_hi_addr = TAURUS_ATU_DEFAULT_HI_ADDR;
 
-	pcie->device_reset = of_reset_control_get(np, "device_reset");
-	if (IS_ERR(pcie->device_reset)) {
-		dev_err(dev, "failed to get device_reset\n");
-		ret = PTR_ERR(pcie->device_reset);
-		goto fail_bus_clk;
-	}
+	ret = taurus_pcie_serdes_parse(dev, np, pcie);
+	if (ret)
+		return ret;
 
-	pcie->device_power = of_reset_control_get(np, "device_power");
-	if (!IS_ERR_OR_NULL(pcie->device_power)) {
+	pcie->core_reset = devm_reset_control_get_exclusive(dev, "core_reset");
+	if (IS_ERR(pcie->core_reset))
+		return dev_err_probe(dev, PTR_ERR(pcie->core_reset),
+				     "failed to get core_reset\n");
+
+	pcie->phy_reset = devm_reset_control_get_exclusive(dev, "phy_reset");
+	if (IS_ERR(pcie->phy_reset))
+		return dev_err_probe(dev, PTR_ERR(pcie->phy_reset),
+				     "failed to get phy_reset\n");
+
+	pcie->device_reset = devm_reset_control_get_optional_exclusive(dev,
+								       "device_reset");
+	if (IS_ERR(pcie->device_reset))
+		return dev_err_probe(dev, PTR_ERR(pcie->device_reset),
+				     "failed to get device_reset\n");
+
+	pcie->device_power = devm_reset_control_get_optional_exclusive(dev,
+								       "device_power");
+	if (IS_ERR(pcie->device_power))
+		return dev_err_probe(dev, PTR_ERR(pcie->device_power),
+				     "failed to get device_power\n");
+	if (pcie->device_power)
 		reset_control_reset(pcie->device_power);
-	}
 
-	for (i = 0; i < MAX_LANE_NUM; i++) {
-		snprintf(name, MAX_NAME_LEN, "pcie-phy%d", i);
-		pcie->phy[i] = devm_phy_get(&pdev->dev, name);
-		if (IS_ERR(pcie->phy[i])) {
-			ret = PTR_ERR(pcie->phy[i]);
-			pcie->phy[i] = NULL;
-		}
-	}
+	pcie->perst = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
+	if (IS_ERR(pcie->perst))
+		return dev_err_probe(dev, PTR_ERR(pcie->perst),
+				     "failed to get PERST GPIO\n");
 
 	for (i = 0; i < pcie->lanes; i++) {
-		if (!pcie->phy[i]) {
-			dev_err(dev, "failed to get phy %d\n", i);
-			goto fail_bus_clk;
-		}
+		char name[MAX_NAME_LEN];
+
+		snprintf(name, sizeof(name), "pcie-phy%u", i);
+		pcie->phy[i] = devm_phy_get(dev, name);
+		if (IS_ERR(pcie->phy[i]))
+			return dev_err_probe(dev, PTR_ERR(pcie->phy[i]),
+					     "failed to get %s\n", name);
 	}
 
-#if 0
-	ret = of_property_read_u16(np, "ready-time",
-	                           &pcie->device_ready_time);
-	if (ret)
-		pcie->device_ready_time = 0;
-#endif
+	taurus_pcie_get_affinity(dev, pcie);
 
-#ifdef CONFIG_RTK_PCIE_AFFINITY
-	rtk_pcie_get_affinity(dev, pcie);
-#endif
-
-	rtk_pcie_set_default_msi_intr_mask(pcie);
-
-#ifdef CONFIG_EXTD_INTR_PIN
-	set_bit(0, pcie->intr_en_bitmap); 
-
-	do {
-		u32 intr_mask[MAX_INTR_PINS];
-		int sz;
-		#define MSI_INTR_MASK_STR "msi-intr-mask"
-		sz = of_property_count_elems_of_size(np, MSI_INTR_MASK_STR, sizeof(u32));
-		if (sz < 0)
-			sz = MAX_INTR_PINS;
-		sz = min(sz, MAX_INTR_PINS);
-		ret = of_property_read_u32_array(np, MSI_INTR_MASK_STR, intr_mask, sz);
-		if (ret == 0) {
-			int i;
-			for (i=0; i<sz; i++)
-				pcie->luts[i].mask = intr_mask[i];
-		} else if (ret < 0) {
-			dev_warn(dev, "MSI mask for extended interrupt pin is not set\n");
-		}
-
-		for (i=0; i<sz; i++) {
-			if (pcie->luts[i].mask)
-				set_bit(i, pcie->intr_en_bitmap);
-		}
-	} while (0);
-	rtk_pcie_show_msi_intr_mask(pcie);
-#endif
-
-	pcie->reboot_nb.notifier_call = cortina_pcie_reboot_notifier;
-	ret = register_reboot_notifier(&pcie->reboot_nb);
-	if (ret) {
-		dev_warn(dev, "Cannot register reboot notifier (%d)\n", ret);
-	}
-
-	platform_set_drvdata(pdev, pcie);
-
-	if (of_property_read_bool(np, "forced-gen1")) {
+	if (of_property_read_bool(np, "forced-gen1"))
 		pci->max_link_speed = 1;
-	}
 
-	if (of_property_read_string(np, "pdev-name",
-				    (const char **)&pcie_name) == 0) {
-		kobject_set_name(&pci->dev->kobj, "%s", pcie_name);
-	}
+	ret = devm_device_add_group(dev, &taurus_pcie_attr_group);
+	if (ret)
+		return dev_err_probe(dev, ret, "failed to create sysfs group\n");
 
-	ret = cortina_add_pcie_port(pcie, pdev);
-	if (ret < 0)
-		goto fail_bus_clk;
-
-	ret = sysfs_create_group(&pci->dev->kobj,
-	                         &cortina_pcie_attr_group);
+	ret = taurus_pcie_add_port(pcie, pdev);
 	if (ret) {
-		dev_err(dev, "failed to register sysfs\n");
-		goto fail_bus_clk;
+		taurus_pcie_phy_power_off(pcie);
+		return ret;
 	}
 
 	return 0;
-
-fail_bus_clk:
-
-	ret = sysfs_create_group(&pci->dev->kobj,
-				 &cortina_pcie_dbg_attr_group);
-	if (ret)
-		dev_err(dev, "failed to register sysfs for debug\n");
-
-	if (pcie->reboot_nb.notifier_call)
-		unregister_reboot_notifier(&pcie->reboot_nb);
-
-	if (pcie->device_reset)
-		reset_control_put(pcie->device_reset);
-	if (pcie->phy_reset)
-		reset_control_put(pcie->phy_reset);
-	if (pcie->core_reset)
-		reset_control_put(pcie->core_reset);
-	for (i = 0; i < pcie->lanes; i++)
-		phy_power_off(pcie->phy[i]);
-
-	clk_disable_unprepare(pcie->bus_clk);
-
-	return ret;
 }
 
-static void __exit cortina_pcie_remove(struct platform_device *pdev)
+static void taurus_pcie_remove(struct platform_device *pdev)
 {
-	struct cortina_pcie *pcie = platform_get_drvdata(pdev);
-	struct dw_pcie *pci = pcie->pci;
-	struct dw_pcie_rp *pp = &pci->pp;
+	struct taurus_pcie *pcie = platform_get_drvdata(pdev);
 
-	sysfs_remove_group(&pdev->dev.kobj, &cortina_pcie_attr_group);
-
-	dw_pcie_host_deinit(pp);
-
-#if 0
-	int i;
-
-	for (i = 0; i < pcie->lanes; i++)
-		phy_power_off(pcie->phy[i]);
-#endif
-	if (pcie->reboot_nb.notifier_call)
-		unregister_reboot_notifier(&pcie->reboot_nb);
-
-	if (pcie->device_reset)
-		reset_control_put(pcie->device_reset);
-#if 0
-	clk_disable_unprepare(pcie->bus_clk);
-
-	if (pcie->device_reset)
-		reset_control_put(pcie->device_reset);
-	if (pcie->phy_reset)
-		reset_control_put(pcie->phy_reset);
-	if (pcie->core_reset)
-		reset_control_put(pcie->core_reset);
-#endif
+	dw_pcie_host_deinit(&pcie->pci->pp);
 }
 
-static const struct of_device_id cortina_pcie_of_match[] = {
-	{
-		.compatible = "realtek,taurus-pcie",
-	},
-	{},
+static const struct of_device_id taurus_pcie_of_match[] = {
+	{ .compatible = "realtek,taurus-pcie" },
+	{ }
 };
-MODULE_DEVICE_TABLE(of, cortina_pcie_of_match);
+MODULE_DEVICE_TABLE(of, taurus_pcie_of_match);
 
-static struct platform_driver cortina_pcie_driver = {
-	.probe		= cortina_pcie_probe,
-	.remove		= cortina_pcie_remove,
+static struct platform_driver taurus_pcie_driver = {
+	.probe		= taurus_pcie_probe,
+	.remove		= taurus_pcie_remove,
 	.driver = {
 		.name = "taurus-pcie",
-		.of_match_table = of_match_ptr(cortina_pcie_of_match),
+		.of_match_table = taurus_pcie_of_match,
 	},
 };
 
-static int __init cortina_pcie_init(void)
+static int __init taurus_pcie_init(void)
 {
-	return platform_driver_register(&cortina_pcie_driver);
+	return platform_driver_register(&taurus_pcie_driver);
 }
-late_initcall(cortina_pcie_init);
+late_initcall(taurus_pcie_init);
 
-static void __exit cortina_pcie_exit(void)
+static void __exit taurus_pcie_exit(void)
 {
-	platform_driver_unregister(&cortina_pcie_driver);
+	platform_driver_unregister(&taurus_pcie_driver);
 }
-module_exit(cortina_pcie_exit);
+module_exit(taurus_pcie_exit);
 
 MODULE_DESCRIPTION("Realtek Taurus PCIe host controller driver");
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");

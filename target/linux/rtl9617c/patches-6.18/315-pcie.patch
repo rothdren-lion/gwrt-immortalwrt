@@ -1,0 +1,21 @@
+diff --git a/drivers/pci/controller/dwc/Kconfig b/drivers/pci/controller/dwc/Kconfig
+@@ -366,6 +366,13 @@
+ 	  Enables support for the DesignWare PCIe controller in the
+ 	  Rockchip SoC (except RK3399) to work in endpoint mode.
+ 
++config PCIE_REALTEK_TAURUS
++	bool "Realtek Taurus PCIe host controller"
++	depends on PCI && OF && ARCH_REALTEK_TAURUS
++	select PCIE_DW_HOST
++	help
++	  DesignWare based PCIe host controller of the Realtek Taurus SoCs.
++
+ config PCI_EXYNOS
+ 	tristate "Samsung Exynos PCIe controller"
+ 	depends on ARCH_EXYNOS || COMPILE_TEST
+diff --git a/drivers/pci/controller/dwc/Makefile b/drivers/pci/controller/dwc/Makefile
+@@ -54,3 +54,4 @@
+ obj-$(CONFIG_ARM64) += pcie-tegra194-acpi.o
+ endif
+ endif
++obj-$(CONFIG_PCIE_REALTEK_TAURUS) += pcie-taurus.o

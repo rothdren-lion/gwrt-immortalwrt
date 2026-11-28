@@ -52,8 +52,9 @@ netdev_tx_t rtl_pon_itu_data_transmit(struct rtl9617c_pon *pon, struct sk_buff *
 		wire = skb_clone(skb, GFP_ATOMIC);
 		if (!wire) goto unlock;
 	}
-	/* A NI BID holds2048 bytes, including32 bytes prefix and16 bytes HEADER_A. */
-	if (!rtl_evto_skb_write(wire, &input, &output, wire_tags) && wire->len <= 2000) {
+	/* Normal frames are bounded at 2000 B; GSO frames segment in DMA LSO. */
+	if (!rtl_evto_skb_write(wire, &input, &output, wire_tags) &&
+	    wire->len <= (skb_is_gso(wire) ? rtl9617c_ni_tx_gso_max() : 2000U)) {
 		frame.header_high |= (u32)path->index << 18;
 		frame.header_low |= path->queue | ((32 + path->tcont) << 3);
 		found = true;

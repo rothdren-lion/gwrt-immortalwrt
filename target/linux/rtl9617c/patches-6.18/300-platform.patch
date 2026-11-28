@@ -1,0 +1,21 @@
+diff --git a/arch/arm64/Kconfig.platforms b/arch/arm64/Kconfig.platforms
+@@ -326,6 +326,19 @@
+ 	  This enables support for the ARMv8 based Realtek chipsets,
+ 	  like the RTD1295.
+ 
++config ARCH_REALTEK_TAURUS
++	bool "Realtek Taurus family SoCs"
++	depends on ARCH_REALTEK
++	select ARM_GIC_V3
++	select COMMON_CLK
++	select PINCTRL
++	select REALTEK_TAURUS_PERI_IRQ
++	select RESET_REALTEK_TAURUS
++	select SOC_REALTEK_TAURUS
++	help
++	  Support for the Realtek Taurus family Cortex-A55 PON gateway SoCs,
++	  such as RTL8277C, RTL9617C and RTL9617CM.
++
+ config ARCH_RENESAS
+ 	bool "Renesas SoC Platforms"
+ 	help

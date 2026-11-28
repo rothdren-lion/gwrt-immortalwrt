@@ -11,6 +11,7 @@
 #include <linux/ipv6.h>
 #include <linux/kstrtox.h>
 #include <linux/ppp_defs.h>
+#include <linux/rcupdate.h>
 #include <linux/rhashtable.h>
 #include <linux/seq_file.h>
 #include <linux/slab.h>
@@ -329,7 +330,8 @@ static int rtl_fe_prepare(struct rtl_fe *fe)
 
 	rtl_fe_write(fe, RTL_FE_PPP_PROTOCOL0, 0x11);
 	rtl_fe_write(fe, RTL_FE_PPP_PROTOCOL1, PPP_IP | PPP_IPV6 << 16);
-	rtl_fe_rmw(fe, RTL_FE_TABLE_CFG0, 0, BIT(31));
+	rtl_fe_rmw(fe, RTL_FE_TABLE_CFG0, GENMASK(17, 12),
+		   BIT(31) | (RTL_FE_DUAL_HASH_EIF_BASE << 12));
 	rtl_fe_rmw(fe, RTL_FE_CONTROL, FE_CONTROL_FIELDS, FE_CONTROL_INIT);
 	rtl_fe_rmw(fe, RTL_FE_PPP_CONFIG, 0, 0x1f00);
 	rtl_fe_rmw(fe, RTL_FE_TABLE_CFG1, GENMASK(11, 0), 0xf21);
@@ -373,6 +375,9 @@ static int rtl_fe_prepare(struct rtl_fe *fe)
 	}
 
 	rtl_fe_rmw(fe, RTL_NI_GLB_NIRX_L3FE_DEMUX_CFG0, 0, GENMASK(13, 0));
+	ret = rtl_fe_mcast_prepare(fe);
+	if (ret)
+		return ret;
 	rtl_fe_cache_start(fe);
 	rtl_fe_rmw(fe, RTL_FE_CONTROL, 0, FE_CONTROL_ENABLE);
 	return 0;
@@ -546,12 +551,21 @@ static int rtl_fe_interface_bind_slot(struct rtl_fe *fe,
 
 static int rtl_fe_interface_get(struct rtl_fe *fe, struct rtl_fe_flow *flow)
 {
+	unsigned int limit = (rtl_fe_vpn_offload_enabled() ||
+			      rtl_fe_tunnel_flow_enabled()) ?
+			     FE_INTERFACES - FE_TUNNEL_EIF_RESERVE :
+			     FE_INTERFACES;
 	unsigned int index = FE_INTERFACES;
 	struct rtl_fe_interface *intf;
 	unsigned int i;
 
-	/* Prefer exclusive rows 0..15 and skip rows held by tunnel slots. */
-	for (i = 0; i < FE_INTERFACES; i++) {
+	/*
+	 * Prefer exclusive rows 0..15, skip rows held by tunnel slots, and
+	 * reserve the top FE_TUNNEL_EIF_RESERVE aliasable rows when tunnel
+	 * offload is active so ordinary counted flows cannot starve dual-header
+	 * sessions out of physical EIF rows 16..31.
+	 */
+	for (i = 0; i < limit; i++) {
 		if (!test_bit(i, fe->counters) &&
 		    !rtl_fe_tunnel_phys_busy(fe, i)) {
 			index = i;
@@ -560,7 +574,7 @@ static int rtl_fe_interface_get(struct rtl_fe *fe, struct rtl_fe_flow *flow)
 	}
 
 	if (index == FE_INTERFACES) {
-		for (i = 0; i < FE_INTERFACES; i++) {
+		for (i = 0; i < limit; i++) {
 			intf = &fe->interfaces[i];
 			if (intf->source_mac == flow->source_mac &&
 			    intf->pppoe == flow->pppoe &&
@@ -651,40 +665,49 @@ static int rtl_fe_destination_get(struct rtl_fe *fe, struct rtl_fe_flow *flow,
 				  const u8 *address)
 {
 	u32 words[RTL_FE_FDB_WORDS], result;
-	struct rtl_fe_flow *other;
+	struct rtl_fe_dest_mac *dm;
 	int ret;
 
 	ether_addr_copy(flow->destination, address);
-	list_for_each_entry(other, &fe->flows, list) {
-		if (other == flow || !other->destination_owned ||
-		    !ether_addr_equal(other->destination, address))
+	list_for_each_entry(dm, &fe->dest_macs, list) {
+		if (!ether_addr_equal(dm->address, address))
 			continue;
-		flow->destination_index = other->destination_index;
-		memcpy(flow->destination_saved, other->destination_saved,
-		       sizeof(flow->destination_saved));
-		flow->destination_created = other->destination_created;
-		flow->destination_owned = true;
+		if (!dm->ready)
+			return -EAGAIN;
+		dm->users++;
+		flow->dest_mac = dm;
+		flow->destination_index = dm->index;
 		return 0;
 	}
+
+	dm = kzalloc(sizeof(*dm), GFP_KERNEL);
+	if (!dm)
+		return -ENOMEM;
+	ether_addr_copy(dm->address, address);
 
 	rtl_fe_fdb_key(words, address);
 	ret = rtl_fe_fdb_command(fe, FE_FDB_LOOKUP, words, &result);
 	if (ret)
-		return ret;
-	flow->destination_created = (result & 15) != FE_FDB_FOUND;
-	if (!flow->destination_created)
-		memcpy(flow->destination_saved, words, sizeof(words));
+		goto err_free;
+	dm->created = (result & 15) != FE_FDB_FOUND;
+	if (!dm->created)
+		memcpy(dm->saved, words, sizeof(words));
 
-	if (flow->destination_created)
+	if (dm->created)
 		rtl_fe_fdb_key(words, address);
 	else
 		words[0] |= FE_FDB_STATIC;
 	ret = rtl_fe_fdb_command(fe, FE_FDB_ADD, words, &result);
 	if (ret)
-		return ret;
-	if ((result & 15) != FE_FDB_FOUND)
-		return -ENOSPC;
-	flow->destination_owned = true;
+		goto err_free;
+	if ((result & 15) != FE_FDB_FOUND) {
+		ret = -ENOSPC;
+		goto err_free;
+	}
+
+	dm->users = 1;
+	list_add_tail(&dm->list, &fe->dest_macs);
+	flow->dest_mac = dm;
 
 	rtl_fe_fdb_key(words, address);
 	ret = rtl_fe_fdb_command(fe, FE_FDB_LOOKUP, words, &result);
@@ -692,26 +715,44 @@ static int rtl_fe_destination_get(struct rtl_fe *fe, struct rtl_fe_flow *flow,
 		return ret;
 	if ((result & 15) != FE_FDB_FOUND)
 		return -EIO;
-	flow->destination_index = FIELD_GET(FE_FDB_INDEX, result);
+	dm->index = FIELD_GET(FE_FDB_INDEX, result);
+	dm->ready = true;
+	flow->destination_index = dm->index;
 	return 0;
+
+err_free:
+	kfree(dm);
+	return ret;
 }
 
 static int rtl_fe_destination_put(struct rtl_fe *fe, struct rtl_fe_flow *flow)
 {
+	struct rtl_fe_dest_mac *dm = flow->dest_mac;
 	u32 words[RTL_FE_FDB_WORDS], result;
-	struct rtl_fe_flow *other;
+	int ret;
 
-	list_for_each_entry(other, &fe->flows, list)
-		if (other != flow && other->destination_owned &&
-		    ether_addr_equal(other->destination, flow->destination))
-			return 0;
-
-	if (flow->destination_created) {
-		rtl_fe_fdb_key(words, flow->destination);
-		return rtl_fe_fdb_command(fe, FE_FDB_DELETE, words, &result);
+	if (!dm)
+		return 0;
+	if (dm->users > 1) {
+		dm->users--;
+		flow->dest_mac = NULL;
+		return 0;
 	}
-	memcpy(words, flow->destination_saved, sizeof(words));
-	return rtl_fe_fdb_command(fe, FE_FDB_ADD, words, &result);
+
+	if (dm->created) {
+		rtl_fe_fdb_key(words, dm->address);
+		ret = rtl_fe_fdb_command(fe, FE_FDB_DELETE, words, &result);
+	} else {
+		memcpy(words, dm->saved, sizeof(words));
+		ret = rtl_fe_fdb_command(fe, FE_FDB_ADD, words, &result);
+	}
+	if (ret)
+		return ret;
+
+	list_del(&dm->list);
+	kfree(dm);
+	flow->dest_mac = NULL;
+	return 0;
 }
 
 int rtl_fe_vlan_tpid(__be16 protocol)
@@ -1219,6 +1260,7 @@ static int rtl_fe_parse_tunnel(struct flow_rule *rule,
 	if (data->tunnel_type == RTL_FE_DUAL_TYPE_IP4INIP6) {
 		if (data->kind != RTL_FE_RULE_IPV4)
 			return -EOPNOTSUPP;
+		data->tunnel_af = AF_INET6;
 		if (decap) {
 			ret = rtl_fe_tunnel_copy_ipv6(rule, data->tunnel_src,
 						      data->tunnel_dst);
@@ -1231,6 +1273,7 @@ static int rtl_fe_parse_tunnel(struct flow_rule *rule,
 	} else {
 		if (data->kind != RTL_FE_RULE_IPV6)
 			return -EOPNOTSUPP;
+		data->tunnel_af = AF_INET;
 		if (decap) {
 			ret = rtl_fe_tunnel_copy_ipv4(rule, data->tunnel_src,
 						      data->tunnel_dst);
@@ -1697,11 +1740,10 @@ int rtl_fe_delete(struct rtl_fe *fe, struct rtl_fe_flow *flow)
 		if (ret)
 			goto retry;
 	}
-	if (flow->destination_owned) {
+	if (flow->dest_mac) {
 		ret = rtl_fe_destination_put(fe, flow);
 		if (ret)
 			goto retry;
-		flow->destination_owned = false;
 	}
 	if (flow->source_owned) {
 		ret = rtl_fe_smac_put(fe, flow->source_mac);
@@ -1732,13 +1774,17 @@ int rtl_fe_delete(struct rtl_fe *fe, struct rtl_fe_flow *flow)
 		rtl_fe_bridge_flow_removed(fe);
 	if (flow->hashed)
 		rhashtable_remove_fast(&fe->cookies, &flow->node, rtl_fe_flow_params);
+	list_del_init(&flow->retry);
+	list_del_init(&flow->bridge_list);
 	list_del(&flow->list);
 	if (flow->installed)
 		fe->deletes++;
-	kfree(flow);
+	kfree_rcu(flow, rcu);
 	return 0;
 
 retry:
+	if (list_empty(&flow->retry))
+		list_add_tail(&flow->retry, &fe->retries);
 	mod_delayed_work(system_wq, &fe->cleanup_work, HZ);
 	return ret;
 }
@@ -1750,9 +1796,8 @@ static void rtl_fe_cleanup_work(struct work_struct *work)
 	struct rtl_fe_flow *flow, *next;
 
 	mutex_lock(&fe->lock);
-	list_for_each_entry_safe(flow, next, &fe->flows, list)
-		if (flow->deleting)
-			rtl_fe_delete(fe, flow);
+	list_for_each_entry_safe(flow, next, &fe->retries, retry)
+		rtl_fe_delete(fe, flow);
 	rtl_fe_collect_ports(fe);
 	mutex_unlock(&fe->lock);
 }
@@ -2124,6 +2169,8 @@ int rtl_fe_install(struct rtl_fe_port *port, struct rtl_fe_rule *data,
 	flow = kzalloc(sizeof(*flow), GFP_KERNEL);
 	if (!flow)
 		return -ENOMEM;
+	INIT_LIST_HEAD(&flow->retry);
+	INIT_LIST_HEAD(&flow->bridge_list);
 	flow->cookie = cookie ?: (unsigned long)flow;
 	flow->hash_index = index;
 	flow->crc16 = crc16;
@@ -2198,6 +2245,7 @@ int rtl_fe_install(struct rtl_fe_port *port, struct rtl_fe_rule *data,
 	/* Host Policing fallback for L3 flows without an explicit police action. */
 	if (!flow->pol_owned && fe->te && data->kind != RTL_FE_RULE_BRIDGE)
 		rtl_fe_resolve_hostpol_source(data);
+	ether_addr_copy(flow->hostpol_source, data->source);
 	ret = rtl_fe_police_bind(fe, data, flow);
 	if (ret)
 		goto rollback;
@@ -2209,6 +2257,11 @@ int rtl_fe_install(struct rtl_fe_port *port, struct rtl_fe_rule *data,
 	data->action.ingress_interface =
 		flow->tunnel_owned && data->tunnel_decap ?
 		tunnel.hash_eif : 0;
+	if (flow->tunnel_owned && !data->tunnel_decap &&
+	    data->tunnel_type == RTL_FE_DUAL_TYPE_IP4INIP6) {
+		data->action.dip_remap_vld = 1;
+		data->action.dip_remap = RTL_FE_DUAL_FMR_NONE;
+	}
 	data->action.mirror = READ_ONCE(fe->mirror_enabled);
 	rtl_fe_action_build_mode(action, &data->action, fe->napt6_active);
 	rtl_fe_action_set_mode(action, RTL_FE_L3_IF_COUNTER_EN, flow->counted,
@@ -2313,10 +2366,35 @@ static int rtl_fe_block_cb(enum tc_setup_type type, void *type_data, void *priv)
 	if (type != TC_SETUP_CLSFLOWER || cls->common.chain_index)
 		return -EOPNOTSUPP;
 
+	/* Filter non-matching ports before taking fe->lock: nf_flow_table
+	 * broadcasts every tuple command across all bound flowtable ports.
+	 */
+	if (cls->command == FLOW_CLS_REPLACE) {
+		struct flow_rule *rule = flow_cls_offload_flow_rule(cls);
+		struct flow_match_meta meta;
+
+		if (!flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_META))
+			return -EOPNOTSUPP;
+		flow_rule_match_meta(rule, &meta);
+		if (meta.key->ingress_ifindex != port->netdev->ifindex)
+			return -EOPNOTSUPP;
+	} else if (cls->command == FLOW_CLS_DESTROY ||
+		   cls->command == FLOW_CLS_STATS) {
+		bool owned;
+
+		rcu_read_lock();
+		flow = rhashtable_lookup(&fe->cookies, &cls->cookie,
+					 rtl_fe_flow_params);
+		owned = flow && READ_ONCE(flow->input) == port;
+		rcu_read_unlock();
+		if (!owned)
+			return -ENOENT;
+	} else {
+		return -EOPNOTSUPP;
+	}
+
 	mutex_lock(&fe->lock);
-	list_for_each_entry_safe(flow, next, &fe->flows, list) {
-		if (flow->installed && !flow->deleting)
-			continue;
+	list_for_each_entry_safe(flow, next, &fe->retries, retry) {
 		ret = rtl_fe_delete(fe, flow);
 		if (ret)
 			goto unlock;
@@ -2588,12 +2666,20 @@ static int rtl_fe_enable_locked(struct rtl_fe *fe)
 			   RTL_NI_PORT_RX_CTRL_BYP_DPID,
 			   FIELD_PREP(RTL_NI_PORT_RX_CTRL_BYP_DPID, 25));
 	list_for_each_entry(port, &fe->ports, list) {
-		if (port->source != FE_SOURCE_P6)
+		if (port->retired)
 			continue;
-		rtl_fe_rmw(fe, RTL_NI_XGE_BYPASS_CFG, RTL_NI_XGE_BYPASS_FIELDS,
-			   (fe->xge_saved & RTL_NI_XGE_BYPASS_EN) |
-			   FIELD_PREP(RTL_NI_XGE_BYPASS_DPID, 25));
-		break;
+		if (port->source < FE_LAN_PORTS) {
+			rtl_fe_rmw(fe, RTL_NI_PORT_RX_CTRL(port->source),
+				   RTL_NI_PORT_RX_CTRL_BYP_EN |
+				   RTL_NI_PORT_RX_CTRL_BYP_DPID,
+				   RTL_NI_PORT_RX_CTRL_BYP_EN |
+				   FIELD_PREP(RTL_NI_PORT_RX_CTRL_BYP_DPID, 25));
+		} else if (port->source == FE_SOURCE_P6) {
+			rtl_fe_rmw(fe, RTL_NI_XGE_BYPASS_CFG,
+				   RTL_NI_XGE_BYPASS_FIELDS,
+				   RTL_NI_XGE_BYPASS_EN |
+				   FIELD_PREP(RTL_NI_XGE_BYPASS_DPID, 25));
+		}
 	}
 	WRITE_ONCE(fe->enabled, true);
 	return 0;
@@ -2629,6 +2715,82 @@ int rtl_fe_pon_attach(struct rtl_fe *fe, bool attach)
 		fe->error = ret;
 	mutex_unlock(&fe->lock);
 	return ret;
+}
+
+static int rtl_fe_hostpol_rebind_flow(struct rtl_fe *fe,
+				      struct rtl_fe_flow *flow)
+{
+	u32 words[RTL_FE_ACTION_MAX_WORDS];
+	bool want_bound = false, want_host = false;
+	u8 want_slot = 0;
+	__le32 *slot;
+	int ret;
+
+	if (!flow->published || flow->deleting ||
+	    flow->kind == RTL_FE_RULE_BRIDGE || flow->pol_owned || !fe->te)
+		return 0;
+
+	ret = rtl_fe_hostpol_lookup(fe, flow->hostpol_source,
+				    RTL_TE_HOSTPOL_DIR_INGRESS, &want_slot);
+	if (ret == -ENOENT)
+		ret = rtl_fe_hostpol_lookup(fe, flow->destination,
+					    RTL_TE_HOSTPOL_DIR_EGRESS,
+					    &want_slot);
+	if (ret && ret != -ENOENT)
+		return ret;
+	if (!ret) {
+		want_bound = true;
+		want_host = true;
+	} else {
+		want_slot = 0;
+	}
+
+	if (flow->pol_bound == want_bound && flow->pol_host == want_host &&
+	    flow->pol_slot == want_slot)
+		return 0;
+
+	slot = (__le32 *)(fe->memory + RTL_FE_ACTION_OFFSET +
+			  flow->hash_index * RTL_FE_ACTION_BYTES);
+	memcpy(words, slot, sizeof(words));
+	rtl_fe_action_set_mode(words, RTL_FE_POL_VLD, want_bound,
+			       fe->napt6_active);
+	rtl_fe_action_set_mode(words, RTL_FE_POL_EN, want_bound,
+			       fe->napt6_active);
+	rtl_fe_action_set_mode(words, RTL_FE_POL_ID, want_slot,
+			       fe->napt6_active);
+	memcpy(slot, words, sizeof(words));
+	dma_wmb();
+
+	flow->pol_bound = want_bound;
+	flow->pol_host = want_host;
+	flow->pol_slot = want_slot;
+
+	ret = rtl_fe_cache_command(fe, flow->hash_index, flow->crc16, 1);
+	if (ret)
+		return ret;
+	return rtl_fe_age_write(fe, flow->hash_index, 1);
+}
+
+void rtl_fe_hostpol_sync(struct rtl_fe *fe)
+{
+	struct rtl_fe_flow *flow;
+	int ret;
+
+	if (!fe)
+		return;
+
+	mutex_lock(&fe->lock);
+	if (!fe->enabled)
+		goto unlock;
+	list_for_each_entry(flow, &fe->flows, list) {
+		ret = rtl_fe_hostpol_rebind_flow(fe, flow);
+		if (ret) {
+			fe->error = ret;
+			break;
+		}
+	}
+unlock:
+	mutex_unlock(&fe->lock);
 }
 
 void rtl_fe_start(struct rtl_fe *fe)
@@ -2729,14 +2891,20 @@ static int rtl_fe_flows_show(struct seq_file *s, void *unused)
 	struct rtl_fe_flow *flow;
 
 	mutex_lock(&fe->lock);
-	list_for_each_entry(flow, &fe->flows, list)
-		seq_printf(s, "%s cookie=%lx in=%s out=%s hash=%u counter=%u cos=%u cos_set=%u proto=%u packets=%u bytes=%llu learned=%u deleting=%u pol=%d host=%u\n",
+	list_for_each_entry(flow, &fe->flows, list) {
+		seq_printf(s, "%s cookie=%lx in=%s out=%s hash=%u counter=%u cos=%u cos_set=%u proto=%u packets=%u bytes=%llu learned=%u deleting=%u pol=%d host=%u",
 			   kind[flow->kind], flow->cookie,
 			   flow->input->netdev->name, flow->output->netdev->name,
 			   flow->hash_index, flow->counter, flow->cos,
 			   flow->cos_set, flow->protocol, flow->packets,
 			   flow->bytes, flow->learned, flow->deleting,
 			   rtl_fe_flow_pol_id(flow), flow->pol_host);
+		if (flow->mcast)
+			seq_printf(s, " mce=%u", flow->mcast_hw_index);
+		if (flow->tunnel_owned)
+			seq_printf(s, " dual=%u", flow->dual_index);
+		seq_putc(s, '\n');
+	}
 	mutex_unlock(&fe->lock);
 	return 0;
 }
@@ -3019,6 +3187,9 @@ struct rtl_fe *rtl_fe_create(struct device *dev, struct regmap *regs,
 	INIT_DELAYED_WORK(&fe->cleanup_work, rtl_fe_cleanup_work);
 	INIT_LIST_HEAD(&fe->ports);
 	INIT_LIST_HEAD(&fe->flows);
+	INIT_LIST_HEAD(&fe->retries);
+	INIT_LIST_HEAD(&fe->bridge_flows);
+	INIT_LIST_HEAD(&fe->dest_macs);
 	INIT_LIST_HEAD(&fe->blocks);
 
 	fe->saved = kcalloc(ARRAY_SIZE(rtl_fe_saved_regs), sizeof(*fe->saved),
@@ -3069,10 +3240,10 @@ struct rtl_fe *rtl_fe_create(struct device *dev, struct regmap *regs,
 	if (ret)
 		dev_warn(dev, "dual-header table manager unavailable: %d\n",
 			 ret);
-	/* NAPTV6 is raw/debugfs only; a failed allocation must not block FE. */
+	/* NAPT6 action/NPTv6 prefix manager; a failed allocation must not block FE. */
 	ret = rtl_fe_napt6_init(fe);
 	if (ret)
-		dev_warn(dev, "NAPT6 debugfs manager unavailable: %d\n", ret);
+		dev_warn(dev, "NAPT6 manager unavailable: %d\n", ret);
 	rtl_fe_debugfs_init(fe);
 	return fe;
 
@@ -3091,6 +3262,7 @@ free_fe:
 
 void rtl_fe_destroy(struct rtl_fe *fe)
 {
+	struct rtl_fe_dest_mac *dm, *dm_next;
 	struct rtl_fe_flow *flow, *flow_next;
 	struct rtl_fe_port *port, *next;
 
@@ -3118,10 +3290,17 @@ void rtl_fe_destroy(struct rtl_fe *fe)
 	rtl_fe_napt6_exit(fe);
 	cancel_delayed_work_sync(&fe->cleanup_work);
 	list_for_each_entry_safe(flow, flow_next, &fe->flows, list) {
+		list_del_init(&flow->retry);
+		list_del_init(&flow->bridge_list);
 		list_del(&flow->list);
 		kfree(flow);
 	}
+	list_for_each_entry_safe(dm, dm_next, &fe->dest_macs, list) {
+		list_del(&dm->list);
+		kfree(dm);
+	}
 	rhashtable_destroy(&fe->cookies);
+	rcu_barrier();
 	list_for_each_entry_safe(port, next, &fe->ports, list) {
 		list_del(&port->list);
 		kfree(port);

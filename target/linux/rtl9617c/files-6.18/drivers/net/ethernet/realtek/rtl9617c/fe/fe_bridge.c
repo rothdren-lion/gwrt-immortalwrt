@@ -79,6 +79,53 @@ static struct net_device *rtl_fe_bridge_lower(struct net_device *dev,
 	return dev;
 }
 
+static bool rtl_fe_bridge_host_joined(struct net_device *brdev, const u8 *mac)
+{
+	struct netdev_hw_addr *ha;
+	bool joined = false;
+
+	if (!brdev)
+		return false;
+	netif_addr_lock_bh(brdev);
+	netdev_for_each_mc_addr(ha, brdev) {
+		if (ether_addr_equal(ha->addr, mac)) {
+			joined = true;
+			break;
+		}
+	}
+	netif_addr_unlock_bh(brdev);
+	return joined;
+}
+
+static bool rtl_fe_bridge_mcast_egress_uniform(struct net_device *brdev,
+					       struct net_device *in_port,
+					       struct net_device *out_port)
+{
+	bool out_vlan = is_vlan_dev(out_port);
+	__be16 out_proto = out_vlan ? vlan_dev_vlan_proto(out_port) : 0;
+	u16 out_vid = out_vlan ? vlan_dev_vlan_id(out_port) : 0;
+	struct net_device *lower;
+	struct list_head *iter;
+
+	if (!brdev || br_vlan_enabled(brdev))
+		return false;
+	if (out_vlan && is_vlan_dev(vlan_dev_real_dev(out_port)))
+		return false;
+
+	netdev_for_each_lower_dev(brdev, lower, iter) {
+		if (lower == in_port || lower == out_port)
+			continue;
+		if (is_vlan_dev(lower) != out_vlan)
+			return false;
+		if (out_vlan &&
+		    (is_vlan_dev(vlan_dev_real_dev(lower)) ||
+		     vlan_dev_vlan_proto(lower) != out_proto ||
+		     vlan_dev_vlan_id(lower) != out_vid))
+			return false;
+	}
+	return true;
+}
+
 static int rtl_fe_bridge_frame(struct sk_buff *skb,
 			       struct rtl9617c_bridge_frame *frame)
 {
@@ -89,7 +136,9 @@ static int rtl_fe_bridge_frame(struct sk_buff *skb,
 	ether_addr_copy(frame->source, eth_hdr(skb)->h_source);
 	ether_addr_copy(frame->destination, eth_hdr(skb)->h_dest);
 	if (!is_valid_ether_addr(frame->source) ||
-	    !is_valid_ether_addr(frame->destination))
+	    (!is_valid_ether_addr(frame->destination) &&
+	     !(rtl_fe_mcast_hw_enabled() &&
+	       rtl_fe_mcast_is_data_mac(frame->destination))))
 		return -EINVAL;
 
 	if (skb_vlan_tag_present(skb)) {
@@ -315,7 +364,8 @@ static unsigned int rtl_fe_bridge_forward(void *priv, struct sk_buff *skb,
 
 static bool rtl_fe_bridge_ports(struct net *net, unsigned int index,
 				unsigned int ingress, unsigned int egress,
-				const u8 *source, const u8 *destination, u16 vid)
+				const u8 *source, const u8 *destination,
+				u16 vid, bool mcast)
 {
 	struct net_device *brdev = __dev_get_by_index(net, index);
 	struct net_device *in = __dev_get_by_index(net, ingress);
@@ -328,8 +378,9 @@ static bool rtl_fe_bridge_ports(struct net *net, unsigned int index,
 	    br_port_get_stp_state(in) != BR_STATE_FORWARDING ||
 	    br_port_get_stp_state(out) != BR_STATE_FORWARDING)
 		return false;
-	return br_fdb_find_port(brdev, source, vid) == in &&
-	       br_fdb_find_port(brdev, destination, vid) == out;
+	if (br_fdb_find_port(brdev, source, vid) != in)
+		return false;
+	return mcast || br_fdb_find_port(brdev, destination, vid) == out;
 }
 
 static bool rtl_fe_bridge_known(struct rtl_fe *fe, const struct rtl_fe_rule *data,
@@ -337,9 +388,10 @@ static bool rtl_fe_bridge_known(struct rtl_fe *fe, const struct rtl_fe_rule *dat
 {
 	struct rtl_fe_flow *flow;
 
-	list_for_each_entry(flow, &fe->flows, list) {
-		if (flow->learned && flow->input == data->input &&
-		    flow->output == data->output &&
+	list_for_each_entry(flow, &fe->bridge_flows, bridge_list) {
+		if (flow->input == data->input &&
+		    flow->mcast == data->action.mcast &&
+		    (flow->mcast || flow->output == data->output) &&
 		    flow->ethernet_protocol == packet->input.protocol &&
 		    flow->ingress_session == packet->input.session &&
 		    flow->bridge_ppp_protocol == packet->input.ppp_protocol &&
@@ -365,12 +417,16 @@ static int rtl_fe_bridge_learn(struct rtl_fe_bridge *bridge,
 	};
 	struct rtl_fe *fe = bridge->fe;
 	struct rtl_fe_flow *flow;
+	bool mcast = is_multicast_ether_addr(in->destination);
+	u16 mcast_hw_index = RTL_FE_MCAST_NONE;
+	u8 mcast_ports = 0;
 	unsigned int i;
 	int ret;
 
 	if (in->epoch != (u32)atomic_read(&bridge->epoch) ||
 	    !rtl_fe_bridge_ports(packet->net, packet->bridge, packet->ingress,
-				 out->port, in->source, in->destination, packet->vid))
+				 out->port, in->source, in->destination,
+				 packet->vid, mcast))
 		return -ENOENT;
 
 	data.input = rtl_fe_port_find(fe, __dev_get_by_index(packet->net, in->ingress));
@@ -378,6 +434,28 @@ static int rtl_fe_bridge_learn(struct rtl_fe_bridge *bridge,
 							      packet->egress));
 	if (!data.input || !data.output || data.input == data.output || in->tags > 2)
 		return -EOPNOTSUPP;
+	if (mcast) {
+		struct net_device *brdev = __dev_get_by_index(packet->net,
+							      packet->bridge);
+		struct net_device *in_port = __dev_get_by_index(packet->net,
+								packet->ingress);
+		struct net_device *out_port = __dev_get_by_index(packet->net,
+								 out->port);
+
+		if (rtl_fe_bridge_host_joined(brdev, in->destination))
+			return -EOPNOTSUPP;
+		if (!rtl_fe_mcast_lookup_hw(fe, in->destination, packet->vid,
+					    &mcast_hw_index, &mcast_ports))
+			return -ENOENT;
+		if (fe->itu_netdev && data.output->netdev == fe->itu_netdev)
+			return -EOPNOTSUPP;
+		if ((in->tags != out->tags ||
+		     memcmp(in->tag, out->tag, sizeof(in->tag))) &&
+		    !rtl_fe_bridge_mcast_egress_uniform(brdev, in_port,
+							out_port))
+			return -EOPNOTSUPP;
+		data.action.mcast = true;
+	}
 	if (rtl_fe_bridge_known(fe, &data, packet))
 		return 0;
 
@@ -388,9 +466,10 @@ static int rtl_fe_bridge_learn(struct rtl_fe_bridge *bridge,
 	};
 	data.action = (struct rtl_fe_action){
 		.bridge = 1,
-		.destination = data.output->destination,
-		.deep_queue = rtl_fe_use_deep_queue(fe, data.input,
-						    data.output),
+		.mcast = mcast,
+		.destination = mcast ? mcast_hw_index : data.output->destination,
+		.deep_queue = mcast ? 0 : rtl_fe_use_deep_queue(fe, data.input,
+								data.output),
 	};
 	data.ethernet_protocol = in->protocol;
 	data.pppoe_input = in->protocol == ETH_P_PPP_SES;
@@ -447,6 +526,8 @@ static int rtl_fe_bridge_learn(struct rtl_fe_bridge *bridge,
 
 	bridge->learned++;
 	flow->learned = true;
+	flow->mcast = mcast;
+	flow->mcast_hw_index = mcast ? mcast_hw_index : RTL_FE_MCAST_NONE;
 	flow->bridge_index = packet->bridge;
 	flow->bridge_vid = packet->vid;
 	flow->bridge_ingress = packet->ingress;
@@ -454,6 +535,7 @@ static int rtl_fe_bridge_learn(struct rtl_fe_bridge *bridge,
 	flow->bridge_tags = in->tags;
 	flow->bridge_ppp_protocol = in->ppp_protocol;
 	memcpy(flow->bridge_tag, in->tag, sizeof(flow->bridge_tag));
+	list_add_tail(&flow->bridge_list, &fe->bridge_flows);
 	return 0;
 }
 
@@ -464,16 +546,23 @@ static void rtl_fe_bridge_age(struct rtl_fe *fe, struct rtl_fe_flow *flow,
 	struct net_device *brdev;
 	unsigned long lifetime;
 	unsigned int age;
+	u16 cur_hw = RTL_FE_MCAST_NONE;
+	u8 mcast_ports = 0;
 
+	brdev = __dev_get_by_index(net, flow->bridge_index);
 	if (flush || !rtl_fe_bridge_ports(net, flow->bridge_index,
 					  flow->bridge_ingress, flow->bridge_egress,
 					  flow->ethernet_source, flow->destination,
-					  flow->bridge_vid)) {
+					  flow->bridge_vid, flow->mcast) ||
+	    (flow->mcast && (rtl_fe_bridge_host_joined(brdev, flow->destination) ||
+			     !rtl_fe_mcast_lookup_hw(fe, flow->destination,
+						     flow->bridge_vid, &cur_hw,
+						     &mcast_ports) ||
+			     cur_hw != flow->mcast_hw_index))) {
 		rtl_fe_delete(fe, flow);
 		return;
 	}
 
-	brdev = __dev_get_by_index(net, flow->bridge_index);
 	lifetime = clock_t_to_jiffies(br_get_ageing_time(brdev));
 	if (rtl_fe_age_read(fe, flow->hash_index, &age))
 		return;
@@ -482,8 +571,11 @@ static void rtl_fe_bridge_age(struct rtl_fe *fe, struct rtl_fe_flow *flow,
 		flow->lastused = jiffies;
 		br_fdb_refresh_offload(__dev_get_by_index(net, flow->bridge_ingress),
 				       flow->ethernet_source, flow->bridge_vid, true);
-		br_fdb_refresh_offload(__dev_get_by_index(net, flow->bridge_egress),
-				       flow->destination, flow->bridge_vid, false);
+		if (!flow->mcast)
+			br_fdb_refresh_offload(__dev_get_by_index(net,
+								  flow->bridge_egress),
+					       flow->destination,
+					       flow->bridge_vid, false);
 	} else if (lifetime && time_after(jiffies, flow->lastused + lifetime)) {
 		rtl_fe_delete(fe, flow);
 	}
@@ -501,9 +593,7 @@ static void rtl_fe_bridge_work(struct work_struct *work)
 
 	rtnl_lock();
 	mutex_lock(&fe->lock);
-	list_for_each_entry_safe(flow, next, &fe->flows, list) {
-		if (!flow->learned)
-			continue;
+	list_for_each_entry_safe(flow, next, &fe->bridge_flows, bridge_list) {
 		if (flow->deleting || flow->input->retired || flow->output->retired)
 			rtl_fe_delete(fe, flow);
 		else
@@ -526,8 +616,8 @@ static void rtl_fe_bridge_work(struct work_struct *work)
 		put_net(packet.net);
 	}
 
-	list_for_each_entry(flow, &fe->flows, list) {
-		if (flow->learned && flow->published) {
+	list_for_each_entry(flow, &fe->bridge_flows, bridge_list) {
+		if (flow->published) {
 			active = true;
 			break;
 		}
@@ -586,13 +676,13 @@ static int rtl_fe_bridge_switchdev(struct rtl_fe_bridge *bridge,
 		break;
 	case SWITCHDEV_PORT_OBJ_ADD:
 	case SWITCHDEV_PORT_OBJ_DEL:
-		/* The bridge enqueues MDB objects with SWITCHDEV_F_DEFER, so the
-		 * blocking chain runs them from switchdev's deferred workqueue
-		 * (process context).  Only the software MCGID / L2 port mask is
-		 * tracked: the ARB MC FIB field semantics are still UNKNOWN
-		 * (spec U5), so no hardware entry is synthesised and nothing is
-		 * claimed to the bridge.  Unsupported objects are left
-		 * unhandled (NOTIFY_DONE); this never reports a fake success. */
+		/* The bridge enqueues MDB objects with SWITCHDEV_F_DEFER, so
+		 * the blocking chain runs them from switchdev's deferred
+		 * workqueue (process context).  PORT_MDB updates MCE + ARB MC
+		 * FIB when mcast_hw=1, and HOST_MDB prevents bypassing local
+		 * bridge listeners; invalidating learned bridge flows ensures
+		 * multicast hash actions track membership changes cleanly.
+		 */
 		if (blocking)
 			rtl_fe_mcast_mdb_event(bridge->fe, event, ptr);
 		rtl_fe_bridge_invalidate(bridge, true);

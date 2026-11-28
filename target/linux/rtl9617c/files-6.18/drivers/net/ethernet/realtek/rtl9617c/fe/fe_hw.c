@@ -199,8 +199,16 @@ static void rtl_fe_action_pack(u32 *words, unsigned int word_count,
 			       napt6);
 	rtl_fe_action_set_mode(words, RTL_FE_IP_MTU_ENC, action->mtu_index,
 			       napt6);
+	if (action->dip_remap_vld) {
+		rtl_fe_action_set_mode(words, RTL_FE_DIP_REMAP_VLD, 1, napt6);
+		rtl_fe_action_set_mode(words, RTL_FE_DIP_REMAP,
+				       action->dip_remap, napt6);
+	}
 
-	if (action->gem_set) {
+	if (action->mcast) {
+		rtl_fe_action_set_mode(words, RTL_FE_MC, 1, napt6);
+		rtl_fe_action_set_mode(words, RTL_FE_DEEPQ, 0, napt6);
+	} else if (action->gem_set) {
 		rtl_fe_action_set_mode(words, RTL_FE_MCGID, action->gem_index,
 				       napt6);
 		rtl_fe_action_set_mode(words, RTL_FE_MC, 1, napt6);
@@ -443,6 +451,14 @@ void rtl_fe_classify_hash(u32 words[RTL_FE_CLASSIFIER_WORDS],
 			  unsigned int profile, unsigned int source)
 {
 	memset(words, 0, RTL_FE_CLASSIFIER_WORDS * sizeof(*words));
+	/*
+	 * ip_ecn_vld (bit 107) and ip_ecn_en (bit 108) from cli-drv.ko
+	 * __cli_aal_l3_cls_fib_0_entry_ip_ecn_{vld,en}_set: pass IP ECN
+	 * capability to L3TE (CE marking remains gated by L3TE WRED_ECN_EN +
+	 * MARK_ECN_EN and L2FE ARB IP_ECN_EN).
+	 */
+	rtl_fe_bits_set(words, 107, 1, 1);
+	rtl_fe_bits_set(words, 108, 1, 1);
 	rtl_fe_bits_set(words, 203, 1, 1);
 	rtl_fe_bits_set(words, 204, 4, profile);
 	rtl_fe_bits_set(words, 186, 1, 1);
@@ -686,7 +702,7 @@ int rtl_fe_cam_protocol_put(struct rtl_fe *fe, struct rtl_fe_cam_protocol *cam)
 #define RTL_FE_CLS_KEY_TYPE_WIDTH		3
 #define RTL_FE_CLS_KEY_VALID_BIT		347
 #define RTL_FE_CLS_KEY_VALID_WIDTH		4
-#define RTL_FE_CLS_RSLT_DEFAULT			0
+#define RTL_FE_CLS_RSLT_TUNNEL			3
 
 #define RTL_FE_CLS_MDATA_PKT_TYPE_MASK		0xefffU
 #define RTL_FE_CLS_MDATA_PKT_TYPE_SHIFT		16
@@ -736,10 +752,20 @@ int rtl_fe_cam_protocol_put(struct rtl_fe *fe, struct rtl_fe_cam_protocol *cam)
 #define RTL_FE_CLS_K7_ODD_MDATA_ID1_BIT		215
 #define RTL_FE_CLS_K7_ODD_MDATA_BIT		231
 
+#define RTL_FE_CLS_FIB_MDATA_W_VLD0_BIT		45
+#define RTL_FE_CLS_FIB_MDATA_W_VLD0_WIDTH	4
+#define RTL_FE_CLS_FIB_MDATA_W0_BIT		49
+#define RTL_FE_CLS_FIB_MDATA_W0_WIDTH		16
+#define RTL_FE_CLS_FIB_MDATA_W_VLD0_DUAL	0x8U
+#define RTL_FE_CLS_FIB_MDATA_W0_DUAL		0x2000U
 #define RTL_FE_CLS_FIB_IGR_IF_VLD_BIT		189
 #define RTL_FE_CLS_FIB_IGR_IF_BIT		190
 #define RTL_FE_CLS_FIB_IGR_IF_WIDTH		6
-#define RTL_FE_CLS_FIB_LSPID_VLD_BIT		208
+#define RTL_FE_CLS_FIB_T2_CTRL_VLD_BIT		203
+#define RTL_FE_CLS_FIB_T2_CTRL_BIT		204
+#define RTL_FE_CLS_FIB_T2_CTRL_WIDTH		4
+#define RTL_FE_CLS_FIB_MODE_SHIFT		23
+#define RTL_FE_CLS_FIB_MODE_MDATA		1U
 
 static u32 rtl_fe_be32_read(const u8 bytes[4])
 {
@@ -800,7 +826,7 @@ static void rtl_fe_cls_pack_header(u32 even[RTL_FE_CLS_KEY_WORDS],
 	rtl_fe_bits_set(even, RTL_FE_CLS_KEY_PRI_BIT,
 			RTL_FE_CLS_KEY_PRI_WIDTH, RTL_FE_CLS_PRI_TUNNEL);
 	rtl_fe_bits_set(even, RTL_FE_CLS_KEY_RSLT_BIT,
-			RTL_FE_CLS_KEY_RSLT_WIDTH, RTL_FE_CLS_RSLT_DEFAULT);
+			RTL_FE_CLS_KEY_RSLT_WIDTH, RTL_FE_CLS_RSLT_TUNNEL);
 	rtl_fe_bits_set(even, RTL_FE_CLS_KEY_TYPE_BIT,
 			RTL_FE_CLS_KEY_TYPE_WIDTH, key_type);
 	rtl_fe_bits_set(even, RTL_FE_CLS_KEY_VALID_BIT,
@@ -918,13 +944,27 @@ void rtl_fe_cls_pack_dual_fib(u32 fib0[RTL_FE_CLASSIFIER_WORDS],
 			      u32 fib1[RTL_FE_CLASSIFIER_WORDS],
 			      unsigned int igr_l3_if_idx)
 {
-	rtl_fe_classify_hash(fib0, 0, 0);
-	/* Keep incoming lspid intact while binding the dual-header IGR EIF. */
-	rtl_fe_bits_set(fib0, RTL_FE_CLS_FIB_LSPID_VLD_BIT, 1, 0);
+	/*
+	 * Match OEM ACL 0x14 (fc_8277c + ca-ne __l3_cls_fib_entry_update
+	 * fib_mode=1): leave dpid/lspid/ecn unset so the default rslt_type=0
+	 * FIB still provides CPU fallback and lspid, while rslt_type=3 merges
+	 * mdata_w_0=0x2000 (nibble mask 0x8), igr_l3_if_idx, and t2_ctrl=0.
+	 */
+	memset(fib0, 0, RTL_FE_CLASSIFIER_WORDS * sizeof(*fib0));
+	rtl_fe_bits_set(fib0, RTL_FE_CLS_FIB_MDATA_W_VLD0_BIT,
+			RTL_FE_CLS_FIB_MDATA_W_VLD0_WIDTH,
+			RTL_FE_CLS_FIB_MDATA_W_VLD0_DUAL);
+	rtl_fe_bits_set(fib0, RTL_FE_CLS_FIB_MDATA_W0_BIT,
+			RTL_FE_CLS_FIB_MDATA_W0_WIDTH,
+			RTL_FE_CLS_FIB_MDATA_W0_DUAL);
 	rtl_fe_bits_set(fib0, RTL_FE_CLS_FIB_IGR_IF_VLD_BIT, 1, 1);
 	rtl_fe_bits_set(fib0, RTL_FE_CLS_FIB_IGR_IF_BIT,
 			RTL_FE_CLS_FIB_IGR_IF_WIDTH, igr_l3_if_idx);
+	rtl_fe_bits_set(fib0, RTL_FE_CLS_FIB_T2_CTRL_VLD_BIT, 1, 1);
+	rtl_fe_bits_set(fib0, RTL_FE_CLS_FIB_T2_CTRL_BIT,
+			RTL_FE_CLS_FIB_T2_CTRL_WIDTH, 0);
 	memset(fib1, 0, RTL_FE_CLASSIFIER_WORDS * sizeof(*fib1));
+	fib1[6] = RTL_FE_CLS_FIB_MODE_MDATA << RTL_FE_CLS_FIB_MODE_SHIFT;
 }
 
 static int rtl_fe_cls_write_pair(struct rtl_fe *fe, unsigned int key_index,

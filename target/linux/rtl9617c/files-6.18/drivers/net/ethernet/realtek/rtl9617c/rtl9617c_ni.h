@@ -8,6 +8,8 @@
 #define RTL9617C_NI_MIB_RX		26
 #define RTL9617C_NI_MIB_TX		26
 #define RTL9617C_NI_MIB_COUNTERS	(RTL9617C_NI_MIB_RX + RTL9617C_NI_MIB_TX)
+#define RTL9617C_NI_TX_OFFLOAD_FEATURES	(NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM | \
+					 NETIF_F_SG | NETIF_F_TSO | NETIF_F_TSO6)
 
 struct rtl_itu_paths;
 
@@ -17,6 +19,7 @@ struct rtl9617c_ni_endpoint {
 			struct napi_struct *napi, struct sk_buff *skb,
 			unsigned int source);
 	void (*wake)(struct rtl9617c_ni_endpoint *endpoint);
+	void (*update_features)(struct rtl9617c_ni_endpoint *endpoint);
 };
 
 struct rtl9617c_ni_frame {
@@ -27,6 +30,24 @@ struct rtl9617c_ni_frame {
 	bool raw_payload;
 	bool oam;
 };
+
+/*
+ * Optional out-of-tree TX offload hook (e.g. PE coprocessor scheduler).
+ * Scalar signature avoids struct-layout coupling across out-of-tree modules.
+ * Return 0 when the hook consumes skb and takes ownership of hardware TX;
+ * return negative to pass through to native NI DMA TX unchanged.
+ */
+typedef int (*rtl9617c_ni_tx_hook_t)(struct net_device *owner,
+				     struct sk_buff *skb,
+				     u32 header_high, u32 header_low,
+				     const u8 *prefix,
+				     unsigned int prefix_len,
+				     bool oam);
+typedef void (*rtl9617c_ni_dma_reset_cb_t)(void);
+
+int rtl9617c_ni_register_tx_hook(rtl9617c_ni_tx_hook_t fn,
+				 rtl9617c_ni_dma_reset_cb_t on_dma_reset);
+void rtl9617c_ni_unregister_tx_hook(rtl9617c_ni_tx_hook_t fn);
 
 int rtl9617c_ni_open(struct device *dev);
 void rtl9617c_ni_close(struct device *dev, struct net_device *owner);
@@ -58,5 +79,7 @@ int rtl9617c_ni_fe_detach(struct device *dev);
 ssize_t rtl9617c_ni_fe_state(struct device *dev, char *buffer);
 int rtl9617c_ni_itu_paths(struct device *dev, struct net_device *netdev,
 			  const struct rtl_itu_paths *paths);
+netdev_features_t rtl9617c_ni_tx_offload_features(void);
+unsigned int rtl9617c_ni_tx_gso_max(void);
 
 #endif
