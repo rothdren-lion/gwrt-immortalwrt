@@ -1,3 +1,0 @@
-config pon 'pon'
-	option enabled '1'
-	option llid_count '1'
