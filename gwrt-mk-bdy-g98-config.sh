@@ -90,7 +90,8 @@ CONFIG_PACKAGE_kmod-macvlan=y
 CONFIG_PACKAGE_kmod-dummy=y
 CONFIG_PACKAGE_ucode-mod-socket=y
 CONFIG_PACKAGE_ucode-mod-digest=y
-CONFIG_PACKAGE_gwrt-ssr-plus-luci=y
+# 与 luci-app-ssr-plus 撞文件，二选一（此预设用 feeds 正式包）
+# CONFIG_PACKAGE_gwrt-ssr-plus-luci=y
 CONFIG_PACKAGE_luci-app-ssr-plus=y
 CONFIG_PACKAGE_luci-i18n-ssr-plus-zh-cn=y
 CONFIG_PACKAGE_xray-core=y
