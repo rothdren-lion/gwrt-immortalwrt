@@ -98,6 +98,9 @@
     "/usr/libexec/gwrt-accelinfo": [
      "exec"
     ],
+    "/usr/libexec/route-tool-storage-info": [
+     "exec"
+    ],
     "/usr/libexec/gwrt-ppe-stats": [
      "exec"
     ],

@@ -90,7 +90,7 @@
 </style>
 
 <div class="rt-wrap">
-  <h2 name="content"><%:Route Tool + Storage Health 存储诊断分区工具%><span class="rt-page-version" onclick="versionClickUpdate()" title="点击检查 GitHub 更新；有更新时再点一次在线更新">v0.3.34</span><span id="ota-badge" class="rt-ota-badge" onclick="versionClickUpdate()" title="点击在线更新插件">可更新</span></h2>
+  <h2 name="content"><%:Route Tool + Storage Health 存储诊断分区工具%><span class="rt-page-version" onclick="versionClickUpdate()" title="点击检查 GitHub 更新；有更新时再点一次在线更新">v0.3.35</span><span id="ota-badge" class="rt-ota-badge" onclick="versionClickUpdate()" title="点击在线更新插件">可更新</span></h2>
   <div class="rt-warn">
     <b>危险提示：</b>写入分区操作很危险，请确定知道自己在玩什么！对应位置写错文件必砖！
   </div>
@@ -116,7 +116,7 @@
   <div class="rt-health-grid" id="dashboard">
     <div class="rt-card"><div class="rt-title">🖥 SoC</div><div class="rt-val" id="soc-val">--</div><div class="rt-meta rt-kv" id="soc-kv"></div></div>
     <div class="rt-card"><div class="rt-title">🌐 网口</div><div class="rt-val" id="port-val">--</div><div class="rt-meta rt-kv" id="port-kv"></div></div>
-    <div class="rt-card"><div class="rt-title">💽 容量</div><div class="rt-cap-flex"><div class="rt-cap-ring" id="storage-ring"><b id="storage-ring-pct">--</b></div><div><div class="rt-val" id="storage-val">--</div><div class="rt-meta" id="storage-sub">等待容量信息</div></div></div><div class="rt-meta rt-kv" id="storage-kv"></div></div>
+    <div class="rt-card"><div class="rt-meta" id="storage-chip" style="display:none;margin-bottom:4px"></div><div class="rt-title">💽 容量</div><div class="rt-cap-flex"><div class="rt-cap-ring" id="storage-ring"><b id="storage-ring-pct">--</b></div><div><div class="rt-val" id="storage-val">--</div><div class="rt-meta" id="storage-sub">等待容量信息</div></div></div><div class="rt-meta rt-kv" id="storage-kv"></div></div>
     <div class="rt-card" id="emmc-card"><div class="rt-title">🔲 eMMC 寿命 <span class="rt-badge" id="emmc-detect">检测中</span></div><div class="rt-life-row"><span class="rt-life-label">SLC</span><div class="rt-life-bar" id="eol-a-bar"><i></i><span id="eol-a-raw">--</span></div><span class="rt-life-analysis" id="eol-a-text">读取不到</span></div><div class="rt-life-row"><span class="rt-life-label">MLC</span><div class="rt-life-bar" id="eol-b-bar"><i></i><span id="eol-b-raw">--</span></div><span class="rt-life-analysis" id="eol-b-text">读取不到</span></div><div class="rt-meta rt-kv" id="emmc-kv"></div></div>
     <div class="rt-card" id="emmc-speed-card"><div class="rt-title">🚀 eMMC 读写速度</div><div class="rt-val" id="speed-val">--</div><div class="rt-meta" id="speed-sub">等待测速</div><div class="rt-meta rt-kv" id="speed-kv"></div></div>
     <div class="rt-card"><div class="rt-title">🧠 内存检测 <span class="rt-badge" style="background:#fff3cd;border-color:#ffc107;color:#856404">下拉选择模式</span></div><div class="rt-val" id="mem-val" style="font-size:20px">--</div><div class="rt-meta" id="mem-sub">下拉选模式，点"内存测试"按钮执行；选"完整性"首次运行会自动从 GitHub 下载 memtester。</div></div>
@@ -215,6 +215,30 @@ function capRow(name, total, free, used, pct, dev, mp) {
     (mp ? ' <span class="rt-small"><code>' + esc(mp) + '</code></span>' : '') +
     (dev ? ' <span class="rt-small">' + esc(dev) + '</span>' : '') +
     '</div>';
+}
+
+function updateChipFromKV(d) {
+  var el = qs('#storage-chip');
+  if (!el) return;
+  if (!hasAny(d, ['CHIP_TYPE'])) {
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return;
+  }
+  var type = d.CHIP_TYPE_CN || d.CHIP_TYPE || '';
+  var brand = [d.CHIP_BRAND_CN, d.CHIP_BRAND].filter(Boolean).join(' ');
+  var model = d.CHIP_MODEL || '';
+  var media = (brand + (brand && model ? ' ' : '') + model).trim();
+  var extra = d.CHIP_LIFE_TEXT || d.CHIP_BAD_TEXT || '';
+  if (!type || (!media && !extra)) {
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return;
+  }
+  var html = esc(type) + (media ? ' · ' + esc(media) : '') + (extra ? ' · ' + esc(extra) : '');
+  if (d.CHIP_SIZE) html += ' <span class="rt-small">' + esc(d.CHIP_SIZE) + '</span>';
+  el.innerHTML = html;
+  el.style.display = '';
 }
 
 function updateCapacity(d) {
@@ -988,6 +1012,7 @@ function updateDashFromKV(d){
   // Split dashboard updates so same-named KV fields from separate health actions cannot trample unrelated cards.
   if (hasAny(d, ['CAPACITY_DONE', 'STORAGE_TYPE', 'OVERLAY_TOTAL_MB', 'EMMC_DATA_TOTAL_MB'])) updateCapacity(d);
   updateSocFromKV(d);
+  updateChipFromKV(d);
   updateEmmcFromKV(d);
   updateSpeedFromKV(d);
   updateMemoryFromKV(d);

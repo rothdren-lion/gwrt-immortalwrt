@@ -17,7 +17,7 @@ function index()
     entry({"admin", "system", "route_tool", "unknown_emmc_report"}, call("unknown_emmc_report"), nil).leaf = true
 end
 
-local CURRENT_VERSION = "0.3.34-1"
+local CURRENT_VERSION = "0.3.35-1"
 local UPDATE_RELEASE_API_URL = "https://api.github.com/repos/rothdren-lion/luci-app-route-tool/releases/latest"
 
 local function allowed_part(p)
@@ -428,6 +428,8 @@ function health()
         luci.http.write(run_storage("storage_health.sh", "", "2>/dev/null"))
         luci.http.write("\n")
         luci.http.write(run_storage("storage_nand.sh", "", "2>/dev/null"))
+        luci.http.write("\n")
+        luci.http.write(run_storage("storage_chip.sh", "", "2>/dev/null"))
         luci.http.write("\n")
         luci.http.write(run_storage("storage_detail.sh", "", "2>/dev/null"))
         luci.http.write("\n")

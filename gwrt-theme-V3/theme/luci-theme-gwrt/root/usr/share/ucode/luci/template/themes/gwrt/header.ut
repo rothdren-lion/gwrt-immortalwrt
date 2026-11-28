@@ -80,7 +80,7 @@
 	</script>
 
 	<!-- Main Stylesheet -->
-	<link rel="stylesheet" href="/luci-static/gwrt/css/cascade.css?v=20261128r134">
+	<link rel="stylesheet" href="/luci-static/gwrt/css/cascade.css?v=20261128r135">
 
 	<!-- Stylesheets -->
 	{% if (node?.css): %}
@@ -91,7 +91,7 @@
 		{{ css }}
 	</style>
 	{% endif -%}
-		<script src="/luci-static/gwrt/resources/menu-i18n.js?v=20261128r134"></script>
+		<script src="/luci-static/gwrt/resources/menu-i18n.js?v=20261128r135"></script>
 		<script src="{{ dispatcher.build_url('admin/translations', dispatcher.lang) }}?v={{ version.luciversion }}"></script>
 	<script src="{{ resource }}/cbi.js?v={{ version.luciversion }}-t{{ pkgs_update_time }}"></script>
 	<script src="{{ resource }}/luci.js?v={{ version.luciversion }}-t{{ pkgs_update_time }}"></script>

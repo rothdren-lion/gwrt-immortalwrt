@@ -90,6 +90,11 @@
 
 		<div class="stat-card gwrt-menu-card-link" data-gwrt="memstore" data-gwrt-menu-target="store" aria-label="运行存储，按回车打开存储菜单" tabindex="0">
 			<div class="stat-card-label" data-i18n="运行存储">运行存储</div>
+			<div class="stat-row gwrt-chip-row" id="gwrtChipRow" hidden>
+				<span class="stat-row-label">颗粒</span>
+				<span class="stat-chip-val" id="gwrtChipText">-</span>
+				<span class="stat-chip-sub" id="gwrtChipSub"></span>
+			</div>
 			<div class="stat-row"><span class="stat-row-label">MEM</span><div class="mini-bar"><div class="mini-bar-fill" id="gwrtMemBar" style="width:0;background:var(--accent-primary)"></div></div><span class="stat-row-val" id="gwrtMemVal">-</span></div>
 			<div class="stat-row"><span class="stat-row-label">SWAP</span><div class="mini-bar"><div class="mini-bar-fill" id="gwrtSwapBar" style="width:0;background:var(--accent-warning)"></div></div><span class="stat-row-val" id="gwrtSwapVal">-</span></div>
 			<div class="stat-row"><span class="stat-row-label">ROOTFS</span><div class="mini-bar"><div class="mini-bar-fill" id="gwrtRootfsBar" style="width:0;background:var(--accent-success)"></div></div><span class="stat-row-val" id="gwrtRootfsVal">-</span></div>
@@ -3852,6 +3857,31 @@ function gwrtCpuStatFallback(){
   }).catch(function(){return null;});
 }
 
+var gwrtChipAt=0;
+function loadStorageChip(){
+  var now=Date.now();
+  if(gwrtChipAt&&now-gwrtChipAt<300000)return;
+  gwrtChipAt=now;
+  rpcD('file','exec',{command:'/usr/libexec/route-tool-storage-info'}).then(function(r){
+    if(!r||r.__rpcError!==undefined||!r.stdout)return;
+    var d;
+    try{d=JSON.parse(String(r.stdout).trim());}catch(e){return;}
+    var row=document.getElementById('gwrtChipRow');
+    if(!d||!d.type){if(row)row.hidden=true;return;}
+    var txt=document.getElementById('gwrtChipText');
+    var sub=document.getElementById('gwrtChipSub');
+    if(!row||!txt||!sub)return;
+    var brand=d.brand_cn||d.brand||'';
+    txt.textContent=(d.type_cn||d.type||'')+(brand?' ('+brand+')':'');
+    var extra='';
+    if(d.type==='emmc'||d.type==='ufs')extra=d.life_text||'';
+    else extra=d.bad_text||(d.bad_blocks!=null?'坏块 '+d.bad_blocks:'');
+    sub.textContent=extra;
+    row.title=d.model||'';
+    row.hidden=false;
+  }).catch(function(){});
+}
+
 function refresh(){
   if(refreshInFlight)return refreshInFlight;
   var portsPromise=refreshPorts();
@@ -4111,6 +4141,7 @@ function refresh(){
       var rbar=document.getElementById("gwrtRootfsBar");if(rbar)rbar.style.width=rfp+"%";
       S("gwrtRootfsVal","已用 "+F(rfsUsed)+" / "+F(rfsTotal));
     }
+    loadStorageChip();
 
     /* WAN status and real-time speed */
     var wi=ifs.find(function(i){return i.interface==='wan';});

@@ -1,0 +1,354 @@
+#!/bin/sh
+# Storage chip identification for Route Tool / GWRT dashboard.
+# BusyBox/POSIX sh only: reads /sys, /proc and dmesg.
+# Always prints one line of valid JSON and exits 0.
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+LC_ALL=C
+export LC_ALL
+
+trim() {
+    printf '%s' "$1" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+
+json_escape() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+hex_dec() {
+    h=$(printf '%s' "$1" | tr 'A-F' 'a-f')
+    h=${h#0x}
+    case "$h" in
+        ''|*[!0-9a-f]*) printf '0' ;;
+        *) printf '%d' "0x$h" 2>/dev/null || printf '0' ;;
+    esac
+}
+
+# eMMC/UFS life_time estimator: 0x01-0x0A => 10%-100%, 0x0B => vendor reports >100% (90% used).
+life_pct() {
+    v=$(hex_dec "$1")
+    case "$v" in ''|*[!0-9]*) return 0 ;; esac
+    if [ "$v" -ge 1 ] && [ "$v" -le 10 ]; then
+        printf '%d\n' $((v * 10))
+    elif [ "$v" -eq 11 ]; then
+        printf '90\n'
+    fi
+}
+
+eol_text() {
+    v=$(hex_dec "$1")
+    case "$v" in
+        1) printf '健康' ;;
+        2) printf '警告' ;;
+        3) printf '紧急' ;;
+    esac
+}
+
+# 512-byte sectors -> MB/GB text.
+size_from_sectors() {
+    sec="$1"
+    case "$sec" in ''|*[!0-9]*) return 0 ;; esac
+    mb=$((sec / 2048))
+    [ "$mb" -gt 0 ] || return 0
+    if [ "$mb" -ge 1024 ]; then
+        gb=$(awk -v m="$mb" 'BEGIN { v = m / 1024; if (v == int(v)) printf "%d", v; else printf "%.1f", v }')
+        printf '%sGB\n' "$gb"
+    else
+        printf '%sMB\n' "$mb"
+    fi
+}
+
+spi_size() {
+    n=$(printf '%s' "$1" | sed -n 's/.*(\([0-9][0-9]*\) *[Mm][Ii][Bb]).*/\1/p')
+    if [ -z "$n" ]; then
+        n=$(printf '%s' "$1" | sed -n 's/.*(\([0-9][0-9]*\) *[Kk][Ii][Bb]).*/\1/p')
+        if [ -z "$n" ]; then
+            n=$(printf '%s' "$1" | sed -n 's/.*(\([0-9][0-9]*\) *[Kk]bytes).*/\1/p')
+        fi
+        [ -n "$n" ] && n=$((n / 1024))
+    fi
+    [ -n "$n" ] && [ "$n" -gt 0 ] && printf '%sMB\n' "$n"
+}
+
+nand_brand() {
+    s=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
+    case "$s" in
+        *dosilicon*|*ds35*) BRAND=Dosilicon; BRAND_CN=东芯 ;;
+        *winbond*|*w25n*) BRAND=Winbond; BRAND_CN=华邦 ;;
+        *gigadevice*|*gd5f*) BRAND=GigaDevice; BRAND_CN=兆易创新 ;;
+        *macronix*|*mx35*) BRAND=Macronix; BRAND_CN=旺宏 ;;
+        *micron*|*mt29f*) BRAND=Micron; BRAND_CN=美光 ;;
+        *toshiba*|*kioxia*|*tc58*) BRAND=Kioxia; BRAND_CN=铠侠 ;;
+        *esmt*|*f50*) BRAND=ESMT; BRAND_CN=晶豪 ;;
+        *xtx*|*xt25f*) BRAND=XTX; BRAND_CN=芯天下 ;;
+        *etron*|*em78*) BRAND=Etron; BRAND_CN=钰创 ;;
+        *fmsh*) BRAND=FMSH; BRAND_CN=复旦微 ;;
+        *foresee*) BRAND=Foresee; BRAND_CN=江波龙 ;;
+        *heyangtek*|*hyf1*) BRAND=HeYangTek ;;
+        *paragon*|*pn26*) BRAND=Paragon ;;
+        *ato*) BRAND=ATO; BRAND_CN=爱特 ;;
+    esac
+}
+
+nor_brand() {
+    s=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
+    case "$s" in
+        *w25q*) BRAND=Winbond; BRAND_CN=华邦 ;;
+        *mx25*) BRAND=Macronix; BRAND_CN=旺宏 ;;
+        *gd25*) BRAND=GigaDevice; BRAND_CN=兆易创新 ;;
+        *s25fl*|*s25hl*|*s25hs*|*s28*) BRAND=Infineon; BRAND_CN=英飞凌 ;;
+        *n25q*|*mt25*) BRAND=Micron; BRAND_CN=美光 ;;
+        *is25*) BRAND=ISSI; BRAND_CN=芯成 ;;
+        *xt25*) BRAND=XTX; BRAND_CN=芯天下 ;;
+        *en25*) BRAND=EON ;;
+        *zb25*) BRAND=Zbit; BRAND_CN=恒烁 ;;
+        *ds25*) BRAND=Dosilicon; BRAND_CN=东芯 ;;
+        *pn25*) BRAND=Paragon ;;
+    esac
+}
+
+emmc_brand() {
+    id="$1"
+    case "$id" in
+        15) BRAND=Samsung; BRAND_CN=三星 ;;
+        45) BRAND=SanDisk; BRAND_CN=闪迪 ;;
+        90) BRAND="SK hynix"; BRAND_CN=海力士 ;;
+        11|1d) BRAND=Kioxia; BRAND_CN=铠侠 ;;
+        13) BRAND=Micron; BRAND_CN=美光 ;;
+        9f) BRAND=Kingston; BRAND_CN=金士顿 ;;
+        *) BRAND="0x$id" ;;
+    esac
+}
+
+ufs_brand() {
+    s=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
+    case "$s" in
+        *samsung*) BRAND=Samsung; BRAND_CN=三星 ;;
+        *hynix*) BRAND="SK hynix"; BRAND_CN=海力士 ;;
+        *micron*) BRAND=Micron; BRAND_CN=美光 ;;
+        *toshiba*|*kioxia*) BRAND=Kioxia; BRAND_CN=铠侠 ;;
+        *sandisk*|*western*digital*) BRAND=SanDisk; BRAND_CN=闪迪 ;;
+        *ymtc*) BRAND=YMTC; BRAND_CN=长江存储 ;;
+        *longsys*) BRAND=Longsys; BRAND_CN=江波龙 ;;
+        *hiksemi*) BRAND=HIKSEMI; BRAND_CN=海康存储 ;;
+        *kingston*) BRAND=Kingston; BRAND_CN=金士顿 ;;
+    esac
+}
+
+TYPE=""
+TYPE_CN=""
+BRAND=""
+BRAND_CN=""
+MODEL=""
+LIFE_PCT=""
+LIFE_TEXT=""
+BAD_BLOCKS=""
+BAD_TEXT=""
+SIZE=""
+
+DMESG=$(dmesg 2>/dev/null)
+
+# 1) eMMC (mmcblk with an MMC device). Skip SD cards when the kernel reports type=SD.
+for dev in /sys/block/mmcblk*; do
+    [ -d "$dev/device" ] || continue
+    if [ -r "$dev/device/type" ]; then
+        [ "$(cat "$dev/device/type" 2>/dev/null)" = "MMC" ] || continue
+    fi
+    TYPE=emmc
+    TYPE_CN=eMMC
+
+    mid_raw=$(cat "$dev/device/manfid" 2>/dev/null)
+    mid=$(printf '%s' "$mid_raw" | tr 'A-F' 'a-f')
+    mid=${mid#0x}
+    while [ "${mid#0}" != "$mid" ]; do mid=${mid#0}; done
+    [ -n "$mid" ] || mid=0
+    emmc_brand "$mid"
+
+    MODEL=$(trim "$(cat "$dev/device/name" 2>/dev/null)")
+    MODEL=$(printf '%s' "$MODEL" | tr '_' ' ')
+
+    lt=$(cat "$dev/device/life_time" 2>/dev/null)
+    if [ -n "$lt" ]; then
+        LIFE_PCT=$(life_pct "$(printf '%s' "$lt" | awk '{print $1}')")
+        if [ -n "$LIFE_PCT" ]; then
+            LIFE_TEXT="已用 ${LIFE_PCT}%"
+            eol=$(cat "$dev/device/pre_eol_info" 2>/dev/null)
+            eol_label=$(eol_text "$eol")
+            [ -n "$eol_label" ] && LIFE_TEXT="${LIFE_TEXT} · ${eol_label}"
+        fi
+    fi
+
+    sec=$(cat "$dev/size" 2>/dev/null)
+    SIZE=$(size_from_sectors "$sec")
+    break
+done
+
+# 2) UFS (ufshcd platform device or SCSI device under a UFS host).
+if [ -z "$TYPE" ]; then
+    UFS_FOUND=""
+    UFS_DEV=""
+    for p in /sys/devices/platform/*ufshc* /sys/devices/platform/*/*ufshc* /sys/devices/platform/*/*/*ufshc*; do
+        [ -d "$p" ] && { UFS_FOUND=1; break; }
+    done
+    for d in /sys/class/scsi_device/*/device; do
+        [ -d "$d" ] || continue
+        resolved=$(readlink -f "$d" 2>/dev/null)
+        case "$resolved" in
+            *ufshc*|*ufs*) UFS_DEV="$d"; UFS_FOUND=1; break ;;
+        esac
+        case "$(cat "$d/vendor" "$d/model" 2>/dev/null | tr 'A-Z' 'a-z')" in
+            *ufs*) UFS_DEV="$d"; UFS_FOUND=1; break ;;
+        esac
+    done
+    if [ -n "$UFS_FOUND" ]; then
+        TYPE=ufs
+        TYPE_CN=UFS
+        [ -n "$UFS_DEV" ] || UFS_DEV=$(for d in /sys/class/scsi_device/*/device; do
+            resolved=$(readlink -f "$d" 2>/dev/null)
+            case "$resolved" in *ufshc*|*ufs*) echo "$d"; break ;; esac
+        done)
+        VENDOR=$(trim "$(cat "$UFS_DEV/vendor" 2>/dev/null)")
+        MODEL=$(trim "$(cat "$UFS_DEV/model" 2>/dev/null)")
+        ufs_brand "$VENDOR $MODEL"
+
+        UFS_HEALTH=""
+        for f in "$UFS_DEV"/health_descriptor/life_time_estimation_a \
+                 /sys/devices/platform/*ufshc*/health_descriptor/life_time_estimation_a \
+                 /sys/devices/platform/*/*ufshc*/health_descriptor/life_time_estimation_a \
+                 /sys/devices/platform/*/*/*ufshc*/health_descriptor/life_time_estimation_a; do
+            [ -r "$f" ] && { UFS_HEALTH="$f"; break; }
+        done
+        if [ -z "$UFS_HEALTH" ]; then
+            for f in "$UFS_DEV"/health_descriptor/life_time \
+                     /sys/devices/platform/*ufshc*/health_descriptor/life_time \
+                     /sys/devices/platform/*/*ufshc*/health_descriptor/life_time; do
+                [ -r "$f" ] && { UFS_HEALTH="$f"; break; }
+            done
+        fi
+        if [ -n "$UFS_HEALTH" ]; then
+            LIFE_PCT=$(life_pct "$(awk '{print $1}' "$UFS_HEALTH" 2>/dev/null)")
+            if [ -n "$LIFE_PCT" ]; then
+                LIFE_TEXT="已用 ${LIFE_PCT}%"
+                eol=$(cat "${UFS_HEALTH%/*}/pre_eol_info" 2>/dev/null)
+                eol_label=$(eol_text "$eol")
+                [ -n "$eol_label" ] && LIFE_TEXT="${LIFE_TEXT} · ${eol_label}"
+            fi
+        fi
+        for b in "$UFS_DEV"/block/*/size; do
+            [ -r "$b" ] || continue
+            SIZE=$(size_from_sectors "$(cat "$b" 2>/dev/null)")
+            break
+        done
+    fi
+fi
+
+# 3) SPI NAND.
+if [ -z "$TYPE" ]; then
+    if printf '%s\n' "$DMESG" | grep -qi 'spi-nand'; then
+        TYPE=spinand
+        TYPE_CN="SPI NAND"
+        SPI_LINE=$(printf '%s\n' "$DMESG" | grep -i 'spi-nand' | grep -vi 'fail\|error\|probe of' | grep -i '(.*)' | head -n 1)
+        [ -n "$SPI_LINE" ] || SPI_LINE=$(printf '%s\n' "$DMESG" | grep -i 'spi-nand' | grep -vi 'fail\|error' | head -n 1)
+        case "$SPI_LINE" in
+            *"SPI NAND device:"*)
+                MODEL=$(printf '%s' "$SPI_LINE" | sed -n 's/.*SPI NAND device:[^(]*(\([^)]*\)).*/\1/p')
+                ;;
+        esac
+        if [ -z "$MODEL" ]; then
+            MODEL=$(printf '%s' "$SPI_LINE" | sed -n 's/.*spi-nand[^:]*:[[:space:]]*//p' | sed 's/[[:space:]]*(.*$//; s/[[:space:]]*$//')
+        fi
+        case "$MODEL" in
+            *probe*|*failed*|*error*|*"SPI NAND device"*) MODEL="" ;;
+        esac
+        nand_brand "$MODEL"
+        [ -n "$BRAND" ] || BRAND="$MODEL"
+        SIZE=$(spi_size "$SPI_LINE")
+    elif ls /sys/class/mtd/mtd* >/dev/null 2>&1 && cat /sys/class/mtd/mtd*/name 2>/dev/null | grep -qi 'spi[-_]*nand'; then
+        TYPE=spinand
+        TYPE_CN="SPI NAND"
+    fi
+fi
+
+# 4) Raw/parallel NAND (MTD, not SPI NAND).
+if [ -z "$TYPE" ]; then
+    if [ -r /proc/mtd ] && grep -q '^mtd[0-9]' /proc/mtd; then
+        NAND_LINE=$(printf '%s\n' "$DMESG" | grep -i 'nand:' | grep -vi 'spi[-_]nand' | head -n 1)
+        NAND_MTD=$(cat /sys/class/mtd/mtd*/name 2>/dev/null | grep -vi 'spi[-_]*nand' | grep -i 'nand' | head -n 1)
+        if [ -n "$NAND_LINE" ] || [ -n "$NAND_MTD" ]; then
+            TYPE=nand
+            TYPE_CN=NAND
+            NAND_NAME_LINE=$(printf '%s\n' "$DMESG" | grep -i 'nand:' | grep -vi 'spi[-_]nand' | grep -vi 'device found\|MiB\|KiB\|ECC\|bad block\|timing\|ONFI\|manufacturer\|chip id\|ID:' | head -n 1)
+            if [ -n "$NAND_NAME_LINE" ]; then
+                MODEL=$(printf '%s' "$NAND_NAME_LINE" | sed -n 's/.*nand:[[:space:]]*//p' | sed 's/[[:space:]]*(.*$//; s/,.*$//; s/[[:space:]]*$//')
+                nand_brand "$MODEL"
+            fi
+        fi
+    fi
+fi
+
+# 5) SPI NOR.
+if [ -z "$TYPE" ]; then
+    if printf '%s\n' "$DMESG" | grep -qi 'spi-nor'; then
+        NOR_LINE=$(printf '%s\n' "$DMESG" | grep -i 'spi-nor' | grep -vi 'fail\|error\|unrecognized' | head -n 1)
+        if [ -n "$NOR_LINE" ]; then
+            TYPE=spinor
+            TYPE_CN="SPI NOR"
+            MODEL=$(printf '%s' "$NOR_LINE" | sed -n 's/.*spi-nor[^:]*:[[:space:]]*//p')
+            MODEL=$(printf '%s' "$MODEL" | sed 's/^found[[:space:]]*//; s/[[:space:]]*(.*$//; s/,.*$//; s/[[:space:]]*$//')
+            nor_brand "$MODEL"
+            SIZE=$(spi_size "$NOR_LINE")
+        fi
+    fi
+fi
+
+# Bad blocks only make sense for NAND media. Prefer sysfs, fall back to ubinfo.
+if [ "$TYPE" = "nand" ] || [ "$TYPE" = "spinand" ]; then
+    MTD_SEL=""
+    for m in /sys/class/mtd/mtd*; do
+        [ -d "$m" ] || continue
+        base=${m##*/}
+        case "${base#mtd}" in ''|*[!0-9]*) continue ;; esac
+        nm=$(cat "$m/name" 2>/dev/null | tr 'A-Z' 'a-z')
+        case "$nm" in
+            *ubi*|*spi*nand*|*nand*) MTD_SEL="$base"; break ;;
+        esac
+    done
+    if [ -z "$MTD_SEL" ] && [ -d /sys/class/mtd/mtd0 ]; then
+        MTD_SEL=mtd0
+    fi
+    if [ -n "$MTD_SEL" ] && [ -r "/sys/class/mtd/$MTD_SEL/bad_blocks" ]; then
+        BAD_BLOCKS=$(cat "/sys/class/mtd/$MTD_SEL/bad_blocks" 2>/dev/null)
+        case "$BAD_BLOCKS" in ''|*[!0-9]*) BAD_BLOCKS="" ;; esac
+    fi
+    if [ -z "$BAD_BLOCKS" ] && command -v ubinfo >/dev/null 2>&1; then
+        UBINFO=$(ubinfo -a 2>/dev/null)
+        if printf '%s\n' "$UBINFO" | grep -qi 'bad eraseblocks'; then
+            BAD_BLOCKS=$(printf '%s\n' "$UBINFO" | awk 'tolower($1) == "bad" && tolower($2) == "eraseblocks:" { s += $3 } END { print s + 0 }')
+        fi
+    fi
+    [ -n "$BAD_BLOCKS" ] && BAD_TEXT="坏块 ${BAD_BLOCKS}"
+fi
+
+if [ -z "$TYPE" ]; then
+    printf '{"type":""}\n'
+    exit 0
+fi
+
+json="{\"type\":\"$(json_escape "$TYPE")\""
+[ -n "$TYPE_CN" ] && json="${json},\"type_cn\":\"$(json_escape "$TYPE_CN")\""
+[ -n "$BRAND" ] && json="${json},\"brand\":\"$(json_escape "$BRAND")\""
+[ -n "$BRAND_CN" ] && json="${json},\"brand_cn\":\"$(json_escape "$BRAND_CN")\""
+[ -n "$MODEL" ] && json="${json},\"model\":\"$(json_escape "$MODEL")\""
+if [ -n "$LIFE_PCT" ]; then
+    json="${json},\"life_pct\":${LIFE_PCT}"
+    [ -n "$LIFE_TEXT" ] && json="${json},\"life_text\":\"$(json_escape "$LIFE_TEXT")\""
+fi
+if [ -n "$BAD_BLOCKS" ]; then
+    json="${json},\"bad_blocks\":${BAD_BLOCKS}"
+    [ -n "$BAD_TEXT" ] && json="${json},\"bad_text\":\"$(json_escape "$BAD_TEXT")\""
+fi
+[ -n "$SIZE" ] && json="${json},\"size\":\"$(json_escape "$SIZE")\""
+json="${json}}"
+
+printf '%s\n' "$json"
+exit 0

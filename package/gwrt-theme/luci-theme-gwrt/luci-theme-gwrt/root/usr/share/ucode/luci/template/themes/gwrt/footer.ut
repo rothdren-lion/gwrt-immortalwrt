@@ -29,8 +29,8 @@
 			{% endif %}
 		</div>
 	</div>
-	<script src="/luci-static/gwrt/resources/gwrt.js?v=20261128r134"></script>
-	<script src="/luci-static/gwrt/resources/gwrt-navbar.js?v=20261128r134"></script>
+	<script src="/luci-static/gwrt/resources/gwrt.js?v=20261128r135"></script>
+	<script src="/luci-static/gwrt/resources/gwrt-navbar.js?v=20261128r135"></script>
 	<script>
 		// thanks for Jo-Philipp Wich <jow@openwrt.org>
 		var luciLocation = {{ ctx.path }};

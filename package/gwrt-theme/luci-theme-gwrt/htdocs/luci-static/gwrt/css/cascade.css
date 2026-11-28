@@ -957,3 +957,10 @@ body[data-page="admin-system-package-manager"] #packages .cbi-section-actions .b
 .gwrt-logout-btn:hover,.gwrt-logout-btn:focus-visible{color:var(--accent-danger);border-color:var(--accent-danger);background:color-mix(in srgb,var(--accent-danger) 12%,transparent);outline:none}
 .gwrt-logout-icon{display:inline-flex;align-items:center;justify-content:center;font-size:13px;line-height:1}.gwrt-logout-icon svg{width:14px;height:14px;display:block}
 @media (max-width:520px){.gwrt-public-ip{padding:0 5px;max-width:120px}.gwrt-public-ip-label{display:none}.gwrt-logout-btn{padding:0;width:28px;font-size:0}.gwrt-logout-icon{font-size:13px}}
+
+/* storage chip row (route-tool-storage-info) */
+.stat-row[hidden]{display:none}
+.stat-card[data-gwrt="memstore"] .stat-row.gwrt-chip-row{grid-template-columns:48px minmax(0,auto) minmax(0,1fr);grid-template-rows:auto;column-gap:6px;padding:0 0 4px;border-bottom:1px solid rgba(127,127,127,.18);margin-bottom:2px}
+.stat-card[data-gwrt="memstore"] .stat-row.gwrt-chip-row .stat-row-label{grid-column:1;grid-row:1}
+.gwrt-chip-row .stat-chip-val{grid-column:2;grid-row:1;justify-self:start;text-align:left;font-family:var(--font-mono);font-size:var(--text-xs);color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.gwrt-chip-row .stat-chip-sub{grid-column:3;grid-row:1;justify-self:end;text-align:right;font-size:0.68rem;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
