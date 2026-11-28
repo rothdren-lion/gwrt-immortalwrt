@@ -17,12 +17,15 @@ const footerLogin = read('root/usr/share/ucode/luci/template/themes/gwrt/footer_
 const socinfo = read('root/usr/libexec/gwrt-socinfo');
 
 for (const id of [
-  'gwrtWanTrend', 'gwrtWanPeriods', 'gwrtWan4Down', 'gwrtWan4Up',
+  'gwrtWanTrend', 'gwrtWan4Down', 'gwrtWan4Up',
   'gwrtWan6Down', 'gwrtWan6Up', 'gwrtWan4Total', 'gwrtWan6Total',
   'gwrtWanSampleState',
 ]) {
   assert.match(template, new RegExp(`id=["']${id}["']`), `missing dashboard node ${id}`);
 }
+assert.match(header, /id="gwrtWanPeriods"/, 'traffic periods belong in the upper bar');
+assert.doesNotMatch(template, /id="gwrtWanPeriods"/, 'traffic periods must leave the traffic card');
+
 for (const fn of ['nssFamilyRate', 'nssTrafficRate', 'updateWanTraffic', 'renderWanTraffic', 'renderWanTrend']) {
   assert.match(template, new RegExp(`function ${fn}\\(`), `missing ${fn}`);
 }
@@ -49,10 +52,10 @@ assert.match(css, /\.gwrt-wan-line-ipv4\{stroke:#22b8cf\}/);
 assert.match(css, /\.gwrt-wan-line-ipv6\{stroke:#a78bfa\}/);
 assert.match(header, /id="gwrtNavbarUptime"/);
 for (const asset of [header, headerLogin]) {
-  assert.match(asset, /20261117r122/, 'dashboard CSS must invalidate the r122 cache');
+  assert.match(asset, /20261120r127/, 'dashboard CSS must invalidate the r126 cache');
 }
-assert.match(footer, /gwrt-navbar\.js\?v=20261117r122/, 'navbar monitor must invalidate its r122 cache');
-assert.match(footerLogin, /gwrt\.js\?v=20261109r114/, 'login page keeps its existing runtime asset');
+assert.match(footer, /gwrt-navbar\.js\?v=20261118r124/, 'navbar monitor must invalidate its r123 cache');
+assert.match(footerLogin, /gwrt\.js\?v=20261118r123/, 'login page invalidates its updated runtime asset');
 
 assert.match(socinfo, /machine_file=.*device/);
 assert.match(socinfo, /compatible_file=.*device/);
@@ -100,11 +103,11 @@ function sandbox() {
   const nodes = new Map();
   function node() { return { textContent: '', innerHTML: '', title: '', clientWidth: 340, clientHeight: 55, appendChild() {}, querySelector() { return null; } }; }
   const document = { getElementById(id) { if (!nodes.has(id)) nodes.set(id, node()); return nodes.get(id); }, createElement: node, createTextNode(text) { return { textContent: text }; } };
-  const context = { Date, document, localStorage: { getItem: k => values.get(k), setItem: (k,v) => values.set(k,v) }, F: n => n + ' B', fmtSpeed: n => n + ' B/s', S: (id,t) => { document.getElementById(id).textContent = t; } };
+  const context = { Date, document, window: {}, localStorage: { getItem: k => values.get(k), setItem: (k,v) => values.set(k,v) }, F: n => n + ' B', fmtSpeed: n => n + ' B/s', S: (id,t) => { document.getElementById(id).textContent = t; } };
   vm.runInNewContext(template.slice(uiStart, uiEnd), context);
   return { context, nodes };
 }
-const data = { version: 1, ok: true, sampled: Date.now()/1000, first: Date.now()/1000, total: 300, families: { ipv4: { available:true, up:10, down:20, total:100 }, ipv6: { available:true, up:30, down:40, total:200 } }, history: [{ t:Date.now(), ipv4:{up:10,down:20},ipv6:{up:30,down:40} }], periods: [] };
+const data = { version: 3, ok: true, sampled: Date.now()/1000, first: Date.now()/1000, total: 300, families: { ipv4: { available:true, up:10, down:20, total:100 }, ipv6: { available:true, up:30, down:40, total:200 } }, history: [{ t:Date.now(), ipv4:{up:10,down:20},ipv6:{up:30,down:40} }], periods: [] };
 let ui = sandbox();
 ui.context.updateWanTraffic({stdout:JSON.stringify(data)});
 assert.equal(ui.nodes.get('gwrtWan4Total').textContent, '100 B');
@@ -125,4 +128,4 @@ ui.context.updateWanTraffic(null);
 assert.equal(ui.nodes.get('gwrtWan6Total').textContent, '200 B', 'transient startup failure keeps cache');
 const js = template.slice(template.indexOf('<script>')+8,template.lastIndexOf('</script>'));
 new vm.Script(js);
-console.log(`PASS GWRT theme r122 (${theme}): storage used/total, shared dual-stack graph, cache/reload/failure, NSS parser, SoC and compact layout`);
+console.log(`PASS GWRT theme r122/r123 (${theme}): storage used/total, shared dual-stack graph, cache/reload/failure, NSS parser, SoC and compact layout`);

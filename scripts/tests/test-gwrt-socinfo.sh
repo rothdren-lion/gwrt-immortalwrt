@@ -27,8 +27,12 @@ check_soc() {
 }
 
 check_soc ipq5332 jdcloud,re-cs-06 qcom,ipq5332
+check_soc rtl9617c tianyi,tyfza1 realtek,rtl9617c
 check_soc mt7981 mediatek,mt7981
-check_soc en7581 nokia,xg-040g-md airoha,an7581 airoha,en7581
+# AN758x: the airoha,an758x compatible is preferred over the en codename,
+# and a board that only carries airoha,en758x still displays the AN name.
+check_soc an7581 nokia,xg-040g-md airoha,an7581 airoha,en7581
+check_soc an7581 fiberhome,hg5585f-ct airoha,en7581
 printf 'IPQ6010\n' > "$tmp/machine"
 check_soc ipq6010 jdcloud,re-ss-01 qcom,ipq6018
 if command -v busybox >/dev/null 2>&1; then
@@ -38,4 +42,8 @@ if command -v busybox >/dev/null 2>&1; then
 fi
 printf 'JDCloud RE-SS-01\n' > "$tmp/machine"
 check_soc ipq6018 jdcloud,re-ss-01 qcom,ipq6018
+
+printf 'EN7581\n' > "$tmp/machine"
+check_soc an7581 nokia,xg-040g-md airoha,an7581 airoha,en7581
+
 echo 'PASS: SoC identifiers and CPU thread counts'
