@@ -182,6 +182,7 @@
         if(total===undefined){total=0;['up4','down4','up6','down6'].forEach(function(k){total+=Number(bytes[k])||0;});}
         var item=document.createElement('span'),label=document.createElement('span'),value=document.createElement('b');
         item.className='gwrt-navbar-period';
+        item.setAttribute('data-state',data.ok?'ok':'unknown');
         label.className='gwrt-navbar-period-label';
         label.textContent=p.label;
         value.textContent=trafficBytes(total);item.appendChild(label);item.appendChild(value);

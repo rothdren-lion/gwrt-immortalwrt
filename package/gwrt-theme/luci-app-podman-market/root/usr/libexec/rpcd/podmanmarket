@@ -157,12 +157,6 @@ set_autostart() {
 	echo '{"ok":true}'
 }
 
-install_app() {
-	have_podman && { echo '{"ok":true,"already":1}'; return; }
-	start_job "__podman_install__" sh -c ". /usr/share/podman-market/lib.sh; install_podman"
-	echo '{"ok":true}'
-}
-
 logs() {
 	read input
 	json_load "$input"
@@ -197,8 +191,6 @@ case "$1" in
 			json_add_string id "string"
 			json_add_string on "string"
 		json_close_object
-		json_add_object install
-		json_close_object
 		json_add_object logs
 			json_add_string id "string"
 		json_close_object
@@ -212,7 +204,6 @@ case "$1" in
 			update)    update_app ;;
 			action)    action ;;
 			autostart) set_autostart ;;
-			install)   install_app ;;
 			logs)      logs ;;
 			*)         echo '{}' ;;
 		esac

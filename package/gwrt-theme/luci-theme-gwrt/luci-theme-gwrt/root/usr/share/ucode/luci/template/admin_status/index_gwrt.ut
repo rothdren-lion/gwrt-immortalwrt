@@ -3681,7 +3681,8 @@ function refresh(){
       if(!window._gwrtCpuFallbackBusy){window._gwrtCpuFallbackBusy=1;gwrtCpuStatFallback().then(function(p){window._gwrtCpuFallbackBusy=0;if(p!==null){S('gwrtCpu',p+'%');setUsageBar('gwrtCpuBar',p);}});}
     }
     /* CPU 频率：优先 cpufreq，其次 clk_summary（armpll / apcs_alias0_core_clk 等） */
-    var freqHz=parseInt(cf.stdout,10)||0;
+    var freqHz=(parseInt(window._gwrtSocFreqKhz,10)||0)*1000;
+    if(!(freqHz>0))freqHz=parseInt(cf.stdout,10)||0;
     if(!(freqHz>0)){
       String((cf&&cf.stdout)||'').split('\n').forEach(function(l){
         if(freqHz>0)return;
@@ -3772,6 +3773,11 @@ function refresh(){
     if(socEl&&!socEl.dataset.fetched){
       rpc('file','exec',{command:'/usr/libexec/gwrt-socinfo'}).then(function(res){
         var o=String((res&&res.stdout)||'').split('\n');
+        var __socKhz=parseInt(String(o[2]||'').trim(),10)||0;
+        if(__socKhz>0){
+          window._gwrtSocFreqKhz=__socKhz;
+          S('gwrtCpuFreq',__socKhz>=1000000?(__socKhz/1000000).toFixed(2).replace(/\.?0+$/,'')+' GHz':Math.round(__socKhz/1000)+' MHz');
+        }
         /* The helper reads the board's actual machine/compatible value. Keep
          * that value intact (lowercase) instead of mapping a guessed model. */
         var chip=String(o[0]||'').trim().toLowerCase();

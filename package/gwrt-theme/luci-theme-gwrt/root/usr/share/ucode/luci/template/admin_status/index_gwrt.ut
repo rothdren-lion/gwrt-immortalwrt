@@ -153,7 +153,7 @@
 	</div>
 </div>
 
-<script src="/luci-static/gwrt/resources/router-models.js?v=20261118r123"></script>
+<script src="/luci-static/gwrt/resources/router-models.js?v=20261119r126"></script>
 <script>
 (function(){
 function S(id,t){var e=document.getElementById(id);if(e)e.textContent=t;}
@@ -2484,7 +2484,8 @@ function renderMeshSummary(){
     +'<button type="button" class="gwrt-mesh-manage">管理 Mesh</button>'
     +(devices.length?'<div class="gwrt-mesh-discovery"><span>局域网发现 '+devices.length+' 台待添加 AP</span>'+devices.map(function(d){
       var key=gwrtMeshNodeKey(d),busy=!!gwrtMeshPending[key];
-      return '<div class="gwrt-mesh-discovered"><span><strong>'+esc(d.name||d.model||'GWRT AP')+'</strong><small>'+esc(d.ip||d.mac||'')+(d.model?' · '+esc(d.model):'')+'</small></span>'
+      return '<div class="gwrt-mesh-discovered"><span class="gwrt-mesh-discovered-device">'+gwrtProductIcon(d,'')
+        +'<span><strong>'+esc(d.name||d.model||'GWRT AP')+'</strong><small>'+esc(d.ip||d.mac||'')+(d.model?' · '+esc(d.model):'')+'</small></span></span>'
         +'<button type="button" data-gwrt-mesh-add="'+key+'"'+(busy?' disabled':'')+'>'+(busy?'等待入网…':'添加')+'</button></div>';
     }).join('')+'</div>':'');
   el.querySelector('.gwrt-mesh-manage').onclick=function(){gwrtOpenModal('/cgi-bin/luci/admin/services/wifiroam/pairing','Mesh 配对');};
@@ -2574,6 +2575,18 @@ function ponMetricText(frontend,key,digits,unit){
   var v=ponMetric(frontend,key,digits);
   return v==null?'--':v+' '+unit;
 }
+/* 接收光功率颜色：强绿 / 中黄 / 弱红。GPON/XG-PON 典型接收范围约 -8~-28 dBm。 */
+function ponRxColor(rx){
+  if(rx==null)return {cls:'muted',color:'#9ca3af',label:'无信号'};
+  if(rx>=-15)return {cls:'ok',color:'#22c55e',label:'强'};
+  if(rx>=-22)return {cls:'warn',color:'#eab308',label:'中'};
+  return {cls:'danger',color:'#ef4444',label:'弱'};
+}
+function ponSignalBar(pct){
+  pct=Math.max(0,Math.min(100,Number(pct)||0));
+  var cls=pct>=60?'gwrt-sig-ok':(pct>=30?'gwrt-sig-warn':'gwrt-sig-danger');
+  return '<div class="gwrt-sig-bar"><div class="gwrt-sig-fill '+cls+'" style="width:'+pct+'%"></div></div>';
+}
 function ponStatusText(pon){
   var line=(pon&&pon.line)||{},reg=(pon&&pon.registration)||{};
   var regState=reg.onu_state||reg.mpcp_state;
@@ -2639,6 +2652,15 @@ function fetchPonStatus(force){
     return fetchPonInfoFallback(force);
   }).catch(function(){return fetchPonInfoFallback(force);});
 }
+/* 抓取完整 PON 详情（身份/链路/计数器/OMCI），供详情面板与身份欺骗配置用。 */
+function fetchPonDetail(force){
+  var job=force?rpcD('luci.pon-info','status',{}):rpcCached('ponDetailStatus',10000,'luci.pon-info','status',{});
+  return job.then(function(s){
+    if(!s||s.__rpcError!==undefined)return null;
+    window._gwrtPonDetail=s;
+    return s;
+  }).catch(function(){return null;});
+}
 function ponCardHtml(p,st){
   var now=Date.now(),stat=(st&&st.statistics)||{};
   var rx=Number(stat.rx_bytes||0),tx=Number(stat.tx_bytes||0);
@@ -2652,11 +2674,13 @@ function ponCardHtml(p,st){
   var state=operational?'up':(hasSignal?'warn':((st&&st.carrier)?'warn':'down'));
   var mode=ponModeLabel(line.active_mode||line.configured_mode||'');
   var rxv=ponMetric(fe,'rx_power_dbm',2),txv=ponMetric(fe,'tx_power_dbm',2),temp=ponMetric(fe,'temperature_celsius',1);
-  var rxHtml='RX <b>'+(rxv==null?'--':esc(rxv))+'</b>'+(rxv==null?'':' dBm');
+  var rxc=ponRxColor(rxv);
+  var rxHtml='RX <b style="color:'+rxc.color+';">'+(rxv==null?'--':esc(rxv))+'</b>'+(rxv==null?'':' dBm')+' <span class="gwrt-pon-rx-label gwrt-'+rxc.cls+'">'+rxc.label+'</span>';
   var txHtml='TX <b>'+(txv==null?'--':esc(txv))+'</b>'+(txv==null?'':' dBm');
   var tempHtml=temp==null?'--':esc(temp)+' \u00b0C';
+  var dotColor=pon&&rxv!=null?rxc.color:'';
   return '<div class="gwrt-port pon '+state+'" data-gwrt-port-name="'+esc(p.name)+'" data-gwrt-port-role="wan" data-gwrt-pon="1" title="'+esc(p.label)+' \u5149\u94fe\u8def / PON WAN \u8bbe\u7f6e" role="button" tabindex="0">'
-    +'<div class="gwrt-port-top"><span class="gwrt-port-title"><span class="gwrt-port-dot"></span><span class="gwrt-port-name">PON</span><span class="gwrt-pon-mode">'+esc(mode)+'</span></span><span class="gwrt-port-gear">\u2699</span></div>'
+    +'<div class="gwrt-port-top"><span class="gwrt-port-title"><span class="gwrt-port-dot" style="'+(dotColor?'background-color:'+dotColor+';':'')+'"></span><span class="gwrt-port-name">PON</span><span class="gwrt-pon-mode">'+esc(mode)+'</span></span><span class="gwrt-port-gear">\u2699</span></div>'
     +'<div class="gwrt-pon-optics"><span>'+rxHtml+'</span><span>'+txHtml+'</span></div>'
     +'<div class="gwrt-pon-meta"><span>\ud83c\udf21 '+tempHtml+'</span><span class="gwrt-pon-rate">\u2193 '+esc(fmtSpeed(drx))+' \u2191 '+esc(fmtSpeed(dtx))+'</span></div>'
     +'<div class="gwrt-pon-state">'+esc(ponStatusText(pon))+'</div>'
@@ -2670,27 +2694,174 @@ function renderPonPanel(){
   var modeEl=document.getElementById('gwrtPonPanelMode');
   if(modeEl)modeEl.textContent=ponModeLabel(line.active_mode||line.configured_mode||'');
   var statusEl=document.getElementById('gwrtPonPanelStatus');
-  if(statusEl)statusEl.textContent=pon?ponStatusText(pon):'\u5149\u6a21\u5757\u72b6\u6001\u8bfb\u53d6\u5931\u8d25\uff08ponctl \u4e0d\u53ef\u7528\u6216 pon0 \u672a\u542f\u52a8\uff09';
+  if(statusEl){
+    var txt=pon?ponStatusText(pon):'\u5149\u6a21\u5757\u72b6\u6001\u8bfb\u53d6\u5931\u8d25\uff08ponctl \u4e0d\u53ef\u7528\u6216 pon0 \u672a\u542f\u52a8\uff09';
+    var cls='idle';
+    if(!pon)cls='warn';
+    else if(line.lifecycle==='operational'&&(reg.onu_state==='O5'||reg.mpcp_state==='registered'))cls='ok';
+    else if(!line.optical_signal||(reg.onu_state&&reg.onu_state!=='O5'))cls='warn';
+    statusEl.className='gwrt-pon-status '+cls;
+    statusEl.innerHTML='<span class="dot"></span>'+esc(txt);
+  }
+  /* 先把映射后的光模块/注册数据渲染出来，再抓完整详情填充身份与计数器区块。 */
+  renderPonRows(line,fe,reg);
+  fetchPonDetail(true).then(function(detail){
+    if(detail)renderPonDetail(detail,line,fe,reg,ctr);
+    renderPonTraffic();
+  });
+}
+function renderPonRows(line,fe,reg){
+  var el=document.getElementById('gwrtPonOptics');
+  if(!el)return;
+  var dim=(!line.optical_signal)?' muted':'';
+  var onuCls=(reg.onu_state==='O5')?' ok':(reg.onu_state?' warn':' muted');
+  var rxv=ponMetric(fe,'rx_power_dbm',2);
+  var rxc=ponRxColor(rxv);
   var rows=[
-    ['\u63a5\u6536\u5149\u529f\u7387',ponMetricText(fe,'rx_power_dbm',2,'dBm')],
-    ['\u53d1\u9001\u5149\u529f\u7387',ponMetricText(fe,'tx_power_dbm',2,'dBm')],
-    ['\u6a21\u5757\u6e29\u5ea6',ponMetricText(fe,'temperature_celsius',1,'\u00b0C')],
-    ['\u5de5\u4f5c\u7535\u538b',ponMetricText(fe,'voltage_volts',2,'V')],
-    ['TX Bias',ponMetricText(fe,'tx_bias_ma',1,'mA')],
-    ['ONU \u72b6\u6001',ponOnuLabel(reg.onu_state)],
-    ['MPCP \u72b6\u6001',ponMpcpLabel(reg.mpcp_state)],
-    ['ONU ID',reg.onu_id!=null?String(reg.onu_id):'--']
+    {s:'\u5149\u6a21\u5757',items:[
+      ['\u63a5\u6536\u5149\u529f\u7387',(rxv==null?'--':esc(rxv)+' dBm')+' <span class="gwrt-pon-rx-label gwrt-'+rxc.cls+'">'+rxc.label+'</span>',dim],
+      ['\u53d1\u9001\u5149\u529f\u7387',ponMetricText(fe,'tx_power_dbm',2,'dBm'),dim],
+      ['\u6a21\u5757\u6e29\u5ea6',ponMetricText(fe,'temperature_celsius',1,'\u00b0C'),''],
+      ['\u5de5\u4f5c\u7535\u538b',ponMetricText(fe,'voltage_volts',2,'V'),''],
+      ['TX Bias',ponMetricText(fe,'tx_bias_ma',1,'mA'),dim],
+      ['\u4fe1\u53f7\u6761',ponSignalBar(rxv!=null?Math.round((rxv+30)/15*100):0),'']
+    ]},
+    {s:'\u6ce8\u518c\u72b6\u6001',items:[
+      ['ONU \u72b6\u6001',ponOnuLabel(reg.onu_state),onuCls],
+      ['MPCP \u72b6\u6001',ponMpcpLabel(reg.mpcp_state),(reg.mpcp_state==='not-applicable')?' muted':''],
+      ['ONU ID',reg.onu_id!=null?String(reg.onu_id):'--',reg.onu_id!=null?'':' muted']
+    ]}
   ];
-  el.innerHTML=rows.map(function(r){return '<div><span>'+esc(r[0])+'</span><b>'+esc(r[1])+'</b></div>';}).join('');
+  el.innerHTML=rows.map(function(sec){
+    return '<div class="gwrt-pon-section">'+sec.s+'</div><div class="gwrt-pon-grid">'
+      +sec.items.map(function(r){return '<div><span class="k">'+esc(r[0])+'</span><b class="v'+(r[2]||'')+'">'+esc(r[1])+'</b></div>';}).join('')
+      +'</div>';
+  }).join('');
+}
+function renderPonDetail(detail,line,fe,reg,ctr){
+  var base=document.getElementById('gwrtPonOptics');
+  if(!base)return;
+  var ident=detail.identity||{}, link=detail.link||{}, omci=detail.omci||{}, net=detail.net||{};
+  var optical=link.optical||{}, state=link.state||{}, transceiver=link.transceiver||{};
+  var auth=ident.auth||{};
+  var ponCls=function(cond){return cond?' ok':'';};
+  var rows=[
+    {s:'\u94fe\u63a5\u4e0e\u8ba1\u6570',items:[
+      ['PON \u53f3\u72b6\u6001',net.pon0&&net.pon0.operstate?net.pon0.operstate:'--',''],
+      ['\u534e\u8bdd\u65cf',state.family||'--',''],
+      ['\u5149\u4fe1\u53f7 LOS',String(optical.rx_los==='1'||optical.rx_los==1?'\u6709':'\u65e0'),optical.rx_los==='1'||optical.rx_los==1?' warn':''],
+      ['\u6a21\u5757\u7f34\u5931',String(optical.module_absent==='1'||optical.module_absent==1?'\u662f':'\u5426'),optical.module_absent==='1'||optical.module_absent==1?' warn':''],
+      ['\u53d1\u9001\u6548\u969c',String(optical.tx_fault==='1'||optical.tx_fault==1?'\u662f':'\u5426'),optical.tx_fault==='1'||optical.tx_fault==1?' warn':''],
+      ['FEC \u6821\u6b63',link.fec&&link.fec.corrected!=null?String(link.fec.corrected):'--',''],
+      ['FEC \u9519\u8bef',link.fec&&link.fec.errors!=null?String(link.fec.errors):'--',''],
+      ['PLOAM RX',link.ploam&&link.ploam.rx!=null?String(link.ploam.rx):'--',''],
+      ['XGEM RX',ctr&&ctr.xgem_rx!=null?String(ctr.xgem_rx):'--',''],
+      ['XGEM TX',ctr&&ctr.xgem_tx!=null?String(ctr.xgem_tx):'--',''],
+      ['pon0 RX',net.pon0&&net.pon0.statistics&&net.pon0.statistics.rx_bytes!=null?F(net.pon0.statistics.rx_bytes):'--',''],
+      ['pon0 TX',net.pon0&&net.pon0.statistics&&net.pon0.statistics.tx_bytes!=null?F(net.pon0.statistics.tx_bytes):'--','']
+    ]},
+    {s:'\u8eab\u4ef6\u4e0e\u6b21\u5c31',items:[
+      ['SN \u751f\u6548',ident.serial_number_active||'--',''],
+      ['SN \u914d\u7f6e',ident.serial_number||'--',''],
+      ['SN \u5341\u516d\u8fde\u5143',ident.serial_number_hex||'--',''],
+      ['\u8bbe\u5907\u578b\u53f7',ident.equipment_id||'--',''],
+      ['\u79ed\u4ef6\u7248\u672c',ident.hardware_version||'--',''],
+      ['\u8f6f\u4ef6\u7248\u672c',ident.software_version||'--',''],
+      ['\u5382\u5546 ID',ident.vendor_id||'--',''],
+      ['OMCC \u7248\u672c',ident.omcc_version||'--',''],
+      ['\u8fd0\u5546 ID',ident.operator_id||'--',''],
+      ['ONU MAC',ident.onu_mac||'--',''],
+      ['\u6570\u636e MAC',ident.data_mac||'--',''],
+      ['LOID',auth.loid?'\u5df2\u8bbe':'\u672a\u8bbe',''],
+      ['PLoAM \u5bc6\u7801',auth.ploam_password?'\u5df2\u8bbe':'\u672a\u8bbe',''],
+      ['\u6ce8\u518c ID',auth.registration_id?'\u5df2\u8bbe':'\u672a\u8bbe',''],
+      ['OMCI PSK',auth.omci_psk?'\u5df2\u8bbe':'\u672a\u8bbe','']
+    ]}
+  ];
+  var html=rows.map(function(sec){
+    return '<div class="gwrt-pon-section">'+sec.s+'</div><div class="gwrt-pon-grid">'
+      +sec.items.map(function(r){return '<div><span class="k">'+esc(r[0])+'</span><b class="v'+(r[2]||'')+'">'+esc(r[1])+'</b></div>';}).join('')
+      +'</div>';
+  }).join('');
+  html+='<div class="gwrt-pon-section" style="cursor:pointer" id="gwrtPonIdEditHead">\u8eab\u4ef6\u6b21\u5c31\u7f16\u8f91\u2026</div>'
+    +'<div id="gwrtPonIdEdit" style="display:none;border:1px solid var(--border-primary);border-radius:var(--radius-lg);padding:10px 12px;background:var(--bg-tertiary);margin-top:8px">'
+    +'<div class="gwrt-pon-grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">'
+    +identityInput('\u6a21\u5757','gwrt_pon_id_mode',ident.mode||'')
+    +identityInput('SN \u914d\u7f6e','gwrt_pon_id_serial',ident.serial_number||'')
+    +identityInput('SN \u5341\u516d\u8fde\u5143','gwrt_pon_id_serial_hex',ident.serial_number_hex||'')
+    +identityInput('\u8bbe\u5907\u578b\u53f7','gwrt_pon_id_equipment',ident.equipment_id||'')
+    +identityInput('\u79ed\u4ef6\u7248\u672c','gwrt_pon_id_hw',ident.hardware_version||'')
+    +identityInput('\u8f6f\u4ef6\u7248\u672c','gwrt_pon_id_sw',ident.software_version||'')
+    +identityInput('\u5382\u5546 ID','gwrt_pon_id_vendor',ident.vendor_id||'')
+    +identityInput('\u8fd0\u5546 ID','gwrt_pon_id_operator',ident.operator_id||'')
+    +identityInput('ONU MAC','gwrt_pon_id_onu_mac',ident.onu_mac||'')
+    +identityInput('\u6570\u636e MAC','gwrt_pon_id_data_mac',ident.data_mac||'')
+    +identityInput('LOID','gwrt_pon_id_loid',auth.loid||'')
+    +identityInput('LOID \u5bc6\u7801','gwrt_pon_id_loid_pw',auth.loid_password||'')
+    +identityInput('PLoAM \u5bc6\u7801','gwrt_pon_id_ploam_pw',auth.ploam_password||'')
+    +identityInput('\u6ce8\u518c ID','gwrt_pon_id_reg_id',auth.registration_id||'')
+    +identityInput('OMCI PSK','gwrt_pon_id_omci_psk',auth.omci_psk||'')
+    +identityCheckbox('\u5173\u95ed\u589e\u52a0\u5b89\u5168','gwrt_pon_id_no_sec',(auth.enhanced_security_disabled?'1':'0')==='1')
+    +'</div>'
+    +'<div style="margin-top:8px;text-align:right"><button id="gwrtPonIdSave" class="gwrt-sf-btn gwrt-sf-btn-save" style="padding:6px 14px;font-size:12px">\u4fdd\u5b58\u534f\u5c14\u503c\u5230 /etc/config/pon</button>'
+    +'<button id="gwrtPonIdCancel" style="padding:6px 14px;font-size:12px;margin-left:6px">\u53d6\u6d88</button></div>'
+    +'<div id="gwrtPonIdMsg" style="margin-top:6px;font-size:12px"></div>'
+    +'</div>';
+  base.innerHTML=base.innerHTML+html;
+  document.getElementById('gwrtPonIdEditHead').onclick=function(){
+    var e=document.getElementById('gwrtPonIdEdit');
+    e.style.display=e.style.display==='none'?'block':'none';
+  };
+  document.getElementById('gwrtPonIdSave').onclick=savePonIdentity;
+  document.getElementById('gwrtPonIdCancel').onclick=function(){document.getElementById('gwrtPonIdEdit').style.display='none';};
+}
+function identityInput(label,id,value){
+  return '<div><label class="k" style="display:block;font-size:11px;margin-bottom:2px">'+esc(label)+'</label>'
+    +'<input id="'+id+'" style="width:100%;font-size:12px;padding:4px 6px;border:1px solid var(--border-primary);border-radius:6px;background:var(--bg-card)" value="'+esc(value||'')+'"></div>';
+}
+function identityCheckbox(label,id,checked){
+  return '<div style="display:flex;align-items:center;gap:8px"><label class="k" style="margin:0;font-size:12px"><input type="checkbox" id="'+id+'"'+(checked?' checked':'')+'> '+esc(label)+'</label></div>';
+}
+function renderPonTraffic(){
   var traffic=document.getElementById('gwrtPonTraffic');
   if(!traffic)return;
+  var p=window._gwrtPonPort||{name:'pon0'};
   var st=(window._gwrtPortStates||{})[p.name]||{},stat=st.statistics||{};
   var rx=Number(stat.rx_bytes||0),tx=Number(stat.tx_bytes||0);
   var prev=portPrev[p.name],dt=prev?(Date.now()-prev.ts)/1000:0,drx=0,dtx=0;
   if(prev&&dt>0&&dt<30){drx=Math.max(0,rx-prev.rx)/dt;dtx=Math.max(0,tx-prev.tx)/dt;}
-  traffic.innerHTML='<div class="gwrt-pon-traffic-row"><span>\u672c\u6b21\u8fd0\u884c</span><b>\u2193 '+esc(F(rx))+' \u00b7 \u2191 '+esc(F(tx))+'</b></div>'
-    +'<div class="gwrt-pon-traffic-row"><span>\u5b9e\u65f6\u901f\u7387</span><b>\u2193 '+esc(fmtSpeed(drx))+' \u00b7 \u2191 '+esc(fmtSpeed(dtx))+'</b></div>'
-    +'<div class="gwrt-pon-traffic-row"><span>XGEM \u5e27</span><b>RX '+esc(ctr.xgem_rx!=null?String(ctr.xgem_rx):'--')+' \u00b7 TX '+esc(ctr.xgem_tx!=null?String(ctr.xgem_tx):'--')+'</b></div>';
+  traffic.innerHTML='<div class="gwrt-pon-traffic-row"><span class="k">\u672c\u6b21\u8fd0\u884c</span><b class="v">\u2193 '+esc(F(rx))+' \u2191 '+esc(F(tx))+'</b></div>'
+    +'<div class="gwrt-pon-traffic-row"><span class="k">\u5b9e\u65f6\u901f\u7387</span><b class="v">\u2193 '+esc(fmtSpeed(drx))+' \u2191 '+esc(fmtSpeed(dtx))+'</b></div>';
+}
+function loadPonIdentity(){
+  rpcD('uci','get',{config:'pon'}).then(function(r){
+    var v=(r&&r.values&&r.values.pon)||{};
+    ['mode','serial','serial_hex','equipment','hw','sw','vendor','operator','onu_mac','data_mac','loid','loid_pw','ploam_pw','reg_id','omci_psk'].forEach(function(k){
+      var el=document.getElementById('gwrt_pon_id_'+k);
+      if(el)el.value=v[k]||'';
+    });
+    var sec=document.getElementById('gwrt_pon_id_no_sec');
+    if(sec)sec.checked=String(v.disable_enhanced_security||'0')==='1';
+  }).catch(function(){});
+}
+function savePonIdentity(){
+  var btn=document.getElementById('gwrtPonIdSave'),msg=document.getElementById('gwrtPonIdMsg');
+  var vals={};
+  ['mode','serial','serial_hex','equipment','hw','sw','vendor','operator','onu_mac','data_mac','loid','loid_pw','ploam_pw','reg_id','omci_psk'].forEach(function(k){
+    var el=document.getElementById('gwrt_pon_id_'+k);
+    if(el)vals[k]=el.value||'';
+  });
+  vals.disable_enhanced_security=document.getElementById('gwrt_pon_id_no_sec').checked?'1':'0';
+  if(btn)btn.disabled=true;if(msg){msg.textContent='\u4fdd\u5b58\u4e2d...';msg.style.color='';}
+  rpcMust('uci','set',{config:'pon',section:'pon',values:vals})
+  .then(function(){return rpcMust('uci','commit',{config:'pon'});})
+  .then(function(){
+    if(btn)btn.disabled=false;if(msg){msg.textContent='\u2713 \u5df2\u5199\u5165 /etc/config/pon';msg.style.color='#22c55e';}
+    setTimeout(function(){if(msg)msg.textContent='';},1500);
+  })
+  .catch(function(e){
+    if(btn)btn.disabled=false;if(msg){msg.textContent='\u4fdd\u5b58\u5931\u8d25: '+(e&&e.message||e);msg.style.color='#ef4444';}
+  });
 }
 function togglePonWanFields(proto){
   var ppp=proto==='pppoe',st=proto==='static';
@@ -3726,7 +3897,17 @@ function refresh(){
     var npuRow=document.getElementById('gwrtNpuRow');
     if(npuRow){
       npuRow.style.display=npuDetected?'':'none';
-      if(npuDetected){S('gwrtNpu','已识别');setUsageBar('gwrtNpuBar',100);}
+      if(npuDetected){
+        /* PPE 流表绑定条目 = 经硬件(NPU/PPE)卸载的转发流。显示真实转发
+         * 条目数与流表占用；helper 缺失/不可读时退回“已识别”。 */
+        rpcD('file','exec',{command:'/usr/libexec/gwrt-ppe-stats',params:[]}).then(function(ps){
+          var d=null;try{d=JSON.parse(String((ps&&ps.stdout)||''));}catch(e){}
+          if(!d||!d.available){S('gwrtNpu','\u5df2\u8bc6\u522b');setUsageBar('gwrtNpuBar',100);return;}
+          var used=Number(d.used||0),cap=Number(d.capacity||0);
+          S('gwrtNpu',used+'\u6761'+(cap>0?' / '+cap:''));
+          setUsageBar('gwrtNpuBar',cap>0?Math.min(100,Math.round(used/cap*100)):100);
+        }).catch(function(){S('gwrtNpu','\u5df2\u8bc6\u522b');setUsageBar('gwrtNpuBar',100);});
+      }
     }
     var accTitle=document.getElementById('gwrtAccelCardTitle');
     if(accTitle){

@@ -197,21 +197,6 @@ do_deploy() { # do_deploy <id> <primary-port|''> <data-root|''> <autostart 0|1>
 	return 0
 }
 
-install_podman() { # install_podman — one-click install podman via apk
-	echo "__PULL_START__ $(date +%s)"
-	echo "+ apk update"
-	apk update >/dev/null 2>&1 || true
-	echo "+ apk add -y podman"
-	if apk add -y podman >/dev/null 2>&1; then
-		echo "__PULL_DONE__ $(date +%s)"
-		echo "podman 已安装"
-		return 0
-	else
-		echo "__RUN_DONE__ rc=1"
-		return 1
-	fi
-}
-
 redeploy_stored() {
 	local id="$1" port data autostart
 	port=$(uci -q get "podman-market.$id.port")

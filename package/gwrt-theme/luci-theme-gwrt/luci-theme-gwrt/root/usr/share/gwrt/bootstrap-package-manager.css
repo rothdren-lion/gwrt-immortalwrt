@@ -1,0 +1,69 @@
+/* GWRT package-manager responsive table.
+ *
+ * The native bootstrap theme (ports 81/444, see gwrt.theme.port_81) keeps the
+ * package list in a fixed-percentage table: the "install"/"remove" cell sits
+ * in the last column and ends up past the right edge as soon as the window is
+ * narrower than ~1200px, so the button is simply invisible.
+ *
+ * /etc/init.d/gwrt-theme appends this block once to every bootstrap theme
+ * stylesheet (marker: GWRT package-manager responsive), rendering each
+ * package row as a card on narrow viewports.
+ */
+@media screen and (max-width: 1200px) {
+	body[data-page='admin-system-package-manager'] #packages {
+		display: block !important;
+		width: 100% !important;
+		table-layout: auto !important;
+	}
+
+	body[data-page='admin-system-package-manager'] #packages tbody {
+		display: block !important;
+		width: 100% !important;
+	}
+
+	body[data-page='admin-system-package-manager'] #packages tr {
+		display: block !important;
+		float: none !important;
+		width: auto !important;
+		box-sizing: border-box;
+		margin: 0 0 8px 0;
+		padding: 6px 10px;
+		border: 1px solid rgba(128, 128, 128, 0.35);
+		border-radius: 6px;
+	}
+
+	body[data-page='admin-system-package-manager'] #packages tr.cbi-section-table-titles,
+	body[data-page='admin-system-package-manager'] #packages tr.placeholder {
+		display: none !important;
+	}
+
+	body[data-page='admin-system-package-manager'] #packages td {
+		display: block !important;
+		float: none !important;
+		width: auto !important;
+		max-width: none !important;
+		padding: 2px 0 !important;
+		border: 0 !important;
+		text-align: left !important;
+		white-space: normal !important;
+		overflow-wrap: anywhere;
+	}
+
+	body[data-page='admin-system-package-manager'] #packages td[data-title]::before {
+		content: attr(data-title);
+		display: inline-block;
+		min-width: 6em;
+		opacity: 0.65;
+	}
+
+	body[data-page='admin-system-package-manager'] #packages td.cbi-section-actions {
+		margin-top: 4px;
+		padding-top: 6px !important;
+		border-top: 1px solid rgba(128, 128, 128, 0.25) !important;
+	}
+
+	body[data-page='admin-system-package-manager'] #packages td.cbi-section-actions .btn {
+		display: inline-block;
+		margin: 2px 6px 2px 0;
+	}
+}

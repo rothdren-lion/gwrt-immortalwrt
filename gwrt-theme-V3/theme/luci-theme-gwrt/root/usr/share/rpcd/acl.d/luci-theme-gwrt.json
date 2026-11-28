@@ -10,6 +10,7 @@
     "network",
     "system",
     "wireless",
+    "pon",
     "pon_wan"
    ],
    "file": {
@@ -95,6 +96,9 @@
      "exec"
     ],
     "/usr/libexec/gwrt-accelinfo": [
+     "exec"
+    ],
+    "/usr/libexec/gwrt-ppe-stats": [
      "exec"
     ],
     "/usr/libexec/gwrt-coremark status": [
@@ -185,6 +189,14 @@
      "status",
      "peers",
      "topology"
+    ],
+    "luci.pon-info": [
+     "status",
+     "record",
+     "clear"
+    ],
+    "gwrt-dns": [
+     "urls"
     ]
    }
   },
@@ -196,6 +208,7 @@
     "gwrt",
     "network",
     "wireless",
+    "pon",
     "pon_wan"
    ],
    "file": {
