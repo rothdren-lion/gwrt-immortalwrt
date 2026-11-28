@@ -1,0 +1,26 @@
+#!/bin/sh /etc/rc.common
+START=96
+STOP=12
+USE_PROCD=1
+
+ensure_dns_log() {
+	# Without query logging there is nothing to aggregate; only touch the
+	# setting when it is still unset so an explicit user choice is respected.
+	[ "$(uci -q get dhcp.@dnsmasq[0].logqueries)" = "0" ] && return 1
+	local changed=0
+	[ "$(uci -q get dhcp.@dnsmasq[0].logqueries)" = "1" ] || {
+		uci -q set dhcp.@dnsmasq[0].logqueries='1'; changed=1; }
+	[ "$(uci -q get dhcp.@dnsmasq[0].logfacility)" = "/tmp/dnsq.log" ] || {
+		uci -q set dhcp.@dnsmasq[0].logfacility='/tmp/dnsq.log'; changed=1; }
+	[ "$changed" = "1" ] && uci -q commit dhcp
+	return 0
+}
+
+start_service() {
+	ensure_dns_log || exit 0
+	procd_open_instance
+	procd_set_param command /usr/libexec/gwrt-dns-urls daemon
+	procd_set_param respawn 3600 5 5
+	procd_set_param term_timeout 10
+	procd_close_instance
+}

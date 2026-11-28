@@ -38,7 +38,7 @@
 		</div>
 
 		<div class="login-card-body">
-			<form method="post" action="{{ http.getenv('REQUEST_URI') }}">
+			<form id="gwrtLoginForm" method="post" action="{{ http.getenv('REQUEST_URI') }}">
 				{%- if (fuser): %}
 				<div class="errorbox">{{ _('Invalid username and/or password! Please try again.') }}</div>
 				{% endif -%}
@@ -54,14 +54,29 @@
 						name="luci_password" placeholder="{{ _('Password') }}" />
 				</div>
 
-				<div>
-					<input type="submit" value="{{ _('Login') }}" class="cbi-button cbi-button-apply important login-submit" />
+				<div class="gwrt-login-actions">
+					<button type="submit" class="gwrt-login-choice gwrt-login-choice-primary" data-login-target="gwrt">GWRT</button>
+					<button type="submit" class="gwrt-login-choice gwrt-login-choice-native" data-login-target="native">原生</button>
 				</div>
 			</form>
 
 			<script type="text/javascript">//<![CDATA[
 				var input = document.getElementsByName('luci_password')[0];
 				if (input) input.focus();
+
+				var form = document.getElementById('gwrtLoginForm');
+				if (form) {
+					var gwrtAction = form.getAttribute('action') || window.location.href;
+					form.addEventListener('submit', function(event) {
+						var target = new URL(gwrtAction, window.location.href);
+						if (event.submitter && event.submitter.getAttribute('data-login-target') === 'native') {
+							var secure = window.location.protocol === 'https:' || window.location.port === '443' || window.location.port === '444';
+							target.protocol = secure ? 'https:' : 'http:';
+							target.port = secure ? '444' : '81';
+						}
+						form.setAttribute('action', target.href);
+					});
+				}
 			//]]></script>
 		</div>
 	</div>

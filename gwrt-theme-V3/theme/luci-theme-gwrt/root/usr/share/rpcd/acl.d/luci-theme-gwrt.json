@@ -194,6 +194,9 @@
      "status",
      "record",
      "clear"
+    ],
+    "gwrt-dns": [
+     "urls"
     ]
    }
   },

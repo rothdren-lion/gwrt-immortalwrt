@@ -37,18 +37,29 @@ if has_path \
 fi
 
 # There is no common NPU module name across the supported targets, so check
-# the known module and platform/debug node spellings.  A row is shown only
-# when one of these concrete nodes exists.
+# the known module and platform/debug node spellings.  Airoha AN758x/EN758x
+# uses the built-in "airoha-npu" platform driver with the NPU device under
+# the SoC simple-bus (/sys/devices/platform/soc/1e900000.npu), so also probe
+# the soc bus level and bound driver devices.  A row is shown only when one
+# of these concrete nodes exists.
 npu=false
 if has_path \
 	/sys/module/qca_npu \
 	/sys/module/npu \
 	/sys/module/qca_nss_npu \
+	/sys/module/airoha_npu \
+	/sys/module/airoha-npu \
 	/sys/kernel/debug/qca-npu \
-	/sys/kernel/debug/npu; then
+	/sys/kernel/debug/npu \
+	/sys/kernel/debug/airoha-npu \
+	/sys/kernel/debug/airoha_npu; then
 	npu=true
 else
-	for path in /sys/devices/platform/*npu* /sys/devices/platform/*NPU*; do
+	for path in /sys/devices/platform/*npu* /sys/devices/platform/*NPU* \
+		/sys/devices/platform/soc/*npu* /sys/devices/platform/soc/*NPU* \
+		/sys/devices/platform/soc@0/*npu* /sys/devices/platform/soc@0/*NPU* \
+		/sys/bus/platform/drivers/airoha-npu/*.npu \
+		/sys/bus/platform/drivers/airoha_npu/*.npu; do
 		if [ -e "$path" ]; then npu=true; break; fi
 	done
 fi
