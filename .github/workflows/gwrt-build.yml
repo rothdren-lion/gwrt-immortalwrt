@@ -228,6 +228,17 @@ jobs:
             head -2 package/libs/mbedtls/Makefile
           fi
 
+      - name: Select kernel point release
+        # an758x 走 6.18.62（Airoha 补丁链按 .62 校准），其余 target 保持 generic 里的 .64。
+        run: |
+          case "${{ inputs.device }}" in
+            an758x|an7583)
+              printf 'LINUX_VERSION-6.18 = .62\nLINUX_KERNEL_HASH-6.18.62 = 490a7aedf1b355c565d3a6c05333ccccb5da82064eca46b590448a7099d7d651\n' > target/linux/generic/kernel-6.18
+              ;;
+          esac
+          cat target/linux/generic/kernel-6.18
+          grep -rn 'LINUX_VERSION:=' target/linux/*/Makefile || true
+
       - name: Generate config
         env:
           GWRT_MODELS: ${{ inputs.models || inputs.model }}
