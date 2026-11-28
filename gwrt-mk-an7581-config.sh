@@ -280,6 +280,17 @@ for p in \
 done
 make defconfig >/dev/null
 
+# honk 的 BTF 由内核自带（CONFIG_KERNEL_DEBUG_INFO_BTF=y），改用
+# vmlinux-btf-builtin 提供 @vmlinux-btf；真正的 vmlinux-btf 需要外部 blob，
+# 编译必失败（"the BTF blob is missing"），必须排除。
+for f in "$TOP/.config" "$OUT"; do
+	[ -f "$f" ] || continue
+	sed -i -e 's|^CONFIG_PACKAGE_vmlinux-btf=y$|# CONFIG_PACKAGE_vmlinux-btf is not set|' \
+	       -e 's|^# CONFIG_PACKAGE_vmlinux-btf-builtin is not set$|CONFIG_PACKAGE_vmlinux-btf-builtin=y|' "$f"
+	grep -q '^# CONFIG_PACKAGE_vmlinux-btf is not set$' "$f" || echo '# CONFIG_PACKAGE_vmlinux-btf is not set' >>"$f"
+	grep -q '^CONFIG_PACKAGE_vmlinux-btf-builtin=y$' "$f" || echo 'CONFIG_PACKAGE_vmlinux-btf-builtin=y' >>"$f"
+done
+
 if [ "$OUT" != ".config" ] && [ "$OUT" != "$TOP/.config" ]; then
 	cp "$TOP/.config" "$OUT"
 fi
