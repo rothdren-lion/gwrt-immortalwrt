@@ -1,11 +1,11 @@
 #!/bin/sh
+# rpcd exec plugin: rpcd invokes `<script> call <method>` with params on stdin.
 case "$1" in
 	list)
 		echo '{"urls":{}}'
 		;;
 	call)
-		read -r method
-		case "$method" in
+		case "$2" in
 			urls) cat /tmp/gwrt-theme/dns-urls.json 2>/dev/null || echo '{"ts":0,"devices":{}}' ;;
 		esac
 		;;

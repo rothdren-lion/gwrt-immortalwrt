@@ -54,8 +54,10 @@ function ingest(text, now) {
 		if (!m) continue;
 		let domain = lc(m[1]), ip = m[2];
 		if (!domain || domain == '.' || match(domain, /(^|\.)(lan|local|localdomain|arpa)$/)) continue;
-		// Router's own housekeeping lookups are not user traffic.
-		if (ip == '127.0.0.1' || ip == '::1') continue;
+		// Query forwarding setups (daed, dnsmasq redirect rules) show every client
+		// lookup as loopback. Keep those domains in a bucket without a device so the
+		// dashboard still lists real sites instead of an empty card.
+		if (ip == '127.0.0.1' || ip == '::1') ip = 'local';
 		if (match(domain, /^(connectivitycheck\.|time[0-9]?\.|pool\.ntp\.|ntp\.|op\.gwrt\.uk$)/)) continue;
 		let dev = devices[ip];
 		if (!dev) dev = devices[ip] = {};

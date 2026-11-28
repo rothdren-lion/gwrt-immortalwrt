@@ -50,10 +50,15 @@ function prune(now) {
 
 function ingest(text, now) {
 	for (let line in split(text, '\n')) {
-		let m = match(line, /query\[(?:A|AAAA|HTTPS)\] ([^ ]+) from ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)$/);
+		let m = match(line, /query\[[A-Z]+\] ([^ ]+) from ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)$/);
 		if (!m) continue;
 		let domain = lc(m[1]), ip = m[2];
 		if (!domain || domain == '.' || match(domain, /(^|\.)(lan|local|localdomain|arpa)$/)) continue;
+		// Query forwarding setups (daed, dnsmasq redirect rules) show every client
+		// lookup as loopback. Keep those domains in a bucket without a device so the
+		// dashboard still lists real sites instead of an empty card.
+		if (ip == '127.0.0.1' || ip == '::1') ip = 'local';
+		if (match(domain, /^(connectivitycheck\.|time[0-9]?\.|pool\.ntp\.|ntp\.|op\.gwrt\.uk$)/)) continue;
 		let dev = devices[ip];
 		if (!dev) dev = devices[ip] = {};
 		let entry = dev[domain];
